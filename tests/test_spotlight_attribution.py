@@ -45,8 +45,9 @@ def test_attribute_stamps_person_and_credits_that_receipts_own_click(make_person
         assert attribute_signup(tx, joiner['id'], None) is False
 
 
-# Rides the legacy campaign-key branch on purpose (removed in task 8); the
-# first-touch rule itself is re-proved on receipts in
+# First touch wins, proved here on the receipt path (this used to ride the
+# now-removed legacy campaign-key branch); re-proved again, with the second
+# receipt's row checked as well, by
 # test_first_touch_wins_and_does_not_consume_the_second_receipt below.
 def test_attribute_does_not_overwrite(make_person):
     p = make_person(name='Twice')
@@ -55,9 +56,10 @@ def test_attribute_does_not_overwrite(make_person):
     with api_tx() as tx:
         a = make_campaign_link(tx, f'post:{rk_a}', f'{WEB_BASE_URL}/discover', None).rsplit('/', 1)[1]
         b = make_campaign_link(tx, f'post:{rk_b}', f'{WEB_BASE_URL}/discover', None).rsplit('/', 1)[1]
-        record_click(tx, a, 'Mozilla/5.0'); record_click(tx, b, 'Mozilla/5.0')
-        assert attribute_signup(tx, p['id'], a) is True
-        assert attribute_signup(tx, p['id'], b) is False
+        _, ra = record_click(tx, a, 'Mozilla/5.0 (iPhone)')
+        _, rb = record_click(tx, b, 'Mozilla/5.0 (iPhone)')
+        assert attribute_signup(tx, p['id'], ra) is True
+        assert attribute_signup(tx, p['id'], rb) is False
         assert tx.execute("SELECT spotlight_ref FROM person WHERE id = %(id)s", dict(id=p['id'])).fetchone()['spotlight_ref'] == a
 
 
@@ -208,14 +210,17 @@ def test_first_touch_wins_and_does_not_consume_the_second_receipt(make_campaign_
     assert row['signup_person_id'] is None and row['consumed_at'] is None
 
 
-def test_the_legacy_campaign_key_still_stamps_but_credits_nothing(make_campaign_link, make_person):
-    # Compatibility window only: an old web build sends the shared key.
+def test_a_bare_known_key_earns_nothing_and_leaves_spotlight_ref_null(make_campaign_link, make_person):
+    # The compatibility window closed 2026-09-22 (handoff, section 14): a
+    # bare campaign_link.key is no longer accepted anywhere, even though the
+    # key itself is real and has a live, unconsumed click sitting against it.
     key = make_campaign_link(); pid = make_person()['id']
     with api_tx() as tx:
         record_click(tx, key, 'Mozilla/5.0 (iPhone)')
     with api_tx() as tx:
-        assert attribute_signup(tx, pid, key) is True
-        assert tx.execute("SELECT spotlight_ref FROM person WHERE id = %(p)s", dict(p=pid)).fetchone()['spotlight_ref'] == key
+        assert attribute_signup(tx, pid, key) is False
+        row = tx.execute("SELECT spotlight_ref FROM person WHERE id = %(p)s", dict(p=pid)).fetchone()
+        assert row['spotlight_ref'] is None
         credited = tx.execute("SELECT count(*) AS n FROM campaign_click WHERE link_key = %(k)s AND signup_person_id IS NOT NULL", dict(k=key)).fetchone()['n']
     assert credited == 0
 

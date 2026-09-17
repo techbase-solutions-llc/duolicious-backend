@@ -109,8 +109,6 @@ _Q_STAMP_PERSON = """
     RETURNING id
 """
 
-_Q_KNOWN_KEY = "SELECT 1 FROM campaign_link WHERE key = %(k)s"
-
 
 def attribute_signup(tx, person_id: int, ref: Optional[str]) -> bool:
     if not ref or len(ref) > MAX_REF_LEN:
@@ -150,22 +148,4 @@ def attribute_signup(tx, person_id: int, ref: Optional[str]) -> bool:
         ).fetchone()
         return bool(stamped)
 
-    # Legacy compatibility window ONLY, and temporary. The web app and the
-    # API deploy separately, so for one deploy window an old web build will
-    # still send the shared campaign_link.key instead of a receipt. Such a
-    # value stamps the person and credits no click.
-    #
-    # Removal date: the web deploy that started sending receipts landed
-    # 2026-09-15, and the click cookie it replaced lives 7 days
-    # (`COOKIE_MAX_AGE_SEC` in `ahavah-web/src/app/s/[key]/route.ts`), so no
-    # browser can still be holding the old bare-key cookie from
-    # 2026-09-22 onward. Safe to delete this branch on or after that date,
-    # and not before -- along with the two tests named in
-    # `docs/superpowers/handovers/2026-09-13-community-spotlight-handoff.md`,
-    # section 14, "The compatibility window".
-    known = tx.execute(_Q_KNOWN_KEY, dict(k=ref)).fetchone()
-    if not known:
-        return False
-
-    stamped = tx.execute(_Q_STAMP_PERSON, dict(ref=ref, pid=person_id)).fetchone()
-    return bool(stamped)
+    return False

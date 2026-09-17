@@ -499,10 +499,9 @@ class PostFinishOnboarding(BaseModel):
     click that led to this sign-up. The field name predates the change: it
     used to carry the shared /s/<key> campaign-link key, which every viewer
     of a caption can read and so could never prove a particular visitor
-    clicked. The name, the wire shape and the 32-character limit are all
-    unchanged, and for the compatibility window named in
-    `service/spotlight/attribution.py` a bare campaign-link key is still
-    accepted here (it stamps the person and credits no click).
+    clicked. The name and the wire shape are unchanged, but a bare
+    campaign-link key is no longer accepted: the compatibility window that
+    once allowed one is closed, and only a receipt earns credit now.
     Optional: omitted (or invalid/unknown/stale) is a silent no-op there,
     so every existing client that doesn't send it keeps working."""
     spotlight_ref: Optional[str] = Field(default=None, max_length=32)
