@@ -119,6 +119,30 @@ def test_a_small_face_in_a_wide_shot_is_still_found():
     assert faces[0].area_fraction < 0.02
 
 
+def test_a_box_from_a_downscaled_image_is_reported_in_the_original_pixels():
+    """An image over the working limit is shrunk before detection.
+
+    The box has to come back in the coordinates the caller handed in, not the
+    coordinates the detector saw, or a crop built from it lands nowhere near the
+    face.
+    """
+    portrait = Image.open(io.BytesIO(_read('face-frontal.jpg'))).convert('RGB')
+
+    huge = Image.new('RGB', (2400, 2400), (196, 205, 214))
+    huge.paste(portrait, (1500, 1500))
+
+    faces = detect_faces(_png(huge))
+
+    assert len(faces) == 1
+    box = faces[0]
+
+    # The face sits inside the pasted portrait, which occupies the lower right.
+    assert box.x > 1200
+    assert box.y > 1200
+    assert box.x + box.width <= 2400
+    assert box.y + box.height <= 2400
+
+
 def test_a_face_box_carries_a_confidence_and_an_area_fraction():
     faces = detect_faces(_read('face-frontal.jpg'))
 
