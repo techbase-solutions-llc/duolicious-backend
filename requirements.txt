@@ -13,6 +13,9 @@ numpy
 numpy==1.26.4
 onnxruntime
 openai
+# YuNet face detector for antiabuse/facecheck. 4.11.0.86 is the last release
+# that still accepts the numpy 1.26.4 pin above; 4.12 requires numpy 2.
+opencv-python-headless==4.11.0.86
 Pillow
 pillow-heif
 psycopg[binary]

@@ -13,6 +13,12 @@
 
 # Known binaries — never touch.
 *.onnx filter=lfs diff=lfs merge=lfs -text
+# YuNet is 232 KB and ships in-tree beside its module, the same way
+# antiabuse/antiporn ships its own weights (those dodge the rule above only
+# because they are named .part00 and so on). Keep it out of LFS: the droplet
+# deploy is a plain git reset --hard, and a pointer file instead of a model
+# would disable the face check without anything failing loudly.
+antiabuse/facecheck/*.onnx -filter -diff -merge -text
 *.png binary
 *.jpg binary
 *.jpeg binary
