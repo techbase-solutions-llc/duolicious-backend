@@ -23,6 +23,26 @@ Q_SYSTEM_HEALTH = """
 # The System tab used to print a hardcoded "100%" success and a hardcoded
 # "0" failures on top of this number. Both are gone. Do not reintroduce a
 # rate here without a real provider log behind it.
+# Member feedback. Until 2026-09-24 no admin route queried this table at
+# all: someone took the trouble to write to the product and nobody had seen
+# it. There was one row.
+#
+# The table (migration 0019) is `id, category, message, email, path,
+# user_agent, created_at`. There is NO read or resolved marker, so this
+# panel cannot show an unread count and does not pretend to. It shows the
+# newest 50 and says that is everything. Inventing a badge would be this
+# work's own version of the defect it exists to remove.
+#
+# `message` is the member's own words and is the point of the panel, so
+# unlike the chat archive it is read deliberately. `user_agent` is not: it
+# is a debugging field, not something to put on a dashboard.
+Q_FEEDBACK_RECENT = """
+    SELECT id, category, message, email, path, created_at
+      FROM feedback
+     ORDER BY created_at DESC
+     LIMIT 50
+"""
+
 Q_OTP_24H = """
     SELECT COUNT(*) AS sent_24h
       FROM duo_session

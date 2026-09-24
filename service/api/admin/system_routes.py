@@ -6,7 +6,8 @@ import duotypes as t
 from service.api.decorators import aget
 from service.admin import require_admin
 from service.admin.queries import (
-    Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_VERIFICATION_JOBS)
+    Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_FEEDBACK_RECENT,
+    Q_VERIFICATION_JOBS)
 from service.verificationlease import (
     VERIFICATION_LEASE_SECONDS,
     VERIFICATION_MAX_REAPS,
@@ -24,6 +25,8 @@ def get_system_health(s: t.SessionInfo):
         # api connection lock is not reentrant, so a second api_tx here
         # would deadlock the request.
         outbox = tx.execute(Q_OUTBOX_HEALTH).fetchone() or {}
+        # Member feedback, which until now nothing anywhere read.
+        feedback = [dict(r) for r in tx.execute(Q_FEEDBACK_RECENT).fetchall()]
         # The counts are read against the same lease and ceiling the cron
         # claims with, so what the operator calls stuck is exactly what the
         # reaper gave up on.
@@ -46,4 +49,5 @@ def get_system_health(s: t.SessionInfo):
             outbox['oldest_queued_at'].isoformat()
             if outbox.get('oldest_queued_at') else None)),
         'verification': dict(verification),
+        'feedback': [dict(r, created_at=r['created_at'].isoformat()) for r in feedback],
     }

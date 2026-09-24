@@ -1211,6 +1211,7 @@ import service.api.admin.economy_routes  # noqa: E402,F401
 import service.api.admin.map_routes  # noqa: E402,F401
 import service.api.admin.moderation_routes as _admin_mod_routes  # noqa: E402,F401
 import service.api.admin.system_routes  # noqa: E402,F401
+import service.api.admin.engagement_routes  # noqa: E402,F401
 import service.api.admin.audit_routes  # noqa: E402,F401
 import service.api.admin.growth_routes  # noqa: E402,F401
 # Community Spotlight publishing queue (2026-09-13) -- admin-or-cron
