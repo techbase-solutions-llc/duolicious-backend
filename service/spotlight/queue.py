@@ -9,7 +9,19 @@ from service.config import WEB_BASE_URL
 from service.spotlight.eligibility import eligibility, primary_photo_uuid
 from service.spotlight.revisions import create_revision
 
-KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight')
+KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight', 'brand')
+# Kinds that are about nobody. They carry no subject_person_id, start in
+# `awaiting_render` rather than `awaiting_member`, and need no member's
+# consent. A roundup may still NAME members (its participants), which
+# dispatch re-checks one by one; a brand post never names anyone.
+#
+# This is one constant, imported everywhere the distinction is drawn,
+# because it used to be the string 'roundup' repeated in three modules. When
+# 'brand' arrived (TEC-945), dispatch.py still read `kind != 'roundup'` as
+# "has a subject", so an approved brand post would have been refused at
+# publish time as `subject_missing`, forever, with nothing on the Growth tab
+# saying why.
+SUBJECTLESS_KINDS = ('roundup', 'brand')
 # PLATFORMS lives in service.campaigns (Wave 3c task 1): this module already
 # imports from there at load time (make_campaign_link, with_platform), so
 # importing the constant the same way carries no cycle. Re-exported here
@@ -82,8 +94,11 @@ def create_candidate(tx, *, kind: str, subject_person_id: Optional[int], caption
             if existing['kind'] != kind:
                 raise ValueError('bad_request_key')
             return request_key
-    if kind == 'roundup':
+    if kind in SUBJECTLESS_KINDS:
         if subject_person_id is not None:
+            # The error name predates brand posts; it is kept because
+            # callers and tests match on it, and it means "this kind is
+            # about nobody", which is still true.
             raise ValueError('roundup_has_no_subject')
         status = 'awaiting_render'
     else:

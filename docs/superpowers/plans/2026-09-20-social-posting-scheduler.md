@@ -15,7 +15,18 @@ Linear: TEC-945
 ## Owner decisions (2026-09-20)
 
 1. **Approval before posting.** Nothing publishes on a schedule alone. A scheduled brand post waits in `review` until an operator approves it in the Growth tab, exactly like a member card.
-2. **Threads gets its own schedule and is text only.** No images, its own cadence, its own copy.
+2. ~~**Threads gets its own schedule and is text only.** No images, its own cadence, its own copy.~~ **Withdrawn 2026-09-29.** The owner has not set a Threads strategy and says it was never discussed. That Threads posts are text only is a platform constraint, not a decision, and it says nothing about what Threads is for, what it should say, or whether a schedule suits it at all (the research notes replies drive "almost half of the views" there, which points away from broadcasting). Task 4 is deferred until that conversation happens. Nothing in Tasks 1 to 3 may assume a Threads outcome.
+
+## Amendments, 2026-09-29
+
+Recorded here rather than rewritten into the tasks, so the plan's history stays readable.
+
+- **Execution scope for this round: Tasks 1, 2 and 3, plus the part of Task 5 that the correction round does not touch.** Task 4 is deferred (decision 2 above). Task 6 stands.
+- **Migration number.** `0053` and `0054` were used by the verification work after this plan was written. Task 1's migration is `0055_brand_posts.sql`.
+- **Test baselines.** API 941 at `origin/ahavah/main` (116fdc1). Admin: run `node --test "tests/*.test.mjs"`; there is no `npm test` script.
+- **The artwork.** It lives in the Claude Design project, not on disk. The 2026-09-20 correction brief was pushed but never applied, so it has been reissued as `briefs/2026-09-29-social-sets-corrections-reissue.md`, extended to `Ahavah Social Previews.html` (which claims 50,000 beta signups against a real 53) and carrying the day's real figures.
+- **Task 5, narrowed ruling.** The four values cards and the four conversation starters in `Ahavah Social Prompts and Values.html` carry no claims and no figures, and the correction round does not touch them. They may be rendered now. The community proof cards, the carousels, the templates and the previews wait for the correction round, per the original instruction.
+- **Branches.** `social-scheduler` in both repos, cut from the deployed state (`origin/ahavah/main`, `origin/master`), independent of the unmerged dashboard work.
 
 ## What this is not
 
@@ -37,7 +48,7 @@ Linear: TEC-945
 
 ### Task 1: A brand post is a queue row (API)
 
-**Files:** `migrations/0053_brand_posts.sql`, `service/spotlight/queue.py`, `service/api/admin/spotlight_routes.py`, tests.
+**Files:** `migrations/0055_brand_posts.sql` (was 0053; see Amendments), `service/spotlight/queue.py`, `service/api/admin/spotlight_routes.py`, tests.
 
 - [ ] Add `kind = 'brand'` to `KINDS`. A brand row has no `subject_person_id`, like a roundup, so the consent machinery has nothing to ask for and `consent_complete` must treat it as satisfied (verify, do not assume: read `dispatch.py` before changing anything).
 - [ ] `POST /admin/growth/brand` (cron header or admin session, `growth_limit`): body `{slug, caption, image_base64, content_type, scheduled_for, platforms}`. `slug` is the business key, so a repeated call converges the way the weekly roundup does rather than creating a second post. Creates the row in `review`, not `scheduled`: approval is the owner's, per decision 1.

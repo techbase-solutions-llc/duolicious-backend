@@ -16,15 +16,18 @@ one.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from service.spotlight.eligibility import eligibility
-from service.spotlight.queue import settings
+from service.spotlight.queue import SUBJECTLESS_KINDS, settings
+from service.spotlight.restdays import is_rest_period
 from service.spotlight.revisions import consent_complete
 
 REASONS = ('not_found', 'not_processing', 'lease_required', 'lease_mismatch', 'lease_expired', 'withdrawn',
            'no_revision', 'not_rendered', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
-           'participant:<person_id>:<reason>', 'publication_disabled', 'external_access_disabled')
+           'participant:<person_id>:<reason>', 'rest_day', 'publication_disabled',
+           'external_access_disabled')
 
 _Q_ROW = """
     SELECT status, lease_token, (lease_until IS NOT NULL AND lease_until > NOW()) AS lease_valid,
@@ -59,7 +62,11 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
         return False, 'not_rendered'
     if not consent_complete(tx, row['current_revision_id']):
         return False, 'consent_incomplete'
-    if row['kind'] != 'roundup':
+    # SUBJECTLESS_KINDS, not `!= 'roundup'`: this line used to read the
+    # latter, so the first kind about nobody that was not a roundup (a brand
+    # post, TEC-945) would have been refused here as `subject_missing` on
+    # every attempt, after the operator had already approved it.
+    if row['kind'] not in SUBJECTLESS_KINDS:
         if row['subject_person_id'] is None:
             return False, 'subject_missing'
         ok, reason = eligibility(tx, row['subject_person_id'], rev['photo_uuid'],
@@ -85,6 +92,15 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
                                      exclude_request_key=row['request_key'])
             if not ok:
                 return False, f'participant:{person_id}:{reason}'
+    # The last check before anything reaches Meta, and the only one that
+    # holds no matter how a row came to be due: created before a rest day
+    # was entered, approved on an old slot, or rescheduled by hand. The
+    # owner's rule is that nothing promotional goes out on a Sabbath or the
+    # Day of Atonement, and member cards are as promotional as brand posts,
+    # so this applies to every kind. A refusal sends the row back to review
+    # with `ineligible:rest_day` on it; nothing is lost, and nothing posts.
+    if is_rest_period(datetime.now(timezone.utc)):
+        return False, 'rest_day'
     cfg = settings(tx)
     if cfg.get('publication_enabled') != 'true':
         return False, 'publication_disabled'

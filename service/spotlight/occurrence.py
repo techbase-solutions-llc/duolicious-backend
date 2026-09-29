@@ -20,6 +20,8 @@ Every function here runs inside the caller's api_tx; none opens one.
 """
 from __future__ import annotations
 
+from service.spotlight.queue import SUBJECTLESS_KINDS
+
 
 
 def record_occurrence(tx, kind: str, request_key: str, person_ids: list[int]) -> int:
@@ -61,7 +63,9 @@ def pictured_people(tx, queue_row: dict) -> list[int]:
     own `LIMIT 1` over the request key would then answer for whichever row
     the planner happened to return. The occurrence has to name the faces on
     the card that published, so it reads that card's own revision."""
-    if queue_row['kind'] == 'roundup':
+    # A brand post is subject-less and its revision's participants are
+    # always empty, so it answers [] here: nobody's face is on it.
+    if queue_row['kind'] in SUBJECTLESS_KINDS:
         revision_id = queue_row.get('current_revision_id')
         if revision_id is None:
             return []

@@ -343,3 +343,38 @@ def make_campaign_link():
         return url.rsplit('/', 1)[1]
 
     return _make
+
+
+# ---------------------------------------------------------------------------
+# The owner's rest days (TEC-945)
+# ---------------------------------------------------------------------------
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        'markers',
+        'real_calendar: run against the real rest days in '
+        'service/spotlight/restdays.py instead of an empty calendar')
+
+
+@pytest.fixture(autouse=True)
+def _calendar_without_rest_days(monkeypatch, request):
+    """Every test runs as though no rest day is anywhere near.
+
+    `dispatch_check` refuses to publish during one of the owner's rest
+    periods, and it reads the real clock. Without this, every test that
+    expects a row to dispatch would start failing on a real Sabbath (from
+    17:00 Barbados the evening before), and a deploy on a Friday evening
+    would be blocked by its own test suite. Tests of the rule itself either
+    set their own dates on the module or opt out with
+    `@pytest.mark.real_calendar`.
+
+    KNOWN_THROUGH moves a year out for the same reason: brand posts refuse a
+    slot past the last date the owner's calendar has been read for, and the
+    real one is a fixed date that the calendar will overtake.
+    """
+    if request.node.get_closest_marker('real_calendar'):
+        return
+    from datetime import date, timedelta
+    import service.spotlight.restdays as rd
+    monkeypatch.setattr(rd, 'REST_DAYS', ())
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', date.today() + timedelta(days=365))

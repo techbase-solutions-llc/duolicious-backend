@@ -59,6 +59,7 @@ from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enque
                                        is_referenced, outstanding_jobs, overdue_removals)
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
+from service.spotlight.restdays import next_valid_slot, slot_problem
 from service.spotlight.roundup import roundup_snapshot
 from service.spotlight.storage import InvalidImage
 import service.spotlight.storage as st
@@ -1177,6 +1178,112 @@ def post_growth_spotlight_roundup():
     return dict(request_key=rk)
 
 
+# A calendar slug, as the admin's social calendar writes it. Lowercase words
+# joined by hyphens, and short enough that `brand:<slug>` fits the queue's
+# 64 character request key (see queue._REQUEST_KEY_RE).
+_BRAND_SLUG_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+_BRAND_SLUG_MAX = 64 - len('brand:')
+# Instagram's caption limit is 2,200 characters and create_candidate appends
+# a campaign link of roughly forty. The margin is deliberate.
+BRAND_CAPTION_MAX = 2000
+
+
+@post('/admin/growth/brand', limiter=growth_limit)
+def post_growth_brand():
+    """Queue one of Ahavah's own posts (TEC-945): artwork from the Claude
+    Design sets, never a member's card, never anyone's face or name.
+
+    Body: {slug, caption, scheduled_for, platforms?}. Creates the rows in
+    `awaiting_render`; the artwork then arrives per platform through the
+    existing `/admin/growth/queue/<request_key>/image` route, exactly as a
+    roundup's does, and that route moves the rows to `review`. Nothing here
+    publishes: the owner's decision is that nothing goes out on a schedule
+    alone, so every brand post waits in review for an operator's approval.
+
+    `scheduled_for` is the calendar's intended time and is stored on every
+    row, so approval keeps it with one click. It is refused outright if it
+    falls on a rest day, in the past, or after the last date the owner's
+    calendar has been read for (service/spotlight/restdays.py).
+
+    The slug is the business key. A repeated call with the same slug, from a
+    cron that fired twice or a run retried after a timeout, answers
+    `already` and changes nothing, even if the caption differs: a row the
+    owner may already have looked at is not rewritten underneath them. To
+    change a queued caption, edit it on the Growth tab.
+    """
+    s = _gate()
+    body = _body()
+    slug = body.get('slug')
+    caption = body.get('caption')
+    # Absent means every platform. An explicit empty list is a caller bug and
+    # is refused below, rather than quietly read as "all of them".
+    platforms = body.get('platforms')
+    if platforms is None:
+        platforms = list(PLATFORMS)
+    if not isinstance(slug, str) or not _BRAND_SLUG_RE.match(slug) or len(slug) > _BRAND_SLUG_MAX:
+        return dict(error='bad_slug'), 400
+    if not isinstance(caption, str) or not caption.strip() or len(caption) > BRAND_CAPTION_MAX:
+        return dict(error='bad_caption'), 400
+    if (not isinstance(platforms, list) or not platforms
+            or len(set(platforms)) != len(platforms)
+            or any(p not in PLATFORMS for p in platforms)):
+        return dict(error='bad_platforms'), 400
+    when = _parse_dt(body.get('scheduled_for'))
+    if when is None:
+        return dict(error='scheduled_for_required'), 400
+    problem = slot_problem(when)
+    if problem:
+        return dict(error='slot_unavailable', reason=problem), 409
+
+    request_key = f'brand:{slug}'
+    # Same race handling as the roundup: racing calls can all pass the
+    # `already` read together, and the losers then fail on the
+    # (request_key, platform) unique key. The post exists, so a loser gets
+    # the same answer a later duplicate would, not a 500.
+    try:
+        with api_tx() as tx:
+            if tx.execute("SELECT 1 FROM publishing_queue WHERE request_key = %(rk)s LIMIT 1",
+                          dict(rk=request_key)).fetchone():
+                return dict(request_key=request_key, already=True)
+            rk = create_candidate(tx, kind='brand', subject_person_id=None, caption=caption.strip(),
+                                  created_by=_actor(s), platforms=platforms, request_key=request_key)
+            tx.execute(
+                "UPDATE publishing_queue SET scheduled_for = %(w)s WHERE request_key = %(rk)s",
+                dict(w=when, rk=rk))
+            _audit(tx, s, 'growth.queue.brand', request_key=rk, platforms=platforms,
+                   scheduled_for=when.isoformat())
+    except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
+        return dict(request_key=request_key, already=True)
+    return dict(request_key=rk)
+
+
+def _approval_slot(kind: str, requested: Optional[datetime],
+                   stored: Optional[datetime]) -> tuple[Optional[datetime], Optional[str]]:
+    """Where an approval puts a row, and why not if it cannot.
+
+    Member cards keep the rule they always had: an explicit slot wins, else
+    the slot already on the row, else the next default slot.
+
+    A brand post is held to the owner's calendar. An explicit slot that falls
+    on a rest day, in the past, or beyond the known calendar is refused, so
+    the operator chooses again. A stored slot that has since gone past (the
+    approval came late) rolls forward to the next valid slot rather than
+    publishing the moment the button is pressed, which might be a Friday
+    evening. When nothing valid remains before the calendar runs out, the
+    answer is `unknown`: the owner's calendar has to be read further before
+    anything else can go out.
+    """
+    if kind != 'brand':
+        return requested or stored or _default_slot(), None
+    if requested is not None:
+        problem = slot_problem(requested)
+        return (None, problem) if problem else (requested, None)
+    if stored is not None and slot_problem(stored) is None:
+        return stored, None
+    rolled = next_valid_slot()
+    return (rolled, None) if rolled else (None, 'unknown')
+
+
 @post('/admin/growth/spotlight/invite-pending', limiter=growth_limit)
 def post_growth_spotlight_invite_pending():
     """Task 7 (the Wave 1 gap): sends the E4 invites that were withheld while
@@ -1473,13 +1580,19 @@ def post_growth_queue_approve(s: t.SessionInfo, qid: str):
     queue_id = _qid(qid)
     requested = _parse_dt(_body().get('scheduled_for'))
     with api_tx() as tx:
-        row = tx.execute("SELECT scheduled_for, image_key FROM publishing_queue WHERE id = %(id)s",
+        row = tx.execute("SELECT kind, scheduled_for, image_key FROM publishing_queue WHERE id = %(id)s",
                          dict(id=queue_id)).fetchone()
         if not row:
             abort(404)
         # An explicit slot wins; otherwise keep the slot member-of-the-week
         # already stored on the row; otherwise fall to the next default slot.
-        when = requested or row['scheduled_for'] or _default_slot()
+        # A brand post is additionally held to the owner's calendar: see
+        # _approval_slot. Refused before anything is written, so the early
+        # return commits nothing.
+        when, problem = _approval_slot(row['kind'], requested, row['scheduled_for'])
+        if problem:
+            return dict(error='slot_unavailable', reason=problem), 409
+        assert when is not None  # _approval_slot always names a slot when it names no problem
         try:
             set_status(tx, queue_id, 'scheduled')
         except ValueError as e:

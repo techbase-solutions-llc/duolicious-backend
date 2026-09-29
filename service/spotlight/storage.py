@@ -108,7 +108,16 @@ def _bucket():
     return _bucket_cache
 
 
-def validate_card_image(data: bytes, content_type: str, *, size=(1080, 1080),
+# The exact pixel sizes a card may be. Square is what the member card renderer
+# produces. Portrait 4:5 is what the Claude Design brand sets are drawn at
+# (TEC-945): it takes the most vertical space Instagram gives a feed post,
+# and both Instagram and Facebook accept it. Exact sizes, not ranges: every
+# producer of cards is deterministic, so anything else is a renderer bug to
+# refuse rather than an image to store.
+CARD_SIZES = ((1080, 1080), (1080, 1350))
+
+
+def validate_card_image(data: bytes, content_type: str, *, sizes=CARD_SIZES,
                         max_bytes=5_000_000) -> str:
     """Reject anything that is not a clean, correctly sized image of the
     declared `content_type` (`image/jpeg` or `image/png`) before it ever
@@ -154,7 +163,7 @@ def validate_card_image(data: bytes, content_type: str, *, size=(1080, 1080),
             raise InvalidImage('not_png') from e
         if fmt != expected_format:
             raise InvalidImage('not_png')
-        if (width, height) != tuple(size):
+        if (width, height) not in {tuple(s) for s in sizes}:
             raise InvalidImage('bad_dimensions')
         if fmt == 'JPEG':
             try:
