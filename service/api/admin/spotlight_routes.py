@@ -354,7 +354,16 @@ _Q_ROWS = f"""
        AND (%(due)s::bool IS NOT TRUE OR q.scheduled_for <= NOW())
        AND (%(needs_render)s::bool IS NOT TRUE
             OR (r.asset_hash IS NULL
-                AND q.status NOT IN ('cancelled', 'published', 'processing', 'scheduled')))
+                AND q.status NOT IN ('cancelled', 'published', 'processing', 'scheduled')
+                -- A brand post's artwork comes from the Claude Design sets,
+                -- uploaded by the admin's social-queue run, never from the
+                -- tick's renderer. The tick knows member cards and roundups
+                -- only: handed a subject-less row with no tiles, it draws a
+                -- roundup card reading "0 new members across 0 countries".
+                -- Found by review (TEC-945): one failed artwork upload, or a
+                -- caption edit, and the next 06:00 tick would have put that
+                -- card on a brand post.
+                AND q.kind <> 'brand'))
        -- Wave 3d Task 4 (acceptance 8c): a card whose render was reported
        -- failed sits out its backoff (`post_growth_queue_render_failed`), so
        -- one that keeps failing cannot hold a place in the tick's 200 rows.
@@ -833,11 +842,21 @@ def post_growth_queue_image(request_key: str):
 
     with api_tx('read committed') as tx:
         known = tx.execute(
-            """SELECT status, current_revision_id FROM publishing_queue
+            """SELECT kind, status, current_revision_id FROM publishing_queue
                 WHERE request_key = %(rk)s AND platform = %(pl)s""",
             dict(rk=request_key, pl=platform)).fetchone()
     if not known:
         abort(404)
+    # A brand post is drawn at 1080x1350 in the Claude Design sets and is
+    # never square. The square size is what the tick's roundup renderer
+    # produces, so a square image arriving on a brand row means the wrong
+    # card is being attached, whatever sent it. Refused before the upload,
+    # like every other check here.
+    if known['kind'] == 'brand':
+        try:
+            st.validate_card_image(data, content_type, sizes=(st.BRAND_CARD_SIZE,))
+        except InvalidImage as e:
+            return dict(error='invalid_image', reason=str(e)), 400
     # Fix round 1 (Task 2 review): both checks below run BEFORE the upload,
     # so a rejected call never reaches the object store and never writes a
     # row's image columns.
@@ -1208,8 +1227,13 @@ def post_growth_brand():
     The slug is the business key. A repeated call with the same slug, from a
     cron that fired twice or a run retried after a timeout, answers
     `already` and changes nothing, even if the caption differs: a row the
-    owner may already have looked at is not rewritten underneath them. To
-    change a queued caption, edit it on the Growth tab.
+    owner may already have looked at is not rewritten underneath them. The
+    key stays taken after a cancel, too.
+
+    So to change a queued post's caption or artwork: cancel it on the Growth
+    tab, give the calendar entry a new id with the new content, and deploy
+    the admin. There is an API caption route, but no editor for it on the
+    Growth tab (TEC-945 review), and it would clear the artwork anyway.
     """
     s = _gate()
     body = _body()
@@ -1224,7 +1248,10 @@ def post_growth_brand():
         return dict(error='bad_slug'), 400
     if not isinstance(caption, str) or not caption.strip() or len(caption) > BRAND_CAPTION_MAX:
         return dict(error='bad_caption'), 400
+    # isinstance first: set() of a list holding a dict raises TypeError,
+    # which would surface as a 500 rather than the caller's mistake.
     if (not isinstance(platforms, list) or not platforms
+            or not all(isinstance(p, str) for p in platforms)
             or len(set(platforms)) != len(platforms)
             or any(p not in PLATFORMS for p in platforms)):
         return dict(error='bad_platforms'), 400
@@ -1280,7 +1307,12 @@ def _approval_slot(kind: str, requested: Optional[datetime],
         return (None, problem) if problem else (requested, None)
     if stored is not None and slot_problem(stored) is None:
         return stored, None
-    rolled = next_valid_slot()
+    # Roll forward from the later of now and the intended time. A stored slot
+    # that has gone past rolls from now; one still in the future that has
+    # since become a rest day (the owner's projected dates can move) rolls
+    # from where it was meant to be, never earlier.
+    now = datetime.now(timezone.utc)
+    rolled = next_valid_slot(max(now, stored) if stored is not None else now)
     return (rolled, None) if rolled else (None, 'unknown')
 
 
@@ -1607,10 +1639,16 @@ def post_growth_queue_approve(s: t.SessionInfo, qid: str):
             st.make_public(row['image_key'])
         except Exception:
             with api_tx() as tx:
+                # Back to the slot the row had BEFORE this approval, not to
+                # NULL. A brand post carries its calendar time from creation
+                # and a member of the week its Monday; clearing either meant
+                # that pressing Approve again, after a storage error, put the
+                # post out at the next default slot, days early (TEC-945
+                # review: Sunday's post would have gone out on a Tuesday).
                 cur = tx.execute(
-                    """UPDATE publishing_queue SET status = 'review', scheduled_for = NULL, updated_at = NOW()
+                    """UPDATE publishing_queue SET status = 'review', scheduled_for = %(prev)s, updated_at = NOW()
                         WHERE id = %(id)s AND status = 'scheduled'""",
-                    dict(id=queue_id))
+                    dict(id=queue_id, prev=row['scheduled_for']))
                 in_flight = not cur.rowcount
                 if in_flight:
                     _audit(tx, s, 'growth.queue.approve.storage_failed_in_flight', queue_id=str(queue_id))
@@ -1639,11 +1677,25 @@ def post_growth_queue_retry(s: t.SessionInfo, qid: str):
     require_admin(s)
     queue_id = _qid(qid)
     with api_tx() as tx:
+        row = tx.execute("SELECT kind, scheduled_for FROM publishing_queue WHERE id = %(id)s",
+                         dict(id=queue_id)).fetchone()
+        # A brand post is held to the owner's calendar here too: a retry keeps
+        # a slot that is still valid and otherwise rolls forward exactly as a
+        # late approval does, rather than publishing the moment it is
+        # pressed. Checked before anything is written.
+        when = None
+        if row and row['kind'] == 'brand':
+            when, problem = _approval_slot('brand', None, row['scheduled_for'])
+            if problem:
+                return dict(error='slot_unavailable', reason=problem), 409
         # failed -> scheduled. The attempts cap lives in set_status (Task 2).
         try:
             set_status(tx, queue_id, 'scheduled')
         except ValueError as e:
             abort(409, str(e))
+        if when is not None:
+            tx.execute("UPDATE publishing_queue SET scheduled_for = %(w)s WHERE id = %(id)s",
+                       dict(w=when, id=queue_id))
         _audit(tx, s, 'growth.queue.retry', queue_id=str(queue_id))
     return dict(status='scheduled')
 
@@ -1656,6 +1708,15 @@ def post_growth_queue_reschedule(s: t.SessionInfo, qid: str):
     if when is None:
         abort(400)
     with api_tx() as tx:
+        # A brand post may not be moved onto a rest day, into the past (which
+        # would publish it at once) or past the known calendar, the same rule
+        # approval applies to an explicit slot. Refused before any write.
+        kind = tx.execute("SELECT kind FROM publishing_queue WHERE id = %(id)s",
+                          dict(id=queue_id)).fetchone()
+        if kind and kind['kind'] == 'brand':
+            problem = slot_problem(when)
+            if problem:
+                return dict(error='slot_unavailable', reason=problem), 409
         cur = tx.execute(
             """UPDATE publishing_queue SET scheduled_for = %(w)s, updated_at = NOW()
                 WHERE id = %(id)s AND status = 'scheduled'""",

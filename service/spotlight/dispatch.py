@@ -21,12 +21,12 @@ from typing import Optional
 
 from service.spotlight.eligibility import eligibility
 from service.spotlight.queue import SUBJECTLESS_KINDS, settings
-from service.spotlight.restdays import is_rest_period
+from service.spotlight.restdays import is_beyond_known, is_rest_period
 from service.spotlight.revisions import consent_complete
 
 REASONS = ('not_found', 'not_processing', 'lease_required', 'lease_mismatch', 'lease_expired', 'withdrawn',
            'no_revision', 'not_rendered', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
-           'participant:<person_id>:<reason>', 'rest_day', 'publication_disabled',
+           'participant:<person_id>:<reason>', 'rest_day', 'calendar_unknown', 'publication_disabled',
            'external_access_disabled')
 
 _Q_ROW = """
@@ -92,15 +92,26 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
                                      exclude_request_key=row['request_key'])
             if not ok:
                 return False, f'participant:{person_id}:{reason}'
-    # The last check before anything reaches Meta, and the only one that
-    # holds no matter how a row came to be due: created before a rest day
-    # was entered, approved on an old slot, or rescheduled by hand. The
-    # owner's rule is that nothing promotional goes out on a Sabbath or the
-    # Day of Atonement, and member cards are as promotional as brand posts,
-    # so this applies to every kind. A refusal sends the row back to review
-    # with `ineligible:rest_day` on it; nothing is lost, and nothing posts.
-    if is_rest_period(datetime.now(timezone.utc)):
+    # The last check before anything reaches Meta, whatever way a row came
+    # to be due: created before a rest day was entered, approved on an old
+    # slot, or rescheduled by hand. The owner's rule is that nothing
+    # promotional goes out on a Sabbath or the Day of Atonement, and member
+    # cards are as promotional as brand posts, so this applies to every
+    # kind. A refusal sends the row back to review with `ineligible:rest_day`
+    # on it; nothing is lost, and nothing posts.
+    #
+    # ITS REACH ENDS AT restdays.KNOWN_THROUGH. The rest days after that date
+    # have not been read from the owner's calendar, so for a member card
+    # there is nothing to refuse on; that is where member cards stood before
+    # this check existed, not a new gap, and it closes as soon as the next
+    # month is entered. A brand post is held tighter: nothing about one may
+    # be decided past the known calendar (creation and approval refuse it
+    # too), so dispatch refuses it there as well.
+    now = datetime.now(timezone.utc)
+    if is_rest_period(now):
         return False, 'rest_day'
+    if row['kind'] == 'brand' and is_beyond_known(now):
+        return False, 'calendar_unknown'
     cfg = settings(tx)
     if cfg.get('publication_enabled') != 'true':
         return False, 'publication_disabled'

@@ -72,6 +72,13 @@ def is_rest_period(at: datetime) -> bool:
     return any(start <= at < end for start, end in map(_rest_window, REST_DAYS))
 
 
+def is_beyond_known(at: datetime) -> bool:
+    """After the last date the owner's calendar has been read for."""
+    if at.tzinfo is None:
+        raise ValueError('naive datetime')
+    return at.astimezone(BARBADOS).date() > KNOWN_THROUGH
+
+
 def slot_problem(at: datetime, now: Optional[datetime] = None) -> Optional[str]:
     """Why a post may not go out at `at`, or None if it may.
 
@@ -85,7 +92,7 @@ def slot_problem(at: datetime, now: Optional[datetime] = None) -> Optional[str]:
     now = now or datetime.now(timezone.utc)
     if at <= now:
         return 'past'
-    if at.astimezone(BARBADOS).date() > KNOWN_THROUGH:
+    if is_beyond_known(at):
         return 'unknown'
     if is_rest_period(at):
         return 'rest_day'

@@ -115,6 +115,10 @@ def _bucket():
 # producer of cards is deterministic, so anything else is a renderer bug to
 # refuse rather than an image to store.
 CARD_SIZES = ((1080, 1080), (1080, 1350))
+# The only size a brand post may be. The image route holds brand rows to it,
+# because square is what the tick's renderer draws, and a square image on a
+# brand row is the wrong card (TEC-945 review).
+BRAND_CARD_SIZE = (1080, 1350)
 
 
 def validate_card_image(data: bytes, content_type: str, *, sizes=CARD_SIZES,

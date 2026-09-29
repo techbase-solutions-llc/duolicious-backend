@@ -241,11 +241,16 @@ def test_a_slot_in_the_past_is_refused(client):
 # The artwork: the brand sets are portrait
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('w,h,ok', [(1080, 1350, True), (1080, 1080, True), (1350, 1080, False)])
-def test_the_image_route_takes_portrait_and_square_and_nothing_else(client, monkeypatch, w, h, ok):
+@pytest.mark.parametrize('w,h,ok', [(1080, 1350, True), (1080, 1080, False), (1350, 1080, False)])
+def test_a_brand_row_takes_portrait_and_nothing_else(client, monkeypatch, w, h, ok):
     """The Claude Design brand sets are 1080 by 1350. The route used to
     accept exactly 1080 by 1080, so every brand card would have come back
-    `invalid_image`. Landscape is still refused: nothing produces it."""
+    `invalid_image`.
+
+    Square is refused on a brand row even though the route accepts it for
+    member cards: square is what the tick's roundup renderer draws, so a
+    square image on a brand row is the wrong card (TEC-945 review, the
+    "0 new members across 0 countries" finding)."""
     import service.spotlight.storage as st
     monkeypatch.setattr(st, 'put_card_image', lambda key, data, content_type, public=False: None)
     rk = _create(client, platforms=['facebook']).get_json()['request_key']
@@ -424,3 +429,169 @@ def test_dispatch_refuses_during_a_rest_period_for_every_kind(client, monkeypatc
     finally:
         _cancel(brand)
         _cancel(member)
+
+
+def test_a_member_card_still_takes_square(client, monkeypatch):
+    """Negative control for the brand-only size rule: the square renderer's
+    own cards are unaffected."""
+    import service.spotlight.storage as st
+    monkeypatch.setattr(st, 'put_card_image', lambda key, data, content_type, public=False: None)
+    with api_tx() as tx:
+        rk = create_candidate(tx, kind='roundup', subject_person_id=None, caption='c', created_by='t')
+    try:
+        r = client.post(f'/admin/growth/queue/{rk}/image',
+                        json=dict(platform='facebook', image_base64=_jpeg(1080, 1080), content_type='image/jpeg'),
+                        headers=H)
+        assert r.status_code == 200, r.get_json()
+    finally:
+        _cancel(rk)
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave (TEC-945)
+# ---------------------------------------------------------------------------
+
+def _needs_render_keys(client) -> set:
+    r = client.get('/admin/growth/queue?needs_render=1', headers=H)
+    assert r.status_code == 200, r.get_json()
+    data = r.get_json()
+    rows = data if isinstance(data, list) else data.get('rows', [])
+    return {row['request_key'] for row in rows}
+
+
+def test_the_render_tick_never_sees_a_brand_post(client):
+    """The review's Critical. The tick renders every row it is handed, and
+    handed a subject-less row with no tiles it draws a roundup card reading
+    "0 new members across 0 countries". A brand post waiting for its artwork
+    must not be in the tick's listing at all: its artwork only ever comes
+    from the social-queue run."""
+    brand = _create(client).get_json()['request_key']
+    with api_tx() as tx:
+        roundup = create_candidate(tx, kind='roundup', subject_person_id=None, caption='c', created_by='t')
+    try:
+        keys = _needs_render_keys(client)
+        # Negative control: an artless roundup IS listed, so the filter is
+        # about brand posts and not a listing that returns nothing.
+        assert roundup in keys
+        assert brand not in keys
+    finally:
+        _cancel(brand)
+        _cancel(roundup)
+
+
+def test_a_storage_failure_at_approval_keeps_the_calendar_slot(client, monkeypatch, make_person):
+    """Approve, storage fails, the row reverts. It used to revert with its
+    slot cleared, so pressing Approve again put the post out at the next
+    default slot, days early."""
+    import service.spotlight.storage as st
+    A = _admin_headers(make_person)
+    when = _soon(days=4)
+    rk = _create(client, when=when).get_json()['request_key']
+    try:
+        _render(client, monkeypatch, rk)
+        qid = _rows(rk)[0]['id']
+
+        def boom(key):
+            raise RuntimeError('storage down')
+        monkeypatch.setattr(st, 'make_public', boom)
+        r = _approve(client, A, qid)
+        assert r.status_code == 503
+        row = _rows(rk)[0]
+        assert row['status'] == 'review'
+        assert row['scheduled_for'] == when, 'the revert threw the calendar slot away'
+
+        monkeypatch.setattr(st, 'make_public', lambda key: None)
+        assert _approve(client, A, qid).status_code == 200
+        assert _rows(rk)[0]['scheduled_for'] == when
+    finally:
+        _cancel(rk)
+
+
+def test_a_future_slot_that_became_a_rest_day_rolls_forward_from_itself(client, monkeypatch, make_person):
+    """The owner's projected dates can move. A post queued for a day that is
+    later entered as a rest day rolls to the next valid slot AFTER its own
+    time, never to one earlier in the week."""
+    import service.spotlight.storage as st
+    monkeypatch.setattr(st, 'make_public', lambda key: None)
+    A = _admin_headers(make_person)
+    when = _soon(days=5).replace(hour=12, minute=30, second=0)
+    rk = _create(client, when=when).get_json()['request_key']
+    try:
+        _render(client, monkeypatch, rk)
+        monkeypatch.setattr(rd, 'REST_DAYS', (when.astimezone(rd.BARBADOS).date(),))
+        assert _approve(client, A, _rows(rk)[0]['id']).status_code == 200
+        slot = _rows(rk)[0]['scheduled_for']
+        assert slot > when, f'rolled to {slot}, earlier than the intended {when}'
+        assert rd.slot_problem(slot, datetime.now(timezone.utc)) is None
+    finally:
+        _cancel(rk)
+
+
+def test_dispatch_refuses_a_brand_post_past_the_known_calendar(client, monkeypatch, make_person):
+    """Creation and approval refuse a brand post past the last date the
+    owner's calendar has been read for; dispatch does too, so one moved
+    there by hand cannot slip out. A member card is not held to it: with no
+    rest days entered there is nothing to refuse on, which is where member
+    cards stood before any of this."""
+    brand = _create(client).get_json()['request_key']
+    p = _make_eligible(make_person)
+    with api_tx() as tx:
+        member = _member_card(tx, p['id'])
+    try:
+        _render(client, monkeypatch, brand)
+        monkeypatch.setattr(rd, 'KNOWN_THROUGH', date.today() - timedelta(days=2))
+        with _publication_on(), api_tx() as tx:
+            rows = {r['kind']: r for r in _claimed(tx, brand) + _claimed(tx, member)}
+            assert dispatch_check(tx, rows['brand']['id'], rows['brand']['lease_token']) == (False, 'calendar_unknown')
+            assert dispatch_check(tx, rows['welcome']['id'], rows['welcome']['lease_token']) == (True, '')
+    finally:
+        _cancel(brand)
+        _cancel(member)
+
+
+def test_a_brand_post_cannot_be_rescheduled_onto_a_rest_day_or_into_the_past(client, monkeypatch, make_person):
+    import service.spotlight.storage as st
+    monkeypatch.setattr(st, 'make_public', lambda key: None)
+    A = _admin_headers(make_person)
+    rk = _create(client).get_json()['request_key']
+    try:
+        _render(client, monkeypatch, rk)
+        qid = _rows(rk)[0]['id']
+        assert _approve(client, A, qid).status_code == 200
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        r = client.post(f'/admin/growth/queue/{qid}/reschedule',
+                        json=dict(scheduled_for=past.isoformat()), headers=A)
+        assert r.status_code == 409 and r.get_json() == dict(error='slot_unavailable', reason='past')
+        sabbath = (datetime.now(rd.BARBADOS) + timedelta(days=6)).date()
+        monkeypatch.setattr(rd, 'REST_DAYS', (sabbath,))
+        bad = datetime.combine(sabbath, datetime.min.time(), rd.BARBADOS).replace(hour=10)
+        r = client.post(f'/admin/growth/queue/{qid}/reschedule',
+                        json=dict(scheduled_for=bad.isoformat()), headers=A)
+        assert r.status_code == 409 and r.get_json()['reason'] == 'rest_day'
+    finally:
+        _cancel(rk)
+
+
+def test_retrying_a_failed_brand_post_rolls_forward_instead_of_publishing_at_once(client, monkeypatch, make_person):
+    A = _admin_headers(make_person)
+    rk = _create(client).get_json()['request_key']
+    try:
+        _render(client, monkeypatch, rk)
+        qid = _rows(rk)[0]['id']
+        with api_tx() as tx:
+            tx.execute("""UPDATE publishing_queue SET status = 'failed', scheduled_for = NOW() - interval '1 day'
+                           WHERE id = %(id)s""", dict(id=qid))
+        before = datetime.now(timezone.utc)
+        r = client.post(f'/admin/growth/queue/{qid}/retry', json={}, headers=A)
+        assert r.status_code == 200, r.get_json()
+        row = [x for x in _rows(rk) if x['id'] == qid][0]
+        assert row['status'] == 'scheduled'
+        assert row['scheduled_for'] > before
+    finally:
+        _cancel(rk)
+
+
+def test_a_platforms_list_holding_an_object_is_a_400_not_a_500(client):
+    r = client.post('/admin/growth/brand', headers=H, json=dict(
+        slug=_slug(), caption='c', scheduled_for=_soon().isoformat(), platforms=[{'x': 1}]))
+    assert r.status_code == 400 and r.get_json() == dict(error='bad_platforms')
