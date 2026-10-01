@@ -38,7 +38,7 @@ FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 SUBJECT = "Welcome to Ahavah. Your Premium is live"
 
 _Q_MEMBER = """
-    SELECT name, subscription_expires_at, referral_code
+    SELECT id, name, subscription_expires_at, referral_code
       FROM person
      WHERE email = %(email)s AND activated
 """
@@ -90,34 +90,40 @@ You're receiving this because you just joined Ahavah.
 
 
 def send_member_welcome(email: str) -> bool:
-    """Synchronous send. Reads the member's live Premium expiry and
-    referral code; returns False (no send) if the member is missing,
-    suppressed, or not yet fully granted (no expiry / no code)."""
+    """Queue the welcome through the durable outbox. Reads the member's live
+    Premium expiry and referral code; returns False (nothing queued) if the
+    member is missing, suppressed, not yet fully granted (no expiry / no
+    code), or already welcomed.
+
+    Until 1 Oct 2026 this spoke to SMTP directly from a thread and kept no
+    record, so nobody could say whether a member's welcome had gone. The
+    outbox drain writes email_send_log on acceptance (campaign `welcome`),
+    which is what Growth > Emails reads (TEC-1613). Exempt from the frequency
+    cap: a welcome is the one email a new member is owed whatever else went
+    out that week."""
     if is_suppressed_send(email):
         return False
 
-    with api_tx('read committed') as tx:
-        row = tx.execute(_Q_MEMBER, dict(email=email)).fetchone()
-
-    if not row or not row['subscription_expires_at'] or not row['referral_code']:
-        return False
-
+    from service.campaigns import outbox
     from service.unsubscribe import make_url as unsub_url
-    from smtp import aws_smtp
 
-    unsub = unsub_url('notifications', email, WEB_BASE_URL)
-    aws_smtp.send(
-        subject=SUBJECT,
-        body=member_welcome_html(
-            row['subscription_expires_at'],
-            f"https://ahavah.app/i/{row['referral_code']}",
-            unsub,
-        ),
-        to_addr=email,
-        from_addr=FROM_ADDR,
-        list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
-    )
-    return True
+    with api_tx() as tx:
+        row = tx.execute(_Q_MEMBER, dict(email=email)).fetchone()
+        if not row or not row['subscription_expires_at'] or not row['referral_code']:
+            return False
+        unsub = unsub_url('notifications', email, WEB_BASE_URL)
+        row_id = outbox.enqueue(
+            tx, campaign='welcome', campaign_id=f"welcome-{row['id']}", person_id=row['id'],
+            email=email, subject=SUBJECT,
+            html=member_welcome_html(
+                row['subscription_expires_at'],
+                f"https://ahavah.app/i/{row['referral_code']}",
+                unsub,
+            ),
+            from_addr=FROM_ADDR, unsub_scope='notifications',
+            list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
+            exempt=True)
+    return row_id is not None
 
 
 def send_member_welcome_async(email: str) -> None:
