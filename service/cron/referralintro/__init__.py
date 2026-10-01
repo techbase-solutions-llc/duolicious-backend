@@ -67,22 +67,30 @@ def campaign_id(person_id: int, now: datetime) -> str:
     return f"referral-{person_id}-{year}w{week:02d}"
 
 
-def queue_due(tx, now: datetime | None = None) -> int:
+def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
+              not_before: datetime | None = None, id_suffix: str | None = None) -> int:
     """Queue the intro for every member due one. Returns how many rows were
-    queued this tick (not how many were due: the outbox dedupes repeats)."""
+    queued this tick (not how many were due: the outbox dedupes repeats).
+
+    The keyword arguments exist for a deliberate one-off run from the
+    command line (scripts/schedule_referral_intro.py): `not_before` holds the
+    rows for a chosen slot, `cap_days` is the frequency window the drain
+    re-checks at that slot, and `id_suffix` replaces the ISO week in the id
+    so the run cannot collide with the cron's own row for the week."""
     now = now or datetime.now(timezone.utc)
     rows = tx.execute(_Q_DUE, dict(days=REFERRAL_INTRO_AFTER_DAYS, ex=_excluded(),
                                    sup=suppressed_sql_pattern())).fetchall()
     queued = 0
     for r in rows:
         unsub = unsub_url(UNSUB_SCOPE, r['email'], WEB_BASE_URL)
+        cid = f"referral-{r['id']}-{id_suffix}" if id_suffix else campaign_id(r['id'], now)
         row_id = outbox.enqueue(
-            tx, campaign='referral', campaign_id=campaign_id(r['id'], now), person_id=r['id'],
+            tx, campaign='referral', campaign_id=cid, person_id=r['id'],
             email=r['email'], subject=SUBJECT,
             html=referral_intro_html(r['email'], r['referral_code'], member=True),
             from_addr=FROM_ADDR, unsub_scope=UNSUB_SCOPE,
             list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
-            cap_days=7)
+            cap_days=cap_days, not_before=not_before)
         if row_id is not None:
             queued += 1
     return queued

@@ -31,6 +31,7 @@ sequence via the factory it is handed.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Optional
 
 from emails.base import is_suppressed_send, mask_email
@@ -66,8 +67,10 @@ POST_SEND_HOOKS = {
 }
 
 _Q_ENQUEUE = """
-    INSERT INTO email_outbox (campaign, campaign_id, person_id, email, payload, exempt, unsub_scope)
-    VALUES (%(c)s, %(cid)s, %(pid)s, %(email)s, %(payload)s, %(exempt)s, %(scope)s)
+    INSERT INTO email_outbox (campaign, campaign_id, person_id, email, payload, exempt, unsub_scope,
+                              next_attempt_at)
+    VALUES (%(c)s, %(cid)s, %(pid)s, %(email)s, %(payload)s, %(exempt)s, %(scope)s,
+            COALESCE(%(at)s, NOW()))
     ON CONFLICT (campaign, campaign_id, person_id) DO NOTHING
     RETURNING id
 """
@@ -144,10 +147,16 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
             subject: str, html: str, from_addr: str, unsub_scope: str,
             list_unsubscribe: Optional[str] = None, exempt: bool = False,
             cap_days: int = 7, post_send: Optional[str] = None,
-            requires_spotlight_opt_in: bool = False) -> Optional[int]:
+            requires_spotlight_opt_in: bool = False,
+            not_before: Optional[datetime] = None) -> Optional[int]:
     """Queue one message. Returns the new row id, or None when this exact
     (campaign, campaign_id, person_id) was already queued, sent, skipped or
     failed -- which is what makes a retried caller safe.
+
+    `not_before` holds the row until that instant: the drain only reserves
+    rows whose next_attempt_at has passed, so a message can be queued today
+    for a chosen slot (owner decision 1 Oct 2026, TEC-1613: the referral
+    intros held by the cap go out two days later).
 
     Call this inside the transaction that decided to send, never around it:
     the invite and the candidate it belongs to either both commit or neither
@@ -172,7 +181,7 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
                    requires_spotlight_opt_in=bool(requires_spotlight_opt_in))
     row = tx.execute(_Q_ENQUEUE, dict(c=campaign, cid=campaign_id, pid=person_id, email=email,
                                       payload=json.dumps(payload), exempt=bool(exempt),
-                                      scope=unsub_scope)).fetchone()
+                                      scope=unsub_scope, at=not_before)).fetchone()
     return row['id'] if row else None
 
 
