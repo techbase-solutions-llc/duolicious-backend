@@ -10,6 +10,7 @@ from flask import request, abort
 from service.api.decorators import aget, apost
 from service.admin import require_admin, record_audit
 from service.admin.queries import Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES
+from emails.photo_removed import send_photo_removed
 from database import api_tx
 
 
@@ -48,7 +49,16 @@ def approve_photo_admin(s: t.SessionInfo, photo_uuid: str):
 
 @apost('/admin/moderation/photos/<photo_uuid>/reject')
 def reject_photo_admin(s: t.SessionInfo, photo_uuid: str):
+    """Take a photo down, and tell the member.
+
+    This used to set the status and say nothing: the photo simply stopped
+    appearing and the member was left to wonder. Body `{notify}` defaults to
+    true. The note goes out AFTER the takedown has committed and can never
+    undo it: a mail failure is caught and reported back as `notified: false`
+    so the operator knows whether the member was told.
+    """
     require_admin(s)
+    notify = (request.get_json(silent=True) or {}).get('notify', True) is not False
     with api_tx() as tx:
         row = tx.execute(
             """
@@ -61,12 +71,20 @@ def reject_photo_admin(s: t.SessionInfo, photo_uuid: str):
         ).fetchone()
         if row is None:
             abort(404)
+        owner = tx.execute("SELECT email, name FROM person WHERE id = %(i)s",
+                           dict(i=row['person_id'])).fetchone()
         record_audit(
             tx, s, 'reject_photo',
             target_email=None, target_uuid=None,
-            metadata={'photo_uuid': photo_uuid},
+            metadata={'photo_uuid': photo_uuid, 'notify': notify},
         )
-    return {'ok': True}
+    notified = False
+    if notify and owner:
+        try:
+            notified = bool(send_photo_removed(owner['email'], owner['name']))
+        except Exception as e:
+            print(f'reject_photo: note not sent ({type(e).__name__})')
+    return {'ok': True, 'notified': notified}
 
 
 @aget('/admin/moderation/rude-messages')

@@ -9,12 +9,20 @@ Q_PHOTOS_LIST = """
         ph.position,
         ph.moderation_status::text AS moderation_status,
         ph.nsfw_score,
+        ph.face_count,
+        ph.face_checked_at,
         ph.moderated_at,
         p.email AS owner_email,
         p.uuid::text AS owner_uuid
       FROM photo ph
       JOIN person p ON p.id = ph.person_id
-     WHERE (%(state)s = '' OR ph.moderation_status::text = %(state)s)
+     -- 'queue' is everything waiting on a person: pending AND manual_review.
+     -- The Photos tab used to ask for 'pending' alone, so a photo the cron
+     -- had sent for a human decision was never shown to anyone (TEC-946).
+     WHERE (%(state)s = ''
+            OR ph.moderation_status::text = %(state)s
+            OR (%(state)s = 'queue'
+                AND ph.moderation_status::text IN ('pending', 'manual_review')))
      ORDER BY ph.moderated_at DESC NULLS FIRST
      LIMIT 100
 """

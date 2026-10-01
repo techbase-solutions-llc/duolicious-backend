@@ -164,7 +164,10 @@ def test_every_template_renders_through_the_shell():
         text = path.read_text(encoding='utf-8')
         if '<html' in text.lower():
             offenders.append(f'{path.name}: builds its own document')
-        if 'def ' in text and 'render(' not in text and 'emailtemplate' not in text:
+        # A module built on send_member_note is on the shell by construction:
+        # member_note.py is the one place that calls render() for a one-off note.
+        if ('def ' in text and 'render(' not in text and 'emailtemplate' not in text
+                and 'send_member_note(' not in text):
             offenders.append(f'{path.name}: never calls render()')
     assert not offenders, (
         'These templates bypass emails/base.py render():\n  ' + '\n  '.join(offenders))

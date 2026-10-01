@@ -1,4 +1,5 @@
 from antiabuse.antiporn import predict_nsfw
+from antiabuse.facecheck import count_faces as count_faces_in
 from database.asyncdatabase import api_tx
 from service.cron.nsfwphotorunner.sql import *
 from service.cron.cronutil import (
@@ -13,6 +14,22 @@ import random
 NSFW_PHOTO_RUNNER_POLL_SECONDS = env_int('DUO_CRON_NSFW_PHOTO_RUNNER_POLL_SECONDS', 1) # 1 second
 
 print(f'Hello from cron module: {__name__}')
+
+def count_faces(image_data_seq) -> list:
+    """How many faces each image shows, or None where the check could not
+    look. None matters: an unreadable download or a detector that will not
+    load must never be stored as 0, because 0 on a main photo sends it to a
+    person. The helper is written never to raise, but this is the photo
+    pipeline: if it ever does, the nudity score still has to be written, so
+    a failure here costs that one photo its face check and nothing else."""
+    counts = []
+    for image_data in image_data_seq:
+        try:
+            counts.append(count_faces_in(image_data))
+        except Exception:
+            counts.append(None)
+    return counts
+
 
 async def predict_nsfw_photos_once():
     async with api_tx() as tx:
@@ -39,14 +56,19 @@ async def predict_nsfw_photos_once():
     present_nsfw_scores = await asyncio.to_thread(
         predict_nsfw, present_image_data_seq)
 
+    present_face_counts = await asyncio.to_thread(
+        count_faces, present_image_data_seq)
+    face_counts_ = (
+        [None for _ in missing_uuids] + present_face_counts)
+
     uuids_ = (
         missing_uuids + present_uuids)
     nsfw_scores_ = (
         missing_nsfw_scores + present_nsfw_scores)
 
     params_seq = [
-        dict(uuid=uuid, nsfw_score=nsfw_score)
-        for uuid, nsfw_score in zip(uuids_, nsfw_scores_)
+        dict(uuid=uuid, nsfw_score=nsfw_score, face_count=face_count)
+        for uuid, nsfw_score, face_count in zip(uuids_, nsfw_scores_, face_counts_)
     ]
 
     async with api_tx() as tx:

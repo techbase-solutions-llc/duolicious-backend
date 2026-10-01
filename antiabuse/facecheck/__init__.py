@@ -28,7 +28,8 @@ there is, including a model that will not load.
 
 Public surface:
   FaceBox               dataclass: x, y, width, height, confidence, area_fraction
-  detect_faces(bytes)   the whole module
+  detect_faces(bytes)   the boxes
+  count_faces(image)    how many, or None when the check could not look
 """
 from __future__ import annotations
 
@@ -269,3 +270,27 @@ def detect_faces(image_bytes: bytes) -> list[FaceBox]:
     except Exception:
         logger.exception('face check failed, reporting no faces')
         return []
+
+
+def count_faces(image) -> int | None:
+    """How many faces one image shows, or None when the check could not look.
+
+    `detect_faces` answers [] for a dog and [] for bytes it cannot read, which
+    is right for a caller that only wants boxes and wrong for one that stores
+    the answer: 0 written to the database means "looked and saw nobody" and
+    sends a member's main photo to a person. So the things that are not a
+    look at all come back as None here: nothing to read, an image that will
+    not decode, and a detector that will not load.
+
+    Takes bytes or anything with getvalue(), because the photo pipeline
+    carries downloads as BytesIO.
+    """
+    try:
+        if hasattr(image, 'getvalue'):
+            image = image.getvalue()
+        if _decode(image) is None or _get_detector() is None:
+            return None
+        return len(detect_faces(image))
+    except Exception:
+        logger.exception('face check failed, reporting unknown')
+        return None
