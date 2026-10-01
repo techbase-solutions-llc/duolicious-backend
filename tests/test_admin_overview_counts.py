@@ -175,13 +175,42 @@ def test_paying_members_counts_only_people_who_transacted(make_person):
     # Holding premium alone must NOT make someone a paying member.
     assert before['paying_members'] < before['premium_holders'] or before['premium_holders'] == 0
 
+    # A Stripe TEST-mode checkout is not a payment. Until 1 Oct 2026 this
+    # counted it, and the card said 3 paying members while nobody had paid.
     with api_tx() as tx:
         tx.execute(
             """INSERT INTO entitlement_event
                  (event_id, event_type, app_user_id, payload)
-               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{}'::jsonb)""",
+               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{"livemode": false}'::jsonb)""",
+            dict(eid=f'test-{_uuid.uuid4()}', uid=str(p['id'])))
+    assert _kpis()['paying_members'] == before['paying_members'], 'a test-mode checkout counted as paying'
+
+    with api_tx() as tx:
+        tx.execute(
+            """INSERT INTO entitlement_event
+                 (event_id, event_type, app_user_id, payload)
+               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{"livemode": true}'::jsonb)""",
             dict(eid=f'test-{_uuid.uuid4()}', uid=str(p['id'])))
     assert _kpis()['paying_members'] == before['paying_members'] + 1
+
+
+def test_a_live_event_stored_as_the_object_itself_still_counts(make_person):
+    """Some payloads keep the Stripe event whole, some keep only its data
+    object; `livemode` is read from either place."""
+    import uuid as _uuid
+    p = make_person(name='PayingNested')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET entitlements = ARRAY['premium']::TEXT[] WHERE id = %(i)s",
+                   dict(i=p['id']))
+    before = _kpis()['paying_members']
+    with api_tx() as tx:
+        tx.execute(
+            """INSERT INTO entitlement_event
+                 (event_id, event_type, app_user_id, payload)
+               VALUES (%(eid)s, 'customer.subscription.created', %(uid)s,
+                       '{"data": {"object": {"livemode": true}}}'::jsonb)""",
+            dict(eid=f'test-{_uuid.uuid4()}', uid=str(p['id'])))
+    assert _kpis()['paying_members'] == before + 1
 
 
 def test_the_naive_column_really_does_need_both_conversions(make_person):

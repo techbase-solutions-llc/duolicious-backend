@@ -47,10 +47,18 @@ Q_OVERVIEW_KPIS = """
         --
         -- premium_holders stays in the payload because the Economy tab
         -- reads it; it is just no longer a KPI card.
+        -- Paying means a LIVE Stripe event. Until 1 Oct 2026 this counted
+        -- any entitlement_event, and every event on file was a test-mode
+        -- checkout (livemode=false) by the owner and a beta tester, so the
+        -- card said 3 while nobody had paid. Stripe sets `livemode` at the
+        -- top of every event; the nested path covers a payload stored as
+        -- the event object itself.
         (SELECT COUNT(*) FROM person p
           WHERE 'premium' = ANY(p.entitlements)
             AND EXISTS (SELECT 1 FROM entitlement_event e
-                         WHERE e.app_user_id = p.id::text)) AS paying_members,
+                         WHERE e.app_user_id = p.id::text
+                           AND COALESCE(e.payload->>'livemode',
+                                        e.payload->'data'->'object'->>'livemode') = 'true')) AS paying_members,
         (SELECT COUNT(*) FROM skipped WHERE reported = TRUE) AS pending_reports,
         (SELECT COUNT(*) FROM referral WHERE created_at > NOW() - INTERVAL '7 days') AS referral_signups_7d
 """
