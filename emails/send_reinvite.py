@@ -55,25 +55,35 @@ _Q_RECIPIENTS = f"""
     SELECT id AS person_id, email, name, last_online,
            CASE WHEN activated THEN 'quiet' ELSE 'paused' END AS state
       FROM act
-     WHERE (reinvite_sent_at IS NULL OR reinvite_sent_at < NOW() - make_interval(days => %(resend)s))
+     WHERE (%(ignore_resend)s
+            OR reinvite_sent_at IS NULL
+            OR reinvite_sent_at < NOW() - make_interval(days => %(resend)s))
        AND (
          NOT activated
          OR last_action < NOW() - make_interval(days => %(days)s)
        )
+       -- A run aimed at the long offline (TEC-1607): members quiet but
+       -- recently online are left for the default run.
+       AND (%(offline)s::int IS NULL
+            OR last_online < NOW() - make_interval(days => %(offline)s))
      ORDER BY last_online
 """
 
 
-def _rows(tx) -> list[dict]:
+def _rows(tx, offline_days: int | None = None, ignore_resend: bool = False) -> list[dict]:
     return [dict(r) for r in tx.execute(
-        _Q_RECIPIENTS, dict(days=DORMANT_DAYS, resend=RESEND_DAYS,
+        _Q_RECIPIENTS, dict(days=DORMANT_DAYS, resend=RESEND_DAYS, offline=offline_days,
+                            ignore_resend=ignore_resend,
                             ex=_excluded(), sup=suppressed_sql_pattern())).fetchall()]
 
 
-def recipients() -> list[dict]:
+def recipients(offline_days: int | None = None, ignore_resend: bool = False) -> list[dict]:
+    """`offline_days` keeps only members last online longer ago than that;
+    `ignore_resend` drops the 30 day resend window. Both are for a deliberate
+    one-off run from the command line; the admin's Send button uses neither."""
     out = []
     with api_tx('read committed') as tx:
-        for row in _rows(tx):
+        for row in _rows(tx, offline_days, ignore_resend):
             total = count_newcomers_since(tx, row['person_id'], row['last_online'])
             if not total:
                 # Nothing to report is not a reason to send. The reader hears
@@ -98,11 +108,14 @@ def build_for(row: dict) -> tuple[str, str]:
     target = f"{WEB_BASE_URL}/" if state == 'paused' else f"{WEB_BASE_URL}/discover"
     with api_tx() as tx:
         cta = make_campaign_link(tx, 'e3', target, row['person_id'] or None)
+        notifications = make_campaign_link(
+            tx, 'e3', f"{WEB_BASE_URL}/settings/notifications", row['person_id'] or None)
     first = (row.get('name') or 'there').split(' ')[0]
     return subject_for(state), reinvite_html(
         first, row.get('total_new', 0), cta,
         _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
-        gender_label=row.get('gender_label', 'new members'), state=state)
+        gender_label=row.get('gender_label', 'new members'), state=state,
+        notifications_url=notifications)
 
 
 def preview_row(to: str) -> dict:
@@ -126,9 +139,13 @@ post_send = 'reinvite_sent_at'
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--send', action='store_true'); ap.add_argument('--campaign-id', default=None)
+    ap.add_argument('--offline-days', type=int, default=None,
+                    help='only members last online longer ago than this (TEC-1607)')
+    ap.add_argument('--ignore-resend', action='store_true',
+                    help='send even to members re-invited in the last 30 days')
     a = ap.parse_args()
     cid = a.campaign_id or f"e3-{uuid.uuid4().hex[:8]}"
-    print(run_campaign(api_tx, 'e3', cid, recipients(), build_for, send=a.send, from_addr=FROM_ADDR,
+    print(run_campaign(api_tx, 'e3', cid, recipients(a.offline_days, a.ignore_resend), build_for, send=a.send, from_addr=FROM_ADDR,
                        unsub_scope=UNSUB_SCOPE,
                        list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>",
                        post_send=post_send))

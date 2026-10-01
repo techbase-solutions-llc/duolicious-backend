@@ -28,7 +28,7 @@ from __future__ import annotations
 import html as _html
 
 from service.config import EMAIL_DOMAIN
-from emails.base import render, button, chip, callout, title_image, INK_SOFT, MUTED, SANS
+from emails.base import render, button, chip, callout, title_image, INDIGO, INK_SOFT, MUTED, SANS
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 
@@ -57,9 +57,28 @@ def _singularise(plural: str) -> str:
     return {'women': 'woman', 'men': 'man'}.get(plural, plural[:-1] if plural.endswith('s') else plural)
 
 
+def _notifications_block(url: str | None) -> str:
+    """The ask for push (TEC-1607). Rendered only when the run minted a link
+    for it, so an older caller gets exactly the email it always got."""
+    if not url:
+        return ''
+    return f"""
+<p class="e-text" style="margin:0 0 8px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
+  Want to hear when someone likes you or writes to you? Turn on notifications
+  and we will tell you straight away, even when the app is closed.
+</p>
+
+<p class="e-text" style="margin:0 0 24px;font-family:{SANS};font-size:17px;line-height:1.55;">
+  <a href="{url}" style="color:{INDIGO};font-weight:700;text-decoration:underline;">Turn on notifications</a>
+</p>
+"""
+
+
 def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url: str,
-                  gender_label: str = "new members", state: str = "quiet") -> str:
+                  gender_label: str = "new members", state: str = "quiet",
+                  notifications_url: str | None = None) -> str:
     who = gender_label or "new members"
+    notifications = _notifications_block(notifications_url)
     verb = "has" if total_new == 1 else "have"
     subject_phrase = _singularise(who) if total_new == 1 else who
     name = _esc(first_name)
@@ -85,6 +104,8 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
 
 <div style="height:20px;line-height:20px;">&nbsp;</div>
 
+{notifications}
+
 {callout("Signing in is all it takes. Your profile goes live again the moment you do.")}
 """
         preheader = f"One sign-in restores everything. {count_line}."
@@ -101,6 +122,8 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
 {button("See who joined", cta_url)}
 
 <div style="height:20px;line-height:20px;">&nbsp;</div>
+
+{notifications}
 
 {callout("Your profile, matches and messages are exactly as you left them.")}
 """
