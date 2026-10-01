@@ -23,7 +23,8 @@ nothing.
 
 NOTHING IS KNOWN AFTER `KNOWN_THROUGH`.
 
-The owner's calendar has only been read as far as the seventh month. A date
+The owner's calendar has been read through the seventh month, and the
+eighth is entered provisionally (see REST_DAYS). A date
 past that is not "free", it is unknown, so `slot_problem` refuses it rather
 than guessing. Extending this is one edit: add the next month's Sabbaths and
 move `KNOWN_THROUGH`, after re-reading the engine.
@@ -49,11 +50,22 @@ REST_DAYS: tuple[date, ...] = (
     date(2026, 9, 26),   # Sabbath, first day of Tabernacles
     date(2026, 10, 3),   # Sabbath, the Last Great Day
     date(2026, 10, 10),  # Sabbath
+    # EIGHTH MONTH, PROVISIONAL (entered 2026-10-01, TEC-1447). The owner's
+    # calendar holds no record for this month yet: its first day is 11 or 12
+    # October depending on what the owner observes and confirms, so each
+    # Sabbath (lunar days 8, 15, 22, 29) has two candidate dates. Both are
+    # blocked, because posting on a Sabbath is the failure and losing a
+    # Monday slot is only a cost. When the owner confirms the month, delete
+    # the four dates that turn out not to be Sabbaths, here and in the admin.
+    date(2026, 10, 18), date(2026, 10, 19),
+    date(2026, 10, 25), date(2026, 10, 26),
+    date(2026, 11, 1), date(2026, 11, 2),
+    date(2026, 11, 8), date(2026, 11, 9),
 )
 
 # The last date the owner's calendar has been read for. Anything later is
 # unknown, and a slot there is refused rather than assumed to be free.
-KNOWN_THROUGH = date(2026, 10, 10)
+KNOWN_THROUGH = date(2026, 11, 9)
 
 # How long before a rest day's date its observance starts, in Barbados time.
 _EVE = time(17, 0)

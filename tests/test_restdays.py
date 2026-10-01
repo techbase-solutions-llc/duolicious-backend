@@ -124,4 +124,7 @@ def test_the_real_calendar_carries_the_owners_rest_days():
     for d in (date(2026, 9, 19), date(2026, 9, 21), date(2026, 9, 26),
               date(2026, 10, 3), date(2026, 10, 10)):
         assert d in rd.REST_DAYS
-    assert rd.KNOWN_THROUGH == date(2026, 10, 10)
+    # The eighth month is provisional: both candidate dates of each Sabbath.
+    for d in (date(2026, 10, 18), date(2026, 10, 19), date(2026, 11, 8), date(2026, 11, 9)):
+        assert d in rd.REST_DAYS
+    assert rd.KNOWN_THROUGH == date(2026, 11, 9)
