@@ -47,6 +47,9 @@ def _message(sender, recipient, *, days_ago: int = 0) -> None:
     to catch, so the helper mirrors production exactly.
     """
     _MAM_SEQ[0] += 1
+    # Resolved before the transaction opens: _uuid_of opens its own, and
+    # api_tx is not re-entrant, so calling it inside would deadlock.
+    sender_uuid, recipient_uuid = _uuid_of(sender['id']), _uuid_of(recipient['id'])
     with api_tx() as tx:
         mam_id = tx.execute(
             """SELECT (EXTRACT(EPOCH FROM (NOW() - make_interval(days => %(d)s)))
@@ -57,13 +60,13 @@ def _message(sender, recipient, *, days_ago: int = 0) -> None:
             """INSERT INTO mam_message
                  (id, direction, message, person_id, from_jid, remote_bare_jid)
                VALUES (%(id)s, 'O', ''::bytea, %(pid)s, '', %(jid)s)""",
-            dict(id=mam_id, pid=sender['id'], jid=_uuid_of(recipient['id'])))
+            dict(id=mam_id, pid=sender['id'], jid=recipient_uuid))
         # The incoming copy sits in the recipient's archive.
         tx.execute(
             """INSERT INTO mam_message
                  (id, direction, message, person_id, from_jid, remote_bare_jid)
                VALUES (%(id)s, 'I', ''::bytea, %(pid)s, '', %(jid)s)""",
-            dict(id=mam_id + 1, pid=recipient['id'], jid=_uuid_of(sender['id'])))
+            dict(id=mam_id + 1, pid=recipient['id'], jid=sender_uuid))
 
 
 # ---------------------------------------------------------------------------

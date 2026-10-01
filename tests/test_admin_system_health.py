@@ -183,3 +183,17 @@ def test_otp_reports_codes_issued_and_claims_no_delivery():
     assert 'sent_24h' in Q_OTP_24H
     lowered = Q_OTP_24H.lower()
     assert 'fail' not in lowered and 'success' not in lowered
+
+
+def test_member_feedback_reaches_the_system_tab(client, health_admin):
+    """No admin route read the feedback table until TEC-1192. The table has
+    no read marker, so the payload is simply the newest rows."""
+    marker = f'feedback-{secrets.token_hex(4)}'
+    with api_tx() as tx:
+        tx.execute("INSERT INTO feedback (category, message, email, path) VALUES ('idea', %(m)s, NULL, '/discover')",
+                   dict(m=marker))
+    body = client.get('/admin/system/health', headers=health_admin['headers']).get_json()
+    mine = [f for f in body['feedback'] if f['message'] == marker]
+    assert len(mine) == 1
+    assert set(mine[0]) == {'id', 'category', 'message', 'email', 'path', 'created_at'}
+    assert datetime.fromisoformat(mine[0]['created_at']).tzinfo is not None
