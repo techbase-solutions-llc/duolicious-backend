@@ -1,3 +1,10 @@
+"""Dormancy: hides a profile after 30 days offline.
+
+Owner decision 1 Oct 2026 (TEC-1607): inactive profiles stay visible on the
+map and in the feed, so production runs this in DRY RUN and the members it
+had hidden were brought back (scripts/reactivate_dormant.py). The module
+stays so the decision can be reversed with one env var.
+"""
 from database.asyncdatabase import api_tx
 from service.cron.autodeactivate2.sql import *
 from service.cron.autodeactivate2.template import emailtemplate
