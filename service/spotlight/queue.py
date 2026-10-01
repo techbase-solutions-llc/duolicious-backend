@@ -107,6 +107,22 @@ def create_candidate(tx, *, kind: str, subject_person_id: Optional[int], caption
         ok, reason = eligibility(tx, subject_person_id)
         if not ok:
             raise ValueError(reason)
+        # One open card of a kind per member at a time. A member may hold a
+        # welcome and a member of the week together, which is deliberate, but
+        # not two of the same. `featured_recently` only looks
+        # at cards that were published, so nothing stopped a second offer
+        # while the first still sat unanswered: in September 2026 one member
+        # was sent two "your card is ready" emails for two separate cards.
+        # Open means anything not yet published, cancelled or failed. Welcomes
+        # are left to migration 0050, which enforces the same rule for them in
+        # the database and reports it as a unique violation its callers expect.
+        if kind != 'welcome' and tx.execute(
+                """SELECT 1 FROM publishing_queue
+                    WHERE subject_person_id = %(pid)s AND kind = %(kind)s
+                      AND status IN ('awaiting_member', 'awaiting_render', 'review',
+                                     'scheduled', 'processing')
+                    LIMIT 1""", dict(pid=subject_person_id, kind=kind)).fetchone():
+            raise ValueError('already_offered')
         status = 'awaiting_member'
     rk = request_key or uuid.uuid4().hex
     # Spec 3.4: every published card carries a measurable CTA, so the link is

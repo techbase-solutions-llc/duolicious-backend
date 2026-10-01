@@ -80,7 +80,7 @@ def _cancel(rk: str) -> None:
     test's claim could pick up."""
     with api_tx() as tx:
         tx.execute("""UPDATE publishing_queue SET status = 'cancelled', updated_at = NOW()
-                       WHERE request_key = %(rk)s AND status IN ('scheduled', 'processing', 'review', 'awaiting_render')""",
+                       WHERE request_key = %(rk)s AND status IN ('scheduled', 'processing', 'review', 'awaiting_render', 'awaiting_member')""",
                    dict(rk=rk))
 
 
@@ -595,3 +595,19 @@ def test_a_platforms_list_holding_an_object_is_a_400_not_a_500(client):
     r = client.post('/admin/growth/brand', headers=H, json=dict(
         slug=_slug(), caption='c', scheduled_for=_soon().isoformat(), platforms=[{'x': 1}]))
     assert r.status_code == 400 and r.get_json() == dict(error='bad_platforms')
+
+
+def test_a_member_with_an_open_card_is_not_offered_a_second(make_person):
+    """One member was sent two card-ready emails for two separate cards in
+    September 2026, because only published cards counted as recent. An open
+    card now blocks another; once it is cancelled a new one is allowed."""
+    p = _make_eligible(make_person, name='OneOffer')
+    with api_tx() as tx:
+        first = create_candidate(tx, kind='member_of_week', subject_person_id=p['id'], caption='c', created_by='t')
+    with pytest.raises(ValueError, match='already_offered'):
+        with api_tx() as tx:
+            create_candidate(tx, kind='member_of_week', subject_person_id=p['id'], caption='c', created_by='t')
+    _cancel(first)
+    with api_tx() as tx:
+        second = create_candidate(tx, kind='member_of_week', subject_person_id=p['id'], caption='c', created_by='t')
+    _cancel(second)
