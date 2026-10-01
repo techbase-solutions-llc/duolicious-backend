@@ -16,7 +16,7 @@ from datetime import datetime
 # them into longer words: `comm` and `reinv` are what is already in
 # email_send_log, and they are pinned on both sides (see the cross-repo test
 # in ahavah-admin/tests/growth-api.test.mjs).
-_SUFFIX = {'e1': 'spotlight', 'e2': 'comm', 'e3': 'reinv'}
+_SUFFIX = {'e1': 'spotlight', 'e2': 'comm', 'e3': 'reinv', 'e6': 'notif'}
 
 
 def week_campaign_id(now: datetime, campaign: str) -> str:
