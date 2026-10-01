@@ -233,7 +233,7 @@ def test_emails_index_lists_every_campaign_with_integer_counts(client, admin):
     r = client.get('/admin/growth/emails', headers=admin['headers'])
     assert r.status_code == 200
     campaigns = r.get_json()['campaigns']
-    assert {c['campaign'] for c in campaigns} == {'e1', 'e2', 'e3', 'e6', 'e4', 'e5'}
+    assert {c['campaign'] for c in campaigns} == {'e1', 'e2', 'e3', 'e6', 'e4', 'e5', 'welcome', 'referral'}
     for c in campaigns:
         assert isinstance(c['recipients'], int)
         assert c['recipients'] >= 0
@@ -253,7 +253,7 @@ def test_emails_index_lists_system_sent_campaigns(client, admin, make_person):
     keys = [c['campaign'] for c in out]
     # Operator-run campaigns first in registry order (e6 joined in TEC-1607),
     # then the two the platform sends itself.
-    assert keys == ['e1', 'e2', 'e3', 'e6', 'e4', 'e5']
+    assert keys == ['e1', 'e2', 'e3', 'e6', 'e4', 'e5', 'welcome', 'referral']
     e4 = next(c for c in out if c['campaign'] == 'e4')
     assert e4['system'] is True and e4['recipients'] == 1 and e4['last_campaign_id'] == 'e4-rk1'
     assert next(c for c in out if c['campaign'] == 'e1')['system'] is False

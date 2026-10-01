@@ -15,6 +15,7 @@ from service.cron.spotlightretention import spotlight_retention_forever
 from service.cron.spotlightcleanup import spotlight_cleanup_forever
 from service.cron.emailoutbox import email_outbox_forever
 from service.cron.communityweekly import community_weekly_forever
+from service.cron.referralintro import referral_intro_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
@@ -99,6 +100,11 @@ async def main():
         # pressing Send in the same week all collide on one send. Off
         # unless DUO_CRON_COMMUNITY_WEEKLY_ENABLED=1.
         community_weekly_forever(),
+
+        # The referral intro, a week after a member joins. Guarded by the
+        # send log and a per-week outbox id, so repeats and cap skips are
+        # safe. Daily. Off with DUO_CRON_REFERRAL_INTRO_ENABLED=0.
+        referral_intro_forever(),
 
         check_connections_forever(),
 

@@ -83,7 +83,11 @@ def get_admin_growth_emails(s: t.SessionInfo):
     # straight from the email_send_log rows the query above already grouped,
     # and they carry system=True so the Growth tab can tell them apart from
     # the three admin-run campaigns above.
-    for key in ('e4', 'e5'):
+    # `welcome` (the member welcome at finish-onboarding) and `referral` (the
+    # invite link a week in, from the referralintro cron) joined them on
+    # 1 Oct 2026 (TEC-1613): both go through the outbox now, so they have a
+    # send log to read.
+    for key in ('e4', 'e5', 'welcome', 'referral'):
         last = last_sent.get(key)
         out.append(dict(campaign=key, recipients=int(last['n']) if last else 0,
                         last_sent_at=last['at'].isoformat() if last and last['at'] else None,

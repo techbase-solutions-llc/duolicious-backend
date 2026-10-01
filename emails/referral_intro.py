@@ -77,12 +77,27 @@ You're receiving this because you opted into the Ahavah beta at
 """
 
 
-def referral_intro_html(email: str, code: str) -> str:
+def _member_footer(email: str) -> str:
+    """For a member who joined Ahavah rather than a beta sign-up: the standard
+    member footer and the notifications unsubscribe scope (TEC-1613)."""
+    unsub = _unsub_url("notifications", email, WEB_BASE_URL)
+    return f"""
+Ahavah &middot; Matchmaking for Torah-observant believers.<br/>
+You're receiving this because you're a member of Ahavah.
+<div style="margin-top:14px;">
+  <a href="{unsub}" style="color:{MUTED};font-weight:600;text-decoration:underline;">Unsubscribe</a>
+  &nbsp;&nbsp;&middot;&nbsp;&nbsp;
+  <a href="https://ahavah.app/faq" style="color:{MUTED};font-weight:600;text-decoration:underline;">Help</a>
+</div>
+"""
+
+
+def referral_intro_html(email: str, code: str, member: bool = False) -> str:
     return render(
         title=SUBJECT,
         preheader=PREHEADER,
         body_html=_body(code),
-        footer_html=_footer(email),
+        footer_html=_member_footer(email) if member else _footer(email),
     )
 
 
