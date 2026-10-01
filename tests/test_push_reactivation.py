@@ -60,6 +60,19 @@ def test_an_admin_is_never_pushed(make_person):
     assert admin['id'] not in _ids()
 
 
+def test_nobody_new_in_range_falls_back_to_everyone_who_joined(make_person):
+    narrow = make_person(name='NarrowPush')
+    _offline(narrow['id'])
+    _subscribe(narrow['id'])
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO search_preference_age (person_id, min_age, max_age)
+                      VALUES (%(i)s, 90, 99) ON CONFLICT (person_id) DO UPDATE SET min_age = 90, max_age = 99""",
+                   dict(i=narrow['id']))
+    make_person(name='Newcomer5', gender='Woman')
+    picked = _ids()
+    assert narrow['id'] in picked and picked[narrow['id']] >= 1
+
+
 def test_a_member_without_a_subscription_is_not_picked(make_person):
     p = make_person(name='NoPush')
     _offline(p['id'])

@@ -204,6 +204,20 @@ def newcomers_since(tx, person_id: int, since: datetime, limit: int = 5) -> list
 def count_newcomers_since(tx, person_id: int, since: datetime) -> int:
     return tx.execute(_Q_COUNT_NEWCOMERS, dict(pid=person_id, since=since, ex=_excluded())).fetchone()['n']
 
+# Everyone who joined since, regardless of what the member is looking for.
+# Owner decision 1 Oct 2026 (TEC-1607): a member with nobody new inside
+# their preferences still hears that the community grew, in words that do
+# not claim a match.
+_Q_COUNT_ANY_NEWCOMERS = """
+    SELECT count(*) AS n FROM person p
+     WHERE p.activated AND p.id <> %(pid)s
+       AND lower(p.email) <> ALL(%(ex)s)
+       AND p.sign_up_time > %(since)s
+"""
+
+def count_all_newcomers_since(tx, person_id: int, since: datetime) -> int:
+    return tx.execute(_Q_COUNT_ANY_NEWCOMERS, dict(pid=person_id, since=since, ex=_excluded())).fetchone()['n']
+
 # E3's recipient list is "dormant members who have at least one newcomer to
 # show". Counting it by materialising the cohort and running two queries per
 # member is O(cohort) round trips; the admin dashboard only needs the number,

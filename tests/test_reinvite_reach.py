@@ -58,6 +58,34 @@ def test_ignore_resend_lets_a_recent_recipient_through(make_person):
     assert p['id'] in {r['person_id'] for r in recipients(ignore_resend=True)}
 
 
+def test_nobody_new_in_range_still_hears_the_community_grew(make_person):
+    """Owner decision 1 Oct 2026: nobody is skipped. A member whose age range
+    excludes every newcomer gets the total, in words that claim no match."""
+    narrow = _member(make_person, 'Narrow', 40)
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO search_preference_age (person_id, min_age, max_age)
+                      VALUES (%(i)s, 90, 99) ON CONFLICT (person_id) DO UPDATE SET min_age = 90, max_age = 99""",
+                   dict(i=narrow['id']))
+    make_person(name='Newcomer3', gender='Woman')  # born 1990, outside 90 to 99
+    rows = {r['person_id']: r for r in recipients(offline_days=30)}
+    assert narrow['id'] in rows
+    row = rows[narrow['id']]
+    assert row['matched'] is False and row['gender_label'] == 'people' and row['total_new'] >= 1
+    subject, html = build_for(row)
+    assert 'match what you are looking for' not in html
+    assert 'Come and see who is here now' in html
+    assert 'joined Ahavah since you were last online' in html
+
+
+def test_the_unmatched_line_reads_naturally():
+    one = reinvite_html('Ehud', 1, 'https://ahavah.app/s/k', 'https://ahavah.app/u/x',
+                        gender_label='people', matched=False)
+    assert '1 person has joined Ahavah since you were last online. Come and see who is here now.' in one
+    many = reinvite_html('Ehud', 16, 'https://ahavah.app/s/k', 'https://ahavah.app/u/x',
+                         gender_label='people', matched=False, state='paused')
+    assert '16 people have joined Ahavah since you were last online. Come and see who is here now.' in many
+
+
 def test_build_for_puts_both_links_in_the_email(make_person):
     p = _member(make_person, 'Both', 40)
     subject, html = build_for(dict(person_id=p['id'], email='b@ahavah-test.invalid', name='Both',

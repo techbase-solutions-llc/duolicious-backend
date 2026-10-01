@@ -20,7 +20,8 @@ from service.campaigns import (make_campaign_link, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.campaigns.runner import run_campaign
 from service.config import WEB_BASE_URL
-from service.growth.queries import _excluded, count_newcomers_since, sought_gender_label
+from service.growth.queries import (_excluded, count_all_newcomers_since, count_newcomers_since,
+                                    sought_gender_label)
 from service.unsubscribe import make_url as _unsub_url
 
 UNSUB_SCOPE = 'notifications'
@@ -85,12 +86,21 @@ def recipients(offline_days: int | None = None, ignore_resend: bool = False) -> 
     with api_tx('read committed') as tx:
         for row in _rows(tx, offline_days, ignore_resend):
             total = count_newcomers_since(tx, row['person_id'], row['last_online'])
-            if not total:
-                # Nothing to report is not a reason to send. The reader hears
-                # from us when something actually changed.
-                continue
-            row['total_new'] = int(total)
-            row['gender_label'] = sought_gender_label(tx, row['person_id'])
+            if total:
+                row['total_new'] = int(total)
+                row['gender_label'] = sought_gender_label(tx, row['person_id'])
+                row['matched'] = True
+            else:
+                # Nobody new inside what they are looking for. Owner decision
+                # 1 Oct 2026 (TEC-1607): they still hear the community grew,
+                # in words that make no claim about a match. Only a member
+                # for whom literally nobody has joined is left out.
+                total = count_all_newcomers_since(tx, row['person_id'], row['last_online'])
+                if not total:
+                    continue
+                row['total_new'] = int(total)
+                row['gender_label'] = 'people'
+                row['matched'] = False
             out.append(row)
     return out
 
@@ -115,7 +125,7 @@ def build_for(row: dict) -> tuple[str, str]:
         first, row.get('total_new', 0), cta,
         _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
         gender_label=row.get('gender_label', 'new members'), state=state,
-        notifications_url=notifications)
+        notifications_url=notifications, matched=row.get('matched', True))
 
 
 def preview_row(to: str) -> dict:
@@ -125,6 +135,11 @@ def preview_row(to: str) -> dict:
 
 def preview_row_paused(to: str) -> dict:
     return dict(preview_row(to), state='paused', total_new=10, gender_label='men')
+
+
+def preview_row_unmatched(to: str) -> dict:
+    """A member with nobody new inside their preferences (TEC-1607)."""
+    return dict(preview_row(to), total_new=16, gender_label='people', matched=False)
 
 
 # The name of the `service.campaigns.outbox.POST_SEND_HOOKS` entry that

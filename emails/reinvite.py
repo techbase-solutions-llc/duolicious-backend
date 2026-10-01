@@ -54,7 +54,8 @@ def _esc(value) -> str:
 
 def _singularise(plural: str) -> str:
     """women -> woman, men -> man, new members -> new member."""
-    return {'women': 'woman', 'men': 'man'}.get(plural, plural[:-1] if plural.endswith('s') else plural)
+    return {'women': 'woman', 'men': 'man', 'people': 'person'}.get(
+        plural, plural[:-1] if plural.endswith('s') else plural)
 
 
 def _notifications_block(url: str | None) -> str:
@@ -76,9 +77,14 @@ def _notifications_block(url: str | None) -> str:
 
 def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url: str,
                   gender_label: str = "new members", state: str = "quiet",
-                  notifications_url: str | None = None) -> str:
+                  notifications_url: str | None = None, matched: bool = True) -> str:
+    """`matched` False means the count is everyone who joined, not people
+    inside the reader's preferences, so the line must not claim a match
+    (owner decision 1 Oct 2026, TEC-1607)."""
     who = gender_label or "new members"
     notifications = _notifications_block(notifications_url)
+    match_tail = (", and they match what you are looking for."
+                  if matched else ". Come and see who is here now.")
     verb = "has" if total_new == 1 else "have"
     subject_phrase = _singularise(who) if total_new == 1 else who
     name = _esc(first_name)
@@ -97,7 +103,7 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
 </p>
 
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
-  {count_line}, and they match what you are looking for.
+  {count_line}{match_tail}
 </p>
 
 {button("Bring my profile back", cta_url)}
@@ -116,7 +122,7 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
 {title_image("title-digest.png", "title-digest-wht.png", "The community is growing.", 528)}
 
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
-  {name}, {count_line}, and they match what you are looking for.
+  {name}, {count_line}{match_tail}
 </p>
 
 {button("See who joined", cta_url)}

@@ -14,7 +14,7 @@ import argparse
 
 from database import api_tx
 from service.campaigns import campaign_unsubscribed
-from service.growth.queries import _excluded, count_newcomers_since
+from service.growth.queries import _excluded, count_all_newcomers_since, count_newcomers_since
 
 TITLE = "People are joining Ahavah"
 URL = "/discover"
@@ -42,7 +42,11 @@ def select_recipients(tx, offline_days: int = 30) -> list[dict]:
     for r in tx.execute(_Q, dict(days=offline_days, ex=_excluded())).fetchall():
         if campaign_unsubscribed(tx, r['person_id'], 'notifications'):
             continue
-        n = count_newcomers_since(tx, r['person_id'], r['last_online_time'])
+        # Prefer the people they are looking for; fall back to everyone who
+        # joined (owner decision 1 Oct 2026: nobody is skipped). The body
+        # says "new members" either way, so it never claims a match.
+        n = count_newcomers_since(tx, r['person_id'], r['last_online_time']) \
+            or count_all_newcomers_since(tx, r['person_id'], r['last_online_time'])
         if n:
             out.append(dict(person_id=r['person_id'], total_new=int(n)))
     return out
