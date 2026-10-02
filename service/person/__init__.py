@@ -63,6 +63,38 @@ if _os.environ.get("DUO_DISABLE_FIREHOL", "false").lower() in ("true", "1", "yes
 else:
     from antiabuse.firehol import firehol as _firehol_impl
     firehol = _firehol_impl
+
+
+_Q_IS_STAFF_EMAIL = """
+    SELECT 1 FROM person
+     WHERE normalized_email = %(e)s
+       AND 'admin' = ANY(COALESCE(roles, ARRAY[]::text[]))
+     LIMIT 1
+"""
+
+
+def _ip_blocked(email) -> bool:
+    """The IP-reputation gate on the sign-in routes, with one exemption.
+
+    The admin dashboard reaches this API through Vercel's rewrite, so every
+    admin sign-in arrives from a Vercel egress address rather than the
+    operator's own. Some of those addresses are on the FireHOL list, and the
+    operator was refused at random with "This network is blocked" (reported
+    2 Oct 2026). An address that belongs to an admin account is therefore
+    let through. Nothing else about sign-in changes for it: the one-time code
+    still goes to that inbox and still has to be entered, so the exemption
+    lets a listed address ask for a code, never use one it does not hold.
+    """
+    if not request.remote_addr:
+        return True
+    if not firehol.matches(request.remote_addr):
+        return False
+    try:
+        with api_tx('read committed') as tx:
+            staff = tx.execute(_Q_IS_STAFF_EMAIL, dict(e=normalize_email(email or ''))).fetchone()
+    except Exception:
+        staff = None
+    return staff is None
 import blurhash
 import numpy
 import erlastic
@@ -347,7 +379,7 @@ def post_request_otp(req: t.PostRequestOtp):
     if not verify_turnstile(req.turnstile_token, request.remote_addr):
         return 'Verification failed', 403
 
-    if not request.remote_addr or firehol.matches(request.remote_addr):
+    if _ip_blocked(req.email):
         return 'IP address blocked', 460
 
     if not check_and_update_bad_domains(req.email):
@@ -399,7 +431,7 @@ def post_request_otp(req: t.PostRequestOtp):
     return dict(session_token=session_token)
 
 def post_resend_otp(s: t.SessionInfo):
-    if not request.remote_addr or firehol.matches(request.remote_addr):
+    if _ip_blocked(s.email):
         return 'IP address blocked', 460
 
     params = dict(
@@ -422,7 +454,7 @@ def post_resend_otp(s: t.SessionInfo):
     _send_otp(s.email, otp)
 
 def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
-    if not request.remote_addr or firehol.matches(request.remote_addr):
+    if _ip_blocked(s.email):
         return 'IP address blocked', 460
 
     params = dict(
