@@ -144,8 +144,8 @@ def test_an_unchecked_main_photo_is_never_held(member, add_photo):
 
 def test_scoring_a_photo_that_becomes_the_main_one_runs_the_rule(member, add_photo):
     """Position 1 is empty, so the photo scored at position 2 is the main
-    one. The scoring rule looks at position 1 only; the re-check after the
-    scoring pass catches it."""
+    one. The scoring statement only records the face count; the re-check
+    after the scoring pass applies the rule."""
     from service.cron.nsfwphotorunner.sql import Q_SET_NSFW_SCORE
     uuid = add_photo(member['id'], position=2, status='pending', face_count=None)
     with api_tx() as tx:

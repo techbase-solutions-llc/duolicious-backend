@@ -74,9 +74,9 @@ async def predict_nsfw_photos_once():
 
     async with api_tx() as tx:
         await tx.executemany(Q_SET_NSFW_SCORE, params_seq)
-        # The scoring rule looks at position 1 only. A photo scored into
-        # the main place from another position (position 1 empty) meets
-        # the face rule here (finding 98).
+        # The face rule, for the main photo of every member just scored
+        # (finding 98, and the health review fix): Q_SET_NSFW_SCORE records the face
+        # count and this applies the owner's rule, in the same transaction.
         if uuids_:
             await tx.execute(
                 Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS, dict(uuids=uuids_))

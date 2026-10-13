@@ -2,7 +2,11 @@
 
 The verdict SQL is run against real photo rows, because the rule is a CASE
 expression and the only way to know which branch a photo takes is to send
-one through it.
+one through it. `_score` runs what one cron pass runs, in one transaction:
+the nudity verdict (Q_SET_NSFW_SCORE), then the face rule for the member's
+main photo (service/photo_rules.py). The face rule follows the owner's
+rule: a photo with no face is left alone when the member has another photo
+that shows a face; only a member with no face photo at all is affected.
 """
 import hashlib
 import io
@@ -13,6 +17,7 @@ import pytest
 
 from database import api_tx
 from service.cron.nsfwphotorunner.sql import Q_SET_NSFW_SCORE
+from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS
 
 
 def _photo(person_id, position=1):
@@ -28,6 +33,7 @@ def _photo(person_id, position=1):
 def _score(uuid, nsfw, faces):
     with api_tx() as tx:
         tx.execute(Q_SET_NSFW_SCORE, dict(uuid=uuid, nsfw_score=nsfw, face_count=faces))
+        tx.execute(Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS, dict(uuids=[uuid]))
         return dict(tx.execute(
             """SELECT moderation_status::text AS s, face_count, face_checked_at
                  FROM photo WHERE uuid = %(u)s""",
@@ -42,9 +48,32 @@ def _score(uuid, nsfw, faces):
     (1, 0.90, 3, 'rejected'),        # the nudity verdict wins, face or not
     (1, 0.50, 1, 'manual_review'),   # borderline nudity is still reviewed
 ])
-def test_the_verdict(make_person, position, nsfw, faces, expected):
+def test_the_verdict(make_person, add_photo, position, nsfw, faces, expected):
     p = make_person(name='FaceRule')
+    if position != 1:
+        # A second photo is a second photo only behind a main one; a lone
+        # photo at position 2 is the main photo (tests/test_photo_face_recheck.py).
+        add_photo(p['id'], position=1, face_count=1)
     assert _score(_photo(p['id'], position), nsfw, faces)['s'] == expected
+
+
+def test_a_main_upload_with_no_face_is_left_alone_beside_a_face_photo(make_person, add_photo):
+    """The owner's rule: the member already shows their face in another
+    photo, so a new main photo of a landscape is not held."""
+    p = make_person(name='FaceElsewhere')
+    add_photo(p['id'], position=2, face_count=1)
+    assert _score(_photo(p['id'], 1), 0.05, 0)['s'] == 'approved'
+
+
+def test_a_main_upload_with_no_face_is_held_when_no_photo_shows_one(make_person, add_photo):
+    """Only a member with no face photo at all is affected: the other photo
+    is approved but shows no face either, so a person decides."""
+    p = make_person(name='NoFaceAnywhere')
+    other = add_photo(p['id'], position=2, face_count=0)
+    assert _score(_photo(p['id'], 1), 0.05, 0)['s'] == 'manual_review'
+    with api_tx() as tx:
+        assert tx.execute("SELECT moderation_status::text AS s FROM photo WHERE uuid = %(u)s",
+                          dict(u=other)).fetchone()['s'] == 'approved'
 
 
 def test_no_face_never_rejects_on_its_own(make_person):
