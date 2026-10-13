@@ -206,7 +206,8 @@ def test_a_staff_account_changes_no_member_figure(client, admin_headers, make_pe
         'engagement.conversations_answered', 'engagement.messages_total',
         'growth.man.members', 'growth.man.new_7d', 'growth.man.acted_14d',
         'growth.man.with_photo', 'growth.man.premium', 'growth.man.opted_in',
-        'growth.matches', 'growth.likes_total', 'growth.opted_in',
+        'growth.matches', 'growth.likes_total', 'growth.msgs_7d', 'growth.msgs_30d',
+        'growth.opted_in',
     )
     still = [k for k in must_move if as_member[k] == after[k]]
     assert still == [], f'these figures did not see the account once it was a member: {still}'

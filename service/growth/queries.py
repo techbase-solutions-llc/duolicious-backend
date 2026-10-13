@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from emails.base import suppressed_sql_pattern
+from service.admin.queries.engagement import _SENT_MESSAGES
 from service.admin.queries.members import member_sql
 from service.campaigns import (PLATFORMS, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
@@ -46,11 +47,30 @@ def last_action_at(tx, person_id: int) -> Optional[datetime]:
 def _not_member_or_test(x: str) -> str:
     return f"(lower({x}.email) = ANY(%(ex)s) OR NOT ({member_sql(x)}))"
 
+# Each tile measures what its label says (health review, 13 Oct 2026):
+#
+# - acted_14d is "Liked or messaged": a like, or a message actually sent, in
+#   the last 14 days. It used to be last_action, which also counts passes,
+#   and read 16 where 8 members had liked or messaged. Messages come from
+#   mam_message, not `messaged`, which only records a pair's FIRST message.
+#   stale_30d and never_acted still use last_action, passes included, the
+#   same measure of activity as the dormant cohort below (_Q_DORMANT).
+# - has_photo is an APPROVED photo. Any photo row used to count, so members
+#   whose only photos were rejected read as having one.
 _Q_STATS_BY_GENDER = f"""
     WITH act AS (
       SELECT p.id, g.name AS gender, p.sign_up_time, p.spotlight_opt_in,
              p.subscription_expires_at,
-             EXISTS (SELECT 1 FROM photo ph WHERE ph.person_id = p.id) AS has_photo,
+             EXISTS (SELECT 1 FROM photo ph
+                      WHERE ph.person_id = p.id
+                        AND ph.moderation_status = 'approved') AS has_photo,
+             (EXISTS (SELECT 1 FROM liked l
+                       WHERE l.liker_id = p.id
+                         AND l.created_at > NOW() - interval '14 days')
+              OR EXISTS (SELECT 1 FROM mam_message m
+                          WHERE m.person_id = p.id AND m.direction = 'O'
+                            AND to_timestamp(m.id / 1000000 / 256) > NOW() - interval '14 days')
+             ) AS liked_or_messaged_14d,
              {_last_action_sql('p.id')} AS last_action
         FROM person p JOIN gender g ON g.id = p.gender_id
        WHERE p.activated AND {member_sql('p')} AND lower(p.email) <> ALL(%(ex)s)
@@ -59,7 +79,7 @@ _Q_STATS_BY_GENDER = f"""
            count(*)                                                              AS members,
            count(*) FILTER (WHERE sign_up_time > NOW() - interval '7 days')      AS new_7d,
            count(*) FILTER (WHERE sign_up_time > NOW() - interval '30 days')     AS new_30d,
-           count(*) FILTER (WHERE last_action > NOW() - interval '14 days')      AS acted_14d,
+           count(*) FILTER (WHERE liked_or_messaged_14d)                         AS acted_14d,
            count(*) FILTER (WHERE last_action < NOW() - interval '30 days' AND last_action > to_timestamp(0)) AS stale_30d,
            count(*) FILTER (WHERE last_action = to_timestamp(0))                 AS never_acted,
            count(*) FILTER (WHERE has_photo)                                     AS with_photo,
@@ -68,7 +88,13 @@ _Q_STATS_BY_GENDER = f"""
       FROM act GROUP BY gender ORDER BY gender
 """
 
+# Messages are messages: one per message sent, read from mam_message through
+# the same _SENT_MESSAGES the Overview's "Messages 7d" uses, so one label has
+# one measure. These rows used to count `messaged`, which holds one row per
+# sender and recipient written on the first message only: 30 days read 3
+# while 6 messages had been sent.
 _Q_TOTALS = f"""
+    WITH sent AS ({_SENT_MESSAGES})
     SELECT
       (SELECT count(*) FROM ahavah_match m
         WHERE NOT EXISTS (
@@ -92,16 +118,16 @@ _Q_TOTALS = f"""
             SELECT 1 FROM person x WHERE x.id IN (l.liker_id, l.liked_id) AND {_not_member_or_test('x')}
           )
       ) AS likes_7d,
-      (SELECT count(*) FROM messaged msg
-        WHERE msg.created_at > NOW() - interval '7 days'
+      (SELECT count(*) FROM sent s
+        WHERE s.sent_at > NOW() - interval '7 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND {_not_member_or_test('x')}
+            SELECT 1 FROM person x WHERE x.id IN (s.sender_id, s.recipient_id) AND {_not_member_or_test('x')}
           )
       ) AS msgs_7d,
-      (SELECT count(*) FROM messaged msg
-        WHERE msg.created_at > NOW() - interval '30 days'
+      (SELECT count(*) FROM sent s
+        WHERE s.sent_at > NOW() - interval '30 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND {_not_member_or_test('x')}
+            SELECT 1 FROM person x WHERE x.id IN (s.sender_id, s.recipient_id) AND {_not_member_or_test('x')}
           )
       ) AS msgs_30d,
       (SELECT count(*) FROM person p
