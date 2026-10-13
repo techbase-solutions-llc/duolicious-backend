@@ -143,7 +143,7 @@ def new_like_email(unsubscribe_url: str) -> str:
         title_light="title-like.png", title_dark="title-like-wht.png",
         title_alt="Someone likes you.",
         lede="Someone liked your profile on Ahavah. Open the app to see your likes.",
-        cta_label="See your likes", cta_url=f"{WEB_BASE_URL}/matches",
+        cta_label="See your likes", cta_url=f"{WEB_BASE_URL}/matches?tab=likes",
         unsubscribe_url=unsubscribe_url,
         subject="Someone likes you on Ahavah",
         preheader="You have a new like.",

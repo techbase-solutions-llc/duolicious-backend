@@ -480,11 +480,12 @@ def post_decisions(req: t.PostDecision, s: t.SessionInfo):
                         dict(uuid=req.profile_uuid),
                     ).fetchone()
                 if liked:
+                    # Opens Liked you, not the Matches tab (finding 32).
                     notify(
                         liked["id"], "like",
                         title="Someone likes you",
                         body="You have a new like on Ahavah",
-                        url="/matches",
+                        url="/matches?tab=likes",
                         email_subject="Someone likes you on Ahavah",
                         email_html_factory=new_like_email,
                     )

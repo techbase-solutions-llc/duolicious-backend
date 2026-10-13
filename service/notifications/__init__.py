@@ -60,6 +60,29 @@ _EVENT_DEFAULTS: Dict[EventKind, bool] = {
 }
 
 
+# Like alerts follow push (health review, 13 Oct 2026, findings 32, 58).
+# The push banner, E3 and E6 all promise "hear when someone likes you", yet
+# subscribing left push_likes at its default off, so no member had it. A
+# subscribe now turns it on for a member who has not chosen about likes.
+#
+# "Chosen" is `push_likes_chosen_at` (migration 0057), stamped by
+# patch_notification_preferences whenever a PATCH carries push_likes. The
+# row alone cannot say it: the web saves one switch per PATCH, so a row
+# written for another switch holds push_likes at its default FALSE. Turning
+# it on here is a default, not a choice, so this never stamps the column.
+# The subscribe route and scripts/backfill_like_alerts.py share this
+# statement; it returns the people it turned on.
+Q_LIKE_PUSH_ON_UNLESS_CHOSEN = """
+    INSERT INTO notification_preference (person_id, push_likes, updated_at)
+    SELECT pid, TRUE, NOW() FROM unnest(%(ids)s::int[]) AS t(pid)
+    ON CONFLICT (person_id) DO UPDATE
+       SET push_likes = TRUE, updated_at = NOW()
+     WHERE notification_preference.push_likes_chosen_at IS NULL
+       AND NOT notification_preference.push_likes
+    RETURNING person_id
+"""
+
+
 VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', '')
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
 VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@ahavah.app')
@@ -96,6 +119,9 @@ def post_subscribe(s, req):
                 auth=req.keys.auth,
             ),
         )
+        # Every opt-in surface promises like alerts, so a device that
+        # subscribes gets them unless the member has chosen about likes.
+        tx.execute(Q_LIKE_PUSH_ON_UNLESS_CHOSEN, dict(ids=[s.person_id]))
 
     return {'ok': True}
 
@@ -532,6 +558,13 @@ def patch_notification_preferences(req, s):
     set_clause = ', '.join(f'{c} = %({c})s' for c in cols)
     insert_cols = ', '.join(['person_id'] + cols)
     insert_vals = ', '.join(['%(person_id)s'] + [f'%({c})s' for c in cols])
+    # A PATCH that carries push_likes is the member's choice about like
+    # alerts, which a later subscribe must not override (see
+    # Q_LIKE_PUSH_ON_UNLESS_CHOSEN).
+    if 'push_likes' in updates:
+        set_clause += ', push_likes_chosen_at = NOW()'
+        insert_cols += ', push_likes_chosen_at'
+        insert_vals += ', NOW()'
     q = f"""
     INSERT INTO notification_preference ({insert_cols}, updated_at)
     VALUES ({insert_vals}, NOW())
