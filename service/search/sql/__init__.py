@@ -189,6 +189,16 @@ prospect_pool AS (
       -- intended this; the rewritten search lost it).
       AND NOT p.verification_required
 
+      -- A member with no approved photo is a card nobody can judge, so
+      -- they leave the deck until one is approved (health review, 13 Oct
+      -- 2026, finding 95; 4 of 58 members that day). Any approved photo
+      -- counts; whether it shows a face is the photo gate's rule (0062).
+      AND EXISTS (
+          SELECT 1 FROM photo ph
+          WHERE ph.person_id = p.id
+            AND ph.moderation_status = 'approved'
+      )
+
       -- Defensive: a match must never re-enter the deck, even if the
       -- searcher's liked half-row was wiped (/decisions/reset).
       AND NOT EXISTS (
@@ -472,6 +482,20 @@ Q_MAP_MARKERS = """
       -- country-centroid default (not where they actually are), so a precise
       -- pin there fabricates a cluster. They reappear once they set a city.
       AND COALESCE((p.ahavah_extra->>'citySet')::boolean, FALSE)
+      -- No approved photo, no pin (finding 95), as in the deck. A match
+      -- still sees them: the pair already know each other.
+      AND (
+          EXISTS (
+              SELECT 1 FROM photo ph
+              WHERE ph.person_id = p.id
+                AND ph.moderation_status = 'approved'
+          )
+          OR EXISTS (
+              SELECT 1 FROM ahavah_match am
+              WHERE am.user_a_id = LEAST(%(searcher_person_id)s, p.id)
+                AND am.user_b_id = GREATEST(%(searcher_person_id)s, p.id)
+          )
+      )
     -- Bound the payload. Decoupling the map from search_cache (2026-07-19)
     -- also dropped the 1000-row cap the cache imposed, leaving this
     -- unbounded: every map open would serialise the entire member base.

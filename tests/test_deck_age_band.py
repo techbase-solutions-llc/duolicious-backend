@@ -55,6 +55,11 @@ def deck(make_person):
                           date_of_birth = (CURRENT_DATE - make_interval(years => %(a)s)
                                            - interval '30 days')::date
                     WHERE id = %(i)s""", dict(c=_COUNTRY, a=age, i=p['id']))
+            # The deck shows members with an approved photo only (finding 95).
+            tx.execute(
+                "INSERT INTO photo (uuid, person_id, position, blurhash, hash, nsfw_score, "
+                "moderation_status, face_count) VALUES (md5(random()::text) || md5(random()::text), "
+                "%(i)s, 1, 'b', md5(random()::text), 0.01, 'approved', 1)", dict(i=p['id']))
         return p['uuid']
 
     def ages_seen(query: str = '') -> set[str]:

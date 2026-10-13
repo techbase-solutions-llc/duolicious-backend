@@ -74,5 +74,10 @@ def test_empty_gender_preference_fails_open(make_person):
     me = make_person(name='Opener', gender='Man')
     w = make_person(name='Chava', gender='Woman')
     with api_tx() as tx:
+        # The deck shows members with an approved photo only (finding 95).
+        tx.execute(
+            "INSERT INTO photo (uuid, person_id, position, blurhash, hash, nsfw_score, "
+            "moderation_status, face_count) VALUES (md5(random()::text) || md5(random()::text), "
+            "%(i)s, 1, 'b', md5(random()::text), 0.01, 'approved', 1)", dict(i=w['id']))
         assert w['uuid'] in _deck_uuids(tx, me['id'], []), \
             'empty preference must mean "no filter", as on the map'

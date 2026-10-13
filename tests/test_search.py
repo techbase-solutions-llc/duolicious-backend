@@ -62,6 +62,12 @@ def searcher_and_candidates():
             """,
             dict(p=searcher['id']),
         )
+        for c in candidates:
+            # The deck shows members with an approved photo only (finding 95).
+            tx.execute(
+                "INSERT INTO photo (uuid, person_id, position, blurhash, hash, nsfw_score, "
+                "moderation_status, face_count) VALUES (md5(random()::text) || md5(random()::text), "
+                "%(i)s, 1, 'b', md5(random()::text), 0.01, 'approved', 1)", dict(i=c['id']))
     yield {'searcher': searcher, 'candidates': candidates}
     with api_tx() as tx:
         ids = [searcher['id']] + [c['id'] for c in candidates]

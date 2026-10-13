@@ -51,6 +51,11 @@ def deck(make_person):
                           verification_level_id = %(v)s
                     WHERE id = %(i)s""",
                 dict(c=_COUNTRY, d=days_offline, v=verification_level, i=p['id']))
+            # The deck shows members with an approved photo only (finding 95).
+            tx.execute(
+                "INSERT INTO photo (uuid, person_id, position, blurhash, hash, nsfw_score, "
+                "moderation_status, face_count) VALUES (md5(random()::text) || md5(random()::text), "
+                "%(i)s, 1, 'b', md5(random()::text), 0.01, 'approved', 1)", dict(i=p['id']))
         return p['uuid']
 
     return dict(headers={'Authorization': f'Bearer {tok}'}, prospect=prospect)
