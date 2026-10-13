@@ -6,7 +6,7 @@ from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.spotlight_announcement import spotlight_announcement_html, SUBJECT, FROM_ADDR
 from service.campaigns import suppressed_predicate_sql, unsubscribed_predicate_sql
-from service.campaigns.runner import run_campaign
+from service.campaigns.runner import audit_send, run_campaign
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
 from service.spotlight import spotlight_confirm_url
@@ -28,13 +28,12 @@ _Q_RECIPIENTS = f"""
 
 def build_for(row: dict) -> tuple[str, str]:
     # Mints a real single-use nonce (service.spotlight.nonce.issue_nonce)
-    # against the recipient's current consent epoch -- including on a dry
-    # run (send=False), since run_campaign builds every message either way
-    # to exercise the template. A dry run of this campaign therefore still
-    # writes one spotlight_token_nonce row per recipient it builds for,
-    # even though no email goes out and the nonce is never handed to anyone.
+    # against the recipient's current consent epoch. Not on a dry run: the
+    # runner marks the row, and the token then carries a placeholder nonce
+    # that is never stored (health review, 13 Oct 2026; until then a dry
+    # run wrote one spotlight_token_nonce row per recipient).
     with api_tx() as tx:
-        confirm_url = spotlight_confirm_url(tx, row['email'])
+        confirm_url = spotlight_confirm_url(tx, row['email'], dry_run=row.get('dry_run', False))
     if confirm_url is None:
         # No activated person matches this email (deactivated, deleted, or
         # a bad row) -- there is nothing to mint a token against. Raising
@@ -78,9 +77,14 @@ def main() -> None:
         make_aws_smtp().send(subject=subject, body=html, to_addr=a.preview, from_addr=FROM_ADDR)
         print(f"preview sent to {a.preview}"); return
     cid = a.campaign_id or f"e1-{uuid.uuid4().hex[:8]}"
-    print(run_campaign(api_tx, 'e1', cid, recipients(), build_for, send=a.send, from_addr=FROM_ADDR,
+    res = run_campaign(api_tx, 'e1', cid, recipients(), build_for, send=a.send, from_addr=FROM_ADDR,
                        unsub_scope=UNSUB_SCOPE,
-                       list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>"))
+                       list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>")
+    # A real send leaves an audit row, as the Send button's does.
+    if a.send:
+        with api_tx() as tx:
+            audit_send(tx, 'cli', 'e1', res)
+    print(res)
 
 if __name__ == '__main__':
     main()

@@ -10,7 +10,8 @@ with next_attempt_at at the slot, under an id that names the slot, so the
 cron's own weekly row never collides with them. `--cap-days` is the window
 the drain re-checks AT THE SLOT: 1 means "nothing else in the last day".
 
-Members already accepted are excluded by the send log, as always.
+Members already accepted are excluded by the send log, as always. A run
+that queues anything leaves an audit row (actor 'cli').
 """
 from __future__ import annotations
 
@@ -31,7 +32,8 @@ def main() -> None:
         raise SystemExit('--at is in the past')
     suffix = 'sched' + at.strftime('%Y%m%dT%H%M')
     with api_tx() as tx:
-        n = queue_due(tx, datetime.now(timezone.utc), cap_days=a.cap_days, not_before=at, id_suffix=suffix)
+        n = queue_due(tx, datetime.now(timezone.utc), cap_days=a.cap_days, not_before=at, id_suffix=suffix,
+                      actor='cli')
     print(f'queued {n} for {at.isoformat()} under referral-<id>-{suffix}, cap {a.cap_days} day(s)')
 
 

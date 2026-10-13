@@ -107,9 +107,13 @@ def log_send(tx, person_id: int, campaign: str, campaign_id: str,
         """,
         dict(pid=person_id, c=campaign, cid=campaign_id, mid=message_id))
 
+# What a dry run's CTA points at. Never stored, and a dry run sends nothing,
+# so nobody is ever handed it.
+DRY_RUN_LINK_KEY = 'dry-run'
+
 def make_campaign_link(tx, kind: str, target_url: str,
                        subject_person_id: Optional[int] = None, *,
-                       external_ok: bool = False) -> str:
+                       external_ok: bool = False, dry_run: bool = False) -> str:
     """Mint a /s/<key> link. `target_url` must stay on our own web app by
     default: /s/<key> redirects to whatever is stored here, so accepting a
     foreign target would turn every campaign email into an open redirect.
@@ -125,7 +129,11 @@ def make_campaign_link(tx, kind: str, target_url: str,
     target whose netloc is one of `ALLOWED_EXTERNAL_HOSTS`, checked the same
     scheme+netloc way for the same subdomain-spoofing reason -- never a bare
     `startswith` or substring match. Every other target still raises
-    `ValueError`, exactly as when `external_ok` is left False."""
+    `ValueError`, exactly as when `external_ok` is left False.
+
+    `dry_run=True` (a campaign dry run, see service/campaigns/runner.py)
+    checks the target the same way and returns a placeholder link without
+    storing a row."""
     target = urlparse(str(target_url))
     base = urlparse(WEB_BASE_URL)
     on_web_base = (target.scheme, target.netloc) == (base.scheme, base.netloc)
@@ -133,6 +141,8 @@ def make_campaign_link(tx, kind: str, target_url: str,
                            and target.netloc in ALLOWED_EXTERNAL_HOSTS)
     if not (on_web_base or on_allowed_external):
         raise ValueError(f"campaign link target must start with {WEB_BASE_URL.rstrip('/')}")
+    if dry_run:
+        return f"{WEB_BASE_URL.rstrip('/')}/s/{DRY_RUN_LINK_KEY}"
     key = secrets.token_urlsafe(6)
     tx.execute(
         """

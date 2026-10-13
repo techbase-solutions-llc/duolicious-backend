@@ -10,6 +10,7 @@ from flask import abort, jsonify, request
 from database import api_tx
 from service.admin import require_admin, record_audit
 from service.api.decorators import aget, apost
+from service.campaigns.runner import SEND_AUDIT_ACTION
 from service.campaigns.schedule import COMMUNITY_WEEKLY_ENABLED, next_send_at
 from service.growth.queries import growth_stats
 import emails.send_spotlight_announcement as e1
@@ -149,7 +150,7 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     # there is no single transaction the audit could share. `res` already
     # carries campaign_id and dry_run, so only `campaign` is added here.
     with api_tx() as tx:
-        record_audit(tx, s, 'growth.email.send', metadata=dict(campaign=campaign, **res))
+        record_audit(tx, s, SEND_AUDIT_ACTION, metadata=dict(campaign=campaign, **res))
     return res
 
 

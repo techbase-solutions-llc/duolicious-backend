@@ -14,14 +14,38 @@ campaign_id queues nothing, which is the idempotency guarantee). `built`
 counts messages successfully built, which is the only number a DRY RUN can
 report -- a dry run builds everything and queues nothing, so its `queued` is
 always 0.
+
+A dry run writes nothing either (health review, 13 Oct 2026). Building a
+message mints what the real email carries, a campaign_link row per CTA or a
+Spotlight nonce, so a dry run used to leave one of each per recipient for
+mail that was never sent. It now hands `build` the row with `dry_run=True`,
+and each campaign's build passes that on to `make_campaign_link` and
+`spotlight_confirm_url`, which return a placeholder and store nothing.
 """
 from __future__ import annotations
 
 from typing import Callable
 
 from emails.base import is_suppressed_send, mask_email
+from service.admin import record_system_audit
 from service.campaigns import campaign_unsubscribed, can_send
 from service.campaigns import outbox
+
+# The admin_audit_log action every campaign send is recorded under, from
+# the Send button (service/api/admin/growth_routes.py), the command line or
+# a cron, so the Audit tab lists them together.
+SEND_AUDIT_ACTION = 'growth.email.send'
+
+
+def audit_send(tx, actor: str, campaign: str, result: dict) -> None:
+    """The audit row for a send no admin session started: `actor` is 'cli'
+    for a command run on the server, 'cron' for a scheduled one (health
+    review, 13 Oct 2026: only the Send button wrote one, so the 1 Oct e3
+    and e6 runs, the 4 Oct referral run and every weekly e2 left none).
+    `result` is what the run returned; the Send button's row carries the
+    same metadata with the admin as actor. A dry run from the command line
+    is not audited: it sends nothing and now writes nothing."""
+    record_system_audit(tx, actor, SEND_AUDIT_ACTION, metadata=dict(campaign=campaign, **result))
 
 def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[dict],
                  build: Callable[[dict], tuple[str, str]], *, send: bool,
@@ -53,9 +77,11 @@ def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[d
                 continue
         # Build inside the try even on a dry run: building IS the thing a dry
         # run exercises, so a template that raises must be reported the same
-        # way a failed enqueue is rather than escaping to the caller.
+        # way a failed enqueue is rather than escaping to the caller. The
+        # flag on the row is what keeps a dry run from storing links and
+        # nonces (see the module docstring).
         try:
-            subject, html = build(row)
+            subject, html = build(row if send else dict(row, dry_run=True))
         except Exception as e:
             return dict(queued=queued, built=built, skipped_cap=skipped_cap,
                         skipped_suppressed=skipped_suppressed,

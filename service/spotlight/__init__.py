@@ -48,14 +48,23 @@ def _sign(email: str, ts: int, nonce: str) -> str:
     return base64.urlsafe_b64encode(hmac.new(_secret(), payload, hashlib.sha256).digest()).decode().rstrip('=')
 
 
-def make_confirm_token(tx, email: str) -> str | None:
+# The nonce segment of a dry run's token. Never stored, so `check_nonce`
+# answers 'invalid' for it.
+DRY_RUN_NONCE = 'dry-run'
+
+
+def make_confirm_token(tx, email: str, *, dry_run: bool = False) -> str | None:
     """None when no activated person has this email -- there is nothing to
-    mint a single-use nonce against."""
+    mint a single-use nonce against.
+
+    `dry_run=True` (a campaign dry run) makes the same check and signs a
+    token around a placeholder nonce that is never stored (health review,
+    13 Oct 2026: a dry run of E1 used to store one nonce per member)."""
     norm = email.strip().lower()
     row = tx.execute("SELECT id FROM person WHERE lower(email) = %(e)s AND activated", dict(e=norm)).fetchone()
     if not row:
         return None
-    nonce = issue_nonce(tx, row['id'], 'confirm')
+    nonce = DRY_RUN_NONCE if dry_run else issue_nonce(tx, row['id'], 'confirm')
     ts = _now_ts()
     e = base64.urlsafe_b64encode(norm.encode()).decode().rstrip('=')
     return f"{e}.{ts}.{nonce}.{_sign(norm, ts, nonce)}"
@@ -84,8 +93,8 @@ def parse_confirm_token(token: str) -> tuple[str | None, str | None, str]:
     return email, nonce, 'ok'
 
 
-def spotlight_confirm_url(tx, email: str) -> str | None:
-    token = make_confirm_token(tx, email)
+def spotlight_confirm_url(tx, email: str, *, dry_run: bool = False) -> str | None:
+    token = make_confirm_token(tx, email, dry_run=dry_run)
     if token is None:
         return None
     return f"{WEB_BASE_URL.rstrip('/')}/spotlight/confirm/{quote(token)}"

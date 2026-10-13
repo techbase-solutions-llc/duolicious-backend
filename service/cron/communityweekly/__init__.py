@@ -33,7 +33,7 @@ from database import api_tx
 from emails.community_weekly import FROM_ADDR
 from emails.send_community_weekly import (
     CAP_DAYS, UNSUB_SCOPE, build_for, recipients)
-from service.campaigns.runner import run_campaign
+from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.schedule import (
     COMMUNITY_WEEKLY_ENABLED, SEND_HOUR_UTC, is_send_window)
 from service.campaigns.weekid import week_campaign_id
@@ -77,9 +77,12 @@ def _send_once() -> None:
             f"<mailto:support@ahavah.app?subject=Unsubscribe>, "
             f"<{unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>"))
     # A tick that queued nothing is the NORMAL case: every hour of Monday
-    # after the first one. Only say something when something happened.
+    # after the first one. Only say something when something happened, and
+    # only then leave an audit row (a send with no admin behind it).
     if out['queued'] or out['error']:
         print(f'community_weekly: {out}')
+        with api_tx() as tx:
+            audit_send(tx, 'cron', 'e2', out)
 
 
 async def community_weekly_forever() -> None:

@@ -7,7 +7,7 @@ from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.community_weekly import community_weekly_html, SUBJECT, FROM_ADDR
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
-from service.campaigns.runner import run_campaign
+from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.weekid import week_campaign_id
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
@@ -105,7 +105,8 @@ def recipient_count() -> int:
 def build_for(row: dict) -> tuple[str, str]:
     week = row['week']
     with api_tx() as tx:
-        cta = make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/discover", row['person_id'] or None)
+        cta = make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/discover", row['person_id'] or None,
+                                 dry_run=row.get('dry_run', False))
     return SUBJECT, community_weekly_html(week['new_members'], week['total'], week['spotlight'], cta,
                                           _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
 
@@ -125,9 +126,14 @@ def main() -> None:
     # which is exactly what someone reaching for this script is often about
     # to override. Sharing the id makes the second run a no-op instead.
     cid = a.campaign_id or week_campaign_id(datetime.now(timezone.utc), 'e2')
-    print(run_campaign(api_tx, 'e2', cid, recipients(), build_for, send=a.send, from_addr=FROM_ADDR,
+    res = run_campaign(api_tx, 'e2', cid, recipients(), build_for, send=a.send, from_addr=FROM_ADDR,
                        unsub_scope=UNSUB_SCOPE, cap_days=CAP_DAYS,
-                       list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>"))
+                       list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(UNSUB_SCOPE, e, WEB_BASE_URL)}>")
+    # A real send leaves an audit row, as the Send button's does.
+    if a.send:
+        with api_tx() as tx:
+            audit_send(tx, 'cli', 'e2', res)
+    print(res)
 
 if __name__ == '__main__':
     main()

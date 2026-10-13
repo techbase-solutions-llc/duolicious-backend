@@ -30,6 +30,7 @@ from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.referral_intro import FROM_ADDR, SUBJECT, referral_intro_html
 from service.campaigns import outbox, suppressed_predicate_sql, unsubscribed_predicate_sql
+from service.campaigns.runner import audit_send
 from service.config import WEB_BASE_URL
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 from service.growth.queries import _excluded
@@ -62,13 +63,18 @@ _Q_DUE = f"""
 """
 
 
-def campaign_id(person_id: int, now: datetime) -> str:
+def _week_suffix(now: datetime) -> str:
     year, week, _ = now.isocalendar()
-    return f"referral-{person_id}-{year}w{week:02d}"
+    return f"{year}w{week:02d}"
+
+
+def campaign_id(person_id: int, now: datetime) -> str:
+    return f"referral-{person_id}-{_week_suffix(now)}"
 
 
 def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
-              not_before: datetime | None = None, id_suffix: str | None = None) -> int:
+              not_before: datetime | None = None, id_suffix: str | None = None,
+              actor: str = 'cron') -> int:
     """Queue the intro for every member due one. Returns how many rows were
     queued this tick (not how many were due: the outbox dedupes repeats).
 
@@ -76,7 +82,12 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
     command line (scripts/schedule_referral_intro.py): `not_before` holds the
     rows for a chosen slot, `cap_days` is the frequency window the drain
     re-checks at that slot, and `id_suffix` replaces the ISO week in the id
-    so the run cannot collide with the cron's own row for the week."""
+    so the run cannot collide with the cron's own row for the week.
+
+    A tick that queues anything leaves one audit row in the same
+    transaction, under `actor` ('cron', or 'cli' from the script). Each
+    member's campaign id is their own, so the row names the shared suffix
+    rather than one id."""
     now = now or datetime.now(timezone.utc)
     rows = tx.execute(_Q_DUE, dict(days=REFERRAL_INTRO_AFTER_DAYS, ex=_excluded(),
                                    sup=suppressed_sql_pattern())).fetchall()
@@ -93,6 +104,10 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
             cap_days=cap_days, not_before=not_before)
         if row_id is not None:
             queued += 1
+    if queued:
+        audit_send(tx, actor, 'referral', dict(
+            queued=queued, dry_run=False, id_suffix=id_suffix or _week_suffix(now),
+            cap_days=cap_days, not_before=not_before.isoformat() if not_before else None))
     return queued
 
 

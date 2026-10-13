@@ -8,6 +8,7 @@ Every /admin/* endpoint:
 Public surface:
   require_admin(s)             — raises HTTPException(403) if not admin
   record_audit(tx, s, ...)     — writes one admin_audit_log row
+  record_system_audit(tx, ...) writes one for a cron tick or a command
   is_admin(tx, person_uuid)    — read-only check (used by /admin/whoami)
 
 Query helpers per tab land in service/admin/queries/* and are
@@ -43,6 +44,13 @@ def require_admin(s: t.SessionInfo) -> None:
             abort(403)
 
 
+# An action no admin session made: a cron tick, or a command run on the
+# server. admin_audit_log requires an actor uuid and there is no person to
+# name, so the nil uuid stands for the system and actor_email says which part
+# of it acted ('cron' or 'cli').
+SYSTEM_ACTOR_UUID = '00000000-0000-0000-0000-000000000000'
+
+
 def record_audit(
     tx,
     s: t.SessionInfo,
@@ -62,6 +70,29 @@ def record_audit(
             action=action,
             target_email=target_email,
             target_uuid=target_uuid,
+            metadata=json.dumps(metadata or {}),
+        ),
+    ).fetchone()
+    return str(row['id'])
+
+
+def record_system_audit(
+    tx,
+    actor: str,
+    action: str,
+    metadata: Optional[dict[str, Any]] = None,
+) -> str:
+    """`record_audit` for an action with no admin session behind it.
+    `actor` is 'cron' or 'cli'. Same caller contract: inside the api_tx
+    that holds what is being audited, where there is one."""
+    row = tx.execute(
+        Q_INSERT_AUDIT,
+        dict(
+            actor_email=actor,
+            actor_uuid=SYSTEM_ACTOR_UUID,
+            action=action,
+            target_email=None,
+            target_uuid=None,
             metadata=json.dumps(metadata or {}),
         ),
     ).fetchone()
