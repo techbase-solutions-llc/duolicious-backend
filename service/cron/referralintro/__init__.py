@@ -29,7 +29,8 @@ from datetime import datetime, timezone
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.referral_intro import FROM_ADDR, SUBJECT, referral_intro_html
-from service.campaigns import outbox, suppressed_predicate_sql, unsubscribed_predicate_sql
+from service.campaigns import (make_campaign_link, outbox, suppressed_predicate_sql,
+                               unsubscribed_predicate_sql)
 from service.campaigns.runner import audit_send
 from service.config import WEB_BASE_URL
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
@@ -60,6 +61,12 @@ _Q_DUE = f"""
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
      ORDER BY p.id
+"""
+
+
+_Q_ALREADY_QUEUED = """
+    SELECT 1 FROM email_outbox
+     WHERE campaign = 'referral' AND campaign_id = %(cid)s AND person_id = %(p)s
 """
 
 
@@ -95,10 +102,20 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
     for r in rows:
         unsub = unsub_url(UNSUB_SCOPE, r['email'], WEB_BASE_URL)
         cid = f"referral-{r['id']}-{id_suffix}" if id_suffix else campaign_id(r['id'], now)
+        # Already queued under this id (an earlier tick this week): the
+        # outbox would add nothing, so mint no links for it either.
+        if tx.execute(_Q_ALREADY_QUEUED, dict(cid=cid, p=r['id'])).fetchone():
+            continue
+        # Counted links (finding 74): kind 'referral', the member as subject,
+        # as E2, E3 and E6 carry theirs.
+        code = r['referral_code']
+        share_href = make_campaign_link(tx, 'referral', f"{WEB_BASE_URL}/share/{code}", r['id'])
+        link_href = make_campaign_link(tx, 'referral', f"{WEB_BASE_URL}/i/{code}", r['id'])
         row_id = outbox.enqueue(
             tx, campaign='referral', campaign_id=cid, person_id=r['id'],
             email=r['email'], subject=SUBJECT,
-            html=referral_intro_html(r['email'], r['referral_code'], member=True),
+            html=referral_intro_html(r['email'], code, member=True,
+                                     share_href=share_href, link_href=link_href),
             from_addr=FROM_ADDR, unsub_scope=UNSUB_SCOPE,
             list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
             cap_days=cap_days, not_before=not_before)

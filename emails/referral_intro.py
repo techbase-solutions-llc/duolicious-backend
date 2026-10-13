@@ -27,9 +27,10 @@ PREHEADER = "You earn a Boost for each friend who joins through your link."
 SITE = "https://ahavah.app"
 
 
-def _body(code: str) -> str:
-    share_url = f"{WEB_BASE_URL}/share/{code}"
+def _body(code: str, share_href: str | None = None, link_href: str | None = None) -> str:
+    share_url = share_href or f"{WEB_BASE_URL}/share/{code}"
     plaintext_url = f"{WEB_BASE_URL}/i/{code}"
+    plaintext_href = link_href or plaintext_url
     return f"""
 {chip("You + 1")}
 
@@ -54,7 +55,7 @@ def _body(code: str) -> str:
   Or copy and paste this link:
 </p>
 <p class="e-text" style="margin:4px 0 0;font-family:{SANS};font-size:14px;line-height:1.6;color:{INDIGO};text-align:center;word-break:break-all;">
-  <a href="{plaintext_url}" style="color:{INDIGO};font-weight:600;text-decoration:none;">{plaintext_url}</a>
+  <a href="{plaintext_href}" style="color:{INDIGO};font-weight:600;text-decoration:none;">{plaintext_url}</a>
 </p>
 
 <p class="e-text" style="margin:24px 0 0;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK_SOFT};">
@@ -93,11 +94,16 @@ You're receiving this because you're a member of Ahavah.
 """
 
 
-def referral_intro_html(email: str, code: str, member: bool = False) -> str:
+def referral_intro_html(email: str, code: str, member: bool = False, *,
+                        share_href: str | None = None, link_href: str | None = None) -> str:
+    """`share_href` and `link_href` are the /s/ campaign links the cron
+    mints for the button and the plain invite link (finding 74). The text a
+    member copies by hand stays their own /i/ link; only the href is
+    counted. Without them the links go straight through, as before."""
     return render(
         title=SUBJECT,
         preheader=PREHEADER,
-        body_html=_body(code),
+        body_html=_body(code, share_href, link_href),
         footer_html=_member_footer(email) if member else _footer(email),
     )
 
