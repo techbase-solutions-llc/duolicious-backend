@@ -36,12 +36,17 @@ Q_LEDGER_KPIS = """
 """
 
 # Entitlement holders.
+#
+# time_left is whole SECONDS, negative once lapsed, NULL with no expiry. It
+# used to be the raw interval, which psycopg returns as a Python timedelta
+# and Flask's JSON provider cannot encode, so every load with a dated holder
+# (all 60 in production) answered 500 until 13 Oct 2026.
 Q_ENTITLEMENT_HOLDERS = """
     SELECT
         p.email,
         p.uuid::text AS person_uuid,
         p.subscription_expires_at,
-        (p.subscription_expires_at - NOW()) AS time_left,
+        EXTRACT(EPOCH FROM (p.subscription_expires_at - NOW()))::bigint AS time_left,
         COALESCE(p.entitlements, ARRAY[]::text[]) AS entitlements
       FROM person p
      WHERE %(name)s = ANY(p.entitlements)
