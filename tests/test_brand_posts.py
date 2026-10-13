@@ -136,8 +136,12 @@ def test_a_brand_post_is_created_about_nobody_awaiting_its_artwork(client):
             # The calendar's own time rides on every row, so approval can
             # keep it with one click.
             assert x['scheduled_for'] == when
-            # A measurable link, like every other post (spec 3.4).
-            assert '/s/' in x['caption'] or 'http' in x['caption']
+            # A measurable link, like every other post (spec 3.4), except on
+            # Instagram, where a caption link cannot be tapped (owner, 13 Oct).
+            if x['platform'] == 'instagram':
+                assert '/s/' not in x['caption']
+            else:
+                assert '/s/' in x['caption'] or 'http' in x['caption']
     finally:
         _cancel(rk)
 

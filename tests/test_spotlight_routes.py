@@ -1249,8 +1249,11 @@ def test_caption_edit_keeps_exactly_one_campaign_link(client, make_person):
     assert stored == body
     assert set(per_row) == {'facebook', 'instagram'}
     for pl, cap in per_row.items():
-        assert cap.endswith(f"{link}?p={pl}")
-        assert cap.count(link) == 1
+        if pl == 'instagram':
+            assert link not in cap  # no links on Instagram (owner, 13 Oct 2026)
+        else:
+            assert cap.endswith(f"{link}?p={pl}")
+            assert cap.count(link) == 1
 
     # Re-editing a caption that already ends with the stamped link must not
     # duplicate it, and must not leave the stamp it was handed in place of
@@ -1263,8 +1266,11 @@ def test_caption_edit_keeps_exactly_one_campaign_link(client, make_person):
         again = {r3['platform']: r3['caption'] for r3 in tx.execute(
             "SELECT platform, caption FROM publishing_queue WHERE request_key = %(rk)s", dict(rk=rk)).fetchall()}
     for pl, cap in again.items():
-        assert cap.endswith(f"{link}?p={pl}")
-        assert cap.count(link) == 1
+        if pl == 'instagram':
+            assert link not in cap  # no links on Instagram (owner, 13 Oct 2026)
+        else:
+            assert cap.endswith(f"{link}?p={pl}")
+            assert cap.count(link) == 1
 
 
 def test_queue_rows_carry_revision_and_consent_complete(client, make_person):

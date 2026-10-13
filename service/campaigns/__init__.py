@@ -250,6 +250,23 @@ def with_platform(link: str, platform: Optional[str]) -> str:
         return link
     return f"{link}?p={platform}"
 
+
+# Instagram shows a link in a caption as plain text nobody can tap (owner,
+# 13 Oct 2026: "dont post links in IG posts, they dont work"), so its rows
+# carry the caption alone. Its clicks come from the profile link instead.
+LINKLESS_PLATFORMS = ('instagram',)
+
+
+def caption_for_platform(text: str, link: Optional[str], platform: Optional[str]) -> str:
+    """The caption one platform row publishes: the text, then the request's
+    campaign link stamped with that platform, except on a platform where a
+    caption link does not work, which gets the text alone."""
+    if link is None or platform in LINKLESS_PLATFORMS:
+        return text
+    stamped = with_platform(link, platform)
+    return f"{text} {stamped}" if text else stamped
+
+
 def record_click(tx, key: str, user_agent: str,
                  platform: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
     """Record a click on `/s/<key>` and, for a non-bot click, mint the

@@ -4,7 +4,7 @@ import hmac
 import re
 import uuid
 from typing import Optional
-from service.campaigns import PLATFORMS, make_campaign_link, with_platform
+from service.campaigns import PLATFORMS, caption_for_platform, make_campaign_link
 from service.config import WEB_BASE_URL
 from service.spotlight.eligibility import eligibility, primary_photo_uuid
 from service.spotlight.revisions import create_revision
@@ -23,7 +23,7 @@ KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight', 'brand')
 # saying why.
 SUBJECTLESS_KINDS = ('roundup', 'brand')
 # PLATFORMS lives in service.campaigns (Wave 3c task 1): this module already
-# imports from there at load time (make_campaign_link, with_platform), so
+# imports from there at load time (make_campaign_link, caption_for_platform), so
 # importing the constant the same way carries no cycle. Re-exported here
 # unchanged -- service.api.admin.spotlight_routes and others still import it
 # as `service.spotlight.queue.PLATFORMS`.
@@ -152,7 +152,7 @@ def create_candidate(tx, *, kind: str, subject_person_id: Optional[int], caption
             """INSERT INTO publishing_queue (request_key, kind, subject_person_id, platform, caption, status, created_by)
                VALUES (%(rk)s, %(kind)s, %(pid)s, %(pl)s, %(cap)s, %(st)s, %(by)s)""",
             dict(rk=rk, kind=kind, pid=subject_person_id, pl=platform,
-                 cap=f"{caption} {with_platform(link, platform)}", st=status, by=created_by))
+                 cap=caption_for_platform(caption, link, platform), st=status, by=created_by))
 
     # Revision 1 (Wave 1, F01): every request's content starts life as an
     # immutable revision, and every queue row of the key points at it -- a

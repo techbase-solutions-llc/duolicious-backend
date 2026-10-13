@@ -103,10 +103,15 @@ def test_edit_caption_keeps_the_original_link_not_a_later_e5_share_link(make_per
                VALUES (%(k)s, %(kind)s, %(url)s, %(pid)s, NOW() - interval '1 hour')""",
             dict(k=original['key'], kind=kind, url=original['target_url'], pid=original['subject_person_id']))
         edit_caption(tx, rk, 'Welcome, updated', 't')
-        rows = tx.execute("SELECT caption FROM publishing_queue WHERE request_key = %(rk)s", dict(rk=rk)).fetchall()
+        rows = tx.execute("SELECT platform, caption FROM publishing_queue WHERE request_key = %(rk)s",
+                          dict(rk=rk)).fetchall()
     assert rows
     for row in rows:
-        assert f'/s/{original["key"]}' in row['caption']
+        if row['platform'] == 'instagram':
+            # Instagram rows carry no link (owner, 13 Oct 2026).
+            assert '/s/' not in row['caption']
+        else:
+            assert f'/s/{original["key"]}' in row['caption']
 
 
 def test_edit_of_in_flight_row_is_refused(make_person):

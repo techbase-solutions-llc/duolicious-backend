@@ -197,15 +197,14 @@ def test_create_candidate_appends_a_campaign_link_to_the_caption(make_person):
                               caption='Welcome to Ahavah, Linked.', created_by='t')
         by_platform = {r['platform']: r['caption'] for r in _rows(tx, rk)}
         assert set(by_platform) == {'facebook', 'instagram'}
-        for platform, caption in by_platform.items():
-            assert caption.startswith('Welcome to Ahavah, Linked. ')
-            assert f" {base}" in caption
-            assert caption.endswith(f"?p={platform}")
-        # One key, two captions: the split is in the query string, not in a
-        # second campaign link.
-        keys = {c.rsplit('/', 1)[1].split('?', 1)[0] for c in by_platform.values()}
-        assert len(keys) == 1
-        key = keys.pop()
+        fb = by_platform['facebook']
+        assert fb.startswith('Welcome to Ahavah, Linked. ')
+        assert f" {base}" in fb
+        assert fb.endswith('?p=facebook')
+        # Instagram does not make a link in a caption tappable (owner, 13 Oct
+        # 2026), so its row carries the text alone.
+        assert by_platform['instagram'] == 'Welcome to Ahavah, Linked.'
+        key = fb.rsplit('/', 1)[1].split('?', 1)[0]
         link = tx.execute("SELECT kind FROM campaign_link WHERE key = %(k)s", dict(k=key)).fetchone()
         assert link['kind'] == f'post:{rk}'
 
@@ -248,7 +247,7 @@ def test_a_real_click_through_a_caption_link_lands_in_its_own_platform_bucket(cl
     with api_tx() as tx:
         rk = create_candidate(tx, kind='welcome', subject_person_id=p['id'],
                               caption='Meet Bucketed.', created_by='t')
-        caption = {r['platform']: r['caption'] for r in _rows(tx, rk)}['instagram']
+        caption = {r['platform']: r['caption'] for r in _rows(tx, rk)}['facebook']
 
     # Parse the link out of the caption the way a reader's browser would,
     # rather than rebuilding it from the key we happen to know.
@@ -260,11 +259,30 @@ def test_a_real_click_through_a_caption_link_lands_in_its_own_platform_bucket(cl
     with api_tx() as tx:
         stats = post_stats(tx, rk)
     assert stats['clicks'] == 1
-    assert stats['by_platform']['instagram'] == {'clicks': 1, 'signups': 0}
+    assert stats['by_platform']['facebook'] == {'clicks': 1, 'signups': 0}
     assert stats['by_platform']['unknown'] == {'clicks': 0, 'signups': 0}
-    assert stats['by_platform']['facebook'] == {'clicks': 0, 'signups': 0}
+    assert stats['by_platform']['instagram'] == {'clicks': 0, 'signups': 0}
     # The parts still sum to the whole.
     assert stats['clicks'] == sum(v['clicks'] for v in stats['by_platform'].values())
+
+
+def test_an_edited_caption_keeps_instagram_free_of_links(make_person):
+    """A hand-edited caption, even one pasted back with a stamped link in it,
+    leaves the Instagram row with text only and the Facebook row with one
+    stamped link (owner, 13 Oct 2026: links in Instagram posts do not work)."""
+    from service.spotlight.revisions import edit_caption
+
+    p = _make_eligible(make_person, name='Edited')
+    with api_tx() as tx:
+        rk = create_candidate(tx, kind='welcome', subject_person_id=p['id'],
+                              caption='First words.', created_by='t')
+        fb_before = {r['platform']: r['caption'] for r in _rows(tx, rk)}['facebook']
+        link = fb_before.rsplit(' ', 1)[1]
+        edit_caption(tx, rk, f'New words. {link}', created_by='t')
+        by_platform = {r['platform']: r['caption'] for r in _rows(tx, rk)}
+    assert by_platform['instagram'] == 'New words.'
+    assert by_platform['facebook'] == f'New words. {link}'
+    assert by_platform['facebook'].count('/s/') == 1
 
 
 def _tile_payload(person_id, first_name):

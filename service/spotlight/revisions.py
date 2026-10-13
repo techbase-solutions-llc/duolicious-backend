@@ -24,7 +24,7 @@ import json
 import re
 from typing import Optional
 
-from service.campaigns import with_platform
+from service.campaigns import caption_for_platform
 from service.config import WEB_BASE_URL
 from service.spotlight.cleanup import enqueue_asset_delete
 
@@ -299,8 +299,8 @@ def edit_caption(tx, request_key: str, caption: str, created_by: str) -> int:
     for row in tx.execute(
             "SELECT id, platform FROM publishing_queue WHERE request_key = %(rk)s ORDER BY id",
             dict(rk=request_key)).fetchall():
-        row_caption = caption_text if url is None else (
-            f"{caption_text[:-len(url)]}{with_platform(url, row['platform'])}")
+        row_caption = caption_text if url is None else caption_for_platform(
+            caption_text[:-len(url)].rstrip(), url, row['platform'])
         tx.execute("UPDATE publishing_queue SET caption = %(c)s, updated_at = NOW() WHERE id = %(id)s",
                    dict(c=row_caption, id=row['id']))
     return new_id
