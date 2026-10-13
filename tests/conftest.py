@@ -321,6 +321,70 @@ def outbox_drain():
 
 
 # ---------------------------------------------------------------------------
+# Finish onboarding through the real route
+# ---------------------------------------------------------------------------
+# Seeds an onboardee with the fields Q_FINISH_ONBOARDING needs and a signed-in
+# session, then POSTs /finish-onboarding with `body`. Returns (response, person
+# id or None). The emails, the Meta event and the admin notice are replaced
+# with no-ops. The person, onboardee and session are deleted afterwards.
+
+@pytest.fixture
+def finish_onboarding(client, monkeypatch):
+    import hashlib
+    import secrets
+    from uuid import uuid4
+
+    from database import api_tx
+    import emails.member_welcome
+    import emails.waitlist_admin
+    import service.person as person_service
+
+    monkeypatch.setattr(person_service.metapixel, 'send_complete_registration',
+                        lambda **kw: None)
+    monkeypatch.setattr(emails.member_welcome, 'send_member_welcome_async',
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(emails.waitlist_admin, 'send_new_signup_notice_async',
+                        lambda *a, **kw: None)
+
+    emails_used: list[str] = []
+
+    def _finish(body: dict | None = None, lead_source: str | None = None):
+        email = f'onboard-{uuid4()}@example.com'
+        emails_used.append(email)
+        token = secrets.token_hex(64)
+        with api_tx() as tx:
+            tx.execute(
+                """
+                INSERT INTO onboardee (email, name, date_of_birth, coordinates,
+                                       gender_id, lead_source)
+                VALUES (%(e)s, 'Onboarding Test', '1992-02-02',
+                        ST_SetSRID(ST_MakePoint(-59.6, 13.1), 4326)::geography,
+                        (SELECT id FROM gender WHERE name = 'Woman'), %(ls)s)
+                """,
+                dict(e=email, ls=lead_source))
+            tx.execute(
+                """
+                INSERT INTO duo_session (session_token_hash, email, otp, signed_in)
+                VALUES (%(h)s, %(e)s, '000000', TRUE)
+                """,
+                dict(h=hashlib.sha512(token.encode()).hexdigest(), e=email))
+        r = client.post('/finish-onboarding', json=body or {},
+                        headers={'Authorization': f'Bearer {token}'})
+        with api_tx() as tx:
+            row = tx.execute('SELECT id FROM person WHERE email = %(e)s',
+                             dict(e=email)).fetchone()
+        return r, (row['id'] if row else None)
+
+    yield _finish
+
+    with api_tx() as tx:
+        for email in emails_used:
+            tx.execute('DELETE FROM person WHERE email = %(e)s', dict(e=email))
+            tx.execute('DELETE FROM onboardee WHERE email = %(e)s', dict(e=email))
+            tx.execute('DELETE FROM duo_session WHERE email = %(e)s', dict(e=email))
+
+
+# ---------------------------------------------------------------------------
 # Campaign link factory (Community Spotlight click receipts, wave 3b)
 # ---------------------------------------------------------------------------
 # Mints a real `/s/<key>` campaign link and hands back just the key, so a

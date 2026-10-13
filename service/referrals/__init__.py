@@ -482,6 +482,11 @@ def get_my_stats(tx, person_uuid: str) -> dict:
     }
 
 
+_Q_PERSON_ID_FOR_UUID = """
+    SELECT id, referral_code FROM person WHERE uuid = uuid_or_null(%(uuid)s)
+"""
+
+
 def get_my_referrals(tx, person_uuid: str) -> dict:
     """Full contract for the /invite screen (design brief 2026-08-12).
 
@@ -498,7 +503,15 @@ def get_my_referrals(tx, person_uuid: str) -> dict:
       # Legacy keys kept for any pre-existing caller:
       joined_count, credited_count, pending_token_balance
     }
+
+    A member with no personal code gets one here (health review finding
+    77): four members who joined before codes were minted at onboarding
+    had none, and one of them had no beta code either, so the screen
+    showed a link with no code. Idempotent, like every mint.
     """
+    me = tx.execute(_Q_PERSON_ID_FOR_UUID, dict(uuid=person_uuid)).fetchone()
+    if me and me["referral_code"] is None:
+        mint_person_code(tx, me["id"])
     stats = get_my_stats(tx, person_uuid)
     rows = tx.execute(_Q_MY_REFERRAL_ROWS, dict(uuid=person_uuid)).fetchall()
     credited = stats["credited_count"]
