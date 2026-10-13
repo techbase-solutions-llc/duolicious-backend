@@ -39,14 +39,15 @@ from flask import abort, jsonify, request
 
 from database import api_tx
 from duohash import sha512
-from service.admin import record_audit, require_admin
+from service.admin import record_audit, record_system_audit, require_admin
 from service.api.cron_auth import is_cron_request, require_admin_or_cron
 from service.api.decorators import aget, apost, get, post, limiter, Q_GET_SESSION, _is_private_ip
 from service.config import USER_IMAGES_BASE_URL
 from service.spotlight.dispatch import dispatch_check
 from service.spotlight.eligibility import eligibility, primary_photo_uuid, photo_url
+from service.spotlight.offers import expire_lapsed, last_offers, lapsed_count, suggestable
 from service.spotlight.occurrence import record_occurrence, pictured_people, is_first_confirmation
-from service.spotlight.queue import (create_candidate, expire_member_approvals,
+from service.spotlight.queue import (create_candidate,
                                      lock_request_rows, set_status, settings, set_setting,
                                      reap_expired_leases, reconcile_published,
                                      record_receipt, OUTCOMES,
@@ -1069,10 +1070,13 @@ def get_growth_candidates():
         invites_pending = int(tx.execute(_Q_INVITES_PENDING_COUNT).fetchone()['n'])
         # Task 7 (Wave 3b): the backlog's age, not just its size.
         invites_pending_oldest_days = tx.execute(_Q_INVITES_PENDING_OLDEST_DAYS).fetchone()['days']
+        # Finding 78: cards that lapsed unanswered, one per card.
+        lapsed_30_days = lapsed_count(tx)
     # Monday is weekday() == 0.
     roundup_due = datetime.now(timezone.utc).weekday() == 0 and not recent_roundup
     return dict(welcomes=welcomes, roundup_due=roundup_due, invites_enabled=True,
-                invites_pending=invites_pending, invites_pending_oldest_days=invites_pending_oldest_days)
+                invites_pending=invites_pending, invites_pending_oldest_days=invites_pending_oldest_days,
+                lapsed_30_days=lapsed_30_days)
 
 
 @post('/admin/growth/spotlight/welcome', limiter=growth_limit)
@@ -1397,9 +1401,17 @@ def post_growth_queue_expire_approvals():
         if settings(tx).get('approvals_enabled') != 'true':
             _audit(tx, s, 'growth.queue.expire_approvals', cancelled=0, approvals_paused=True)
             return dict(cancelled=0, approvals_paused=True)
-        n = expire_member_approvals(tx)
-        _audit(tx, s, 'growth.queue.expire_approvals', cancelled=n)
-    return dict(cancelled=n)
+        # Each lapsed card is named, and a lapse from the daily tick (the
+        # cron path, which `_audit` only prints) leaves an audit row too:
+        # until 13 Oct 2026 a card that lapsed unanswered told nobody, so
+        # nobody knew to offer again (finding 78, service/spotlight/offers.py).
+        lapsed, n = expire_lapsed(tx)
+        if s is None and lapsed:
+            record_system_audit(tx, 'cron', 'growth.queue.expire_approvals',
+                                metadata=dict(cancelled=n, lapsed=lapsed))
+        else:
+            _audit(tx, s, 'growth.queue.expire_approvals', cancelled=n, lapsed=lapsed)
+    return dict(cancelled=n, lapsed=lapsed)
 
 
 @get('/admin/growth/settings', limiter=growth_limit)
@@ -1902,7 +1914,13 @@ def get_growth_spotlight_suggest(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         last = tx.execute(_Q_LAST_FEATURED_GENDER).fetchone()
         rows = tx.execute(_Q_SUGGEST, dict(recent=last['gender'] if last else None)).fetchall()
+        # Finding 78: each suggestion says what became of the member's last
+        # card (a lapse used to be invisible here), and a member whose card
+        # is still open is left out, since a second offer would be refused.
+        offers = last_offers(tx, [r['id'] for r in rows])
         for r in rows:
+            if not suggestable(offers.get(r['id'])):
+                continue
             ok, _reason = eligibility(tx, r['id'])
             if not ok:
                 continue
@@ -1915,6 +1933,7 @@ def get_growth_spotlight_suggest(s: t.SessionInfo):
                 photo_url=photo_url(uuid_value) if uuid_value else None,
                 reason=_suggest_reason(r['spotlight_last_featured_at']),
                 suggested_caption=_member_of_week_caption(r['first_name'], r['age'], r['country']),
+                last_offer=offers.get(r['id']),
             ))
             if len(out) == 3:
                 break
