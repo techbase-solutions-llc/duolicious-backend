@@ -132,7 +132,10 @@ def test_the_premium_series_reads_the_entitlement_ledger():
 
 def test_a_purchase_today_appears_on_todays_bar(make_person):
     """The weight-bearing one. A query can name the right table and still
-    bucket wrongly, which a grep of the SQL would never catch."""
+    bucket wrongly, which a grep of the SQL would never catch.
+
+    A LIVE event: since 13 Oct 2026 a test-mode checkout is not a Premium
+    add (tests/test_admin_overview_charts.py)."""
     import uuid as _uuid
     p = make_person(name='Buyer')
     before = _series(Q_OVERVIEW_PREMIUM_30D)[-1]['adds']
@@ -140,7 +143,7 @@ def test_a_purchase_today_appears_on_todays_bar(make_person):
         tx.execute(
             """INSERT INTO entitlement_event
                  (event_id, event_type, app_user_id, payload, received_at)
-               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{}'::jsonb,
+               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{"livemode": true}'::jsonb,
                        ((NOW() AT TIME ZONE 'America/Barbados')::date + TIME '09:00')
                        AT TIME ZONE 'America/Barbados')""",
             dict(eid=f'test-{_uuid.uuid4()}', uid=str(p['id'])))

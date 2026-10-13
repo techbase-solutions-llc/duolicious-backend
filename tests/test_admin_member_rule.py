@@ -102,6 +102,7 @@ def _figures(client, headers) -> dict:
     for k in ('signups_today', 'active_24h', 'person_total', 'premium_holders', 'paying_members'):
         out[f'overview.{k}'] = ov['kpis'][k]
     out['overview.signups_30d.person'] = sum(d['person'] for d in ov['signups_30d'])
+    out['overview.members_30d.last'] = ov['members_30d'][-1]['total'] if ov['members_30d'] else 0
     for k in ('signups_today', 'signups_7d', 'signups_30d', 'dau', 'wau', 'mau'):
         out[f'system.{k}'] = sysh[k]
     for k in ('holders', 'expiring_7d', 'expiring_30d'):
@@ -196,6 +197,7 @@ def test_a_staff_account_changes_no_member_figure(client, admin_headers, make_pe
     must_move = (
         'overview.signups_today', 'overview.active_24h', 'overview.person_total',
         'overview.premium_holders', 'overview.paying_members', 'overview.signups_30d.person',
+        'overview.members_30d.last',
         'system.signups_today', 'system.dau', 'system.mau',
         'economy.entitlements.holders', 'economy.entitlements.expiring_7d',
         'economy.subscriptions.total_stripe_customers', 'economy.subscriptions.active',

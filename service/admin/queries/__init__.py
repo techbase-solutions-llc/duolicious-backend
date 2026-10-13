@@ -26,6 +26,7 @@ from service.admin.queries.overview import (
     Q_OVERVIEW_SIGNUPS_30D,
     Q_OVERVIEW_REFERRAL_CTR_7D,
     Q_OVERVIEW_PREMIUM_30D,
+    Q_OVERVIEW_MEMBERS_30D,
     Q_OVERVIEW_RECENT_ACTIVITY,
 )
 

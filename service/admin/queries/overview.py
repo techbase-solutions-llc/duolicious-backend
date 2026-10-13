@@ -14,6 +14,20 @@ _MEMBER_P = member_sql('p')
 # Every date bucket on this tab is a Barbados day (days.py).
 _JOINED_ON = barbados_day_of_naive_utc('sign_up_time')
 
+
+def live_stripe_event(e: str) -> str:
+    """A LIVE Stripe event, for the `entitlement_event` row aliased `e`.
+
+    Paying members and Premium adds share this, so a test-mode checkout can
+    be a sale on neither. Until 1 Oct 2026 paying members counted any event,
+    and every event on file was a test-mode checkout (livemode=false) by the
+    owner and a beta tester, so the card said 3 while nobody had paid; the
+    Premium adds chart kept counting them until 13 Oct 2026. Stripe sets
+    `livemode` at the top of every event; the nested path covers a payload
+    stored as the event object itself."""
+    return (f"COALESCE({e}.payload->>'livemode', "
+            f"{e}.payload->'data'->'object'->>'livemode') = 'true'")
+
 Q_OVERVIEW_KPIS = f"""
     SELECT
         -- Signups are PEOPLE.
@@ -47,19 +61,13 @@ Q_OVERVIEW_KPIS = f"""
         --
         -- premium_holders stays in the payload because the Economy tab
         -- reads it; it is just no longer a KPI card.
-        -- Paying means a LIVE Stripe event. Until 1 Oct 2026 this counted
-        -- any entitlement_event, and every event on file was a test-mode
-        -- checkout (livemode=false) by the owner and a beta tester, so the
-        -- card said 3 while nobody had paid. Stripe sets `livemode` at the
-        -- top of every event; the nested path covers a payload stored as
-        -- the event object itself.
+        -- Paying means a LIVE Stripe event (live_stripe_event above).
         (SELECT COUNT(*) FROM person p
           WHERE {_MEMBER_P}
             AND 'premium' = ANY(p.entitlements)
             AND EXISTS (SELECT 1 FROM entitlement_event e
                          WHERE e.app_user_id = p.id::text
-                           AND COALESCE(e.payload->>'livemode',
-                                        e.payload->'data'->'object'->>'livemode') = 'true')) AS paying_members,
+                           AND {live_stripe_event('e')})) AS paying_members,
         (SELECT COUNT(*) FROM skipped WHERE reported = TRUE) AS pending_reports,
         (SELECT COUNT(*) FROM referral WHERE created_at > NOW() - INTERVAL '7 days') AS referral_signups_7d
 """
@@ -75,6 +83,22 @@ Q_OVERVIEW_SIGNUPS_30D = f"""
                    WHERE {barbados_day('created_at')} = days.d), 0) AS beta,
         COALESCE((SELECT COUNT(*) FROM person
                    WHERE {_MEMBER} AND {_JOINED_ON} = days.d), 0) AS person
+      FROM days
+     ORDER BY days.d
+"""
+
+# The Total persons sparkline: how many members there were by the end of
+# each Barbados day. It used to borrow the daily sign-ups series, which
+# measures something else. Accounts that have since been deleted are gone
+# from `person`, so an earlier day shows the members still here who had
+# joined by then.
+Q_OVERVIEW_MEMBERS_30D = f"""
+    WITH days AS ({barbados_days(30)}
+    )
+    SELECT
+        days.d::text AS day,
+        (SELECT COUNT(*) FROM person
+          WHERE {_MEMBER} AND {_JOINED_ON} <= days.d) AS total
       FROM days
      ORDER BY days.d
 """
@@ -103,9 +127,9 @@ Q_OVERVIEW_REFERRAL_CTR_7D = f"""
 # incapable of a non-zero bar and drew a flat line at zero while 15 checkouts
 # had completed.
 #
-# Only the events that START a paid relationship count here. Renewals,
+# Only LIVE events that START a paid relationship count here. Renewals,
 # updates and cancellations are real, but folding them in would make a churn
-# event look like a sale. The live event types on 2026-09-24 were
+# event look like a sale. The event types on file on 2026-09-24 were
 # checkout.session.completed (15), customer.subscription.created (8),
 # customer.subscription.deleted (8) and customer.subscription.updated (5).
 _PURCHASE_EVENTS = ('checkout.session.completed', 'customer.subscription.created')
@@ -116,9 +140,10 @@ Q_OVERVIEW_PREMIUM_30D = f"""
     SELECT
         days.d::text AS day,
         COALESCE((
-            SELECT COUNT(*) FROM entitlement_event
-             WHERE event_type IN {_PURCHASE_EVENTS}
-               AND {barbados_day('received_at')} = days.d
+            SELECT COUNT(*) FROM entitlement_event e
+             WHERE e.event_type IN {_PURCHASE_EVENTS}
+               AND {live_stripe_event('e')}
+               AND {barbados_day('e.received_at')} = days.d
         ), 0) AS adds
       FROM days
      ORDER BY days.d
