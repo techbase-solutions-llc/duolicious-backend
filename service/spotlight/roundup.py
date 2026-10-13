@@ -13,6 +13,10 @@ ever populated while the `roundup_tiles_enabled` setting is 'true' (seeded
 """
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Optional
+
+from service.admin.queries.members import member_sql
 from service.growth.queries import _excluded
 from service.spotlight.country import display_country
 from service.spotlight.eligibility import eligibility, photo_url
@@ -29,8 +33,9 @@ MAX_TILES = 4
 # (Task 2) and are never read here.
 # `_excluded()` is applied here as well as in _Q_TOTALS below: a test account
 # that opted in and approved a welcome card would otherwise be tiled onto a
-# real published roundup while being left out of the count beside it.
-_Q_CANDIDATES = """
+# real published roundup while being left out of the count beside it. The
+# member rule (no admin role) is applied in both for the same reason.
+_Q_CANDIDATES = f"""
     SELECT p.id,
            split_part(p.name, ' ', 1) AS first_name,
            (SELECT r.photo_uuid::text
@@ -46,6 +51,7 @@ _Q_CANDIDATES = """
       FROM person p
      WHERE p.sign_up_time > NOW() - make_interval(days => %(days)s)
        AND lower(p.email) <> ALL(%(ex)s)
+       AND {member_sql('p')}
        AND EXISTS (SELECT 1 FROM publishing_queue q
                     JOIN spotlight_revision r ON r.id = q.current_revision_id
                     JOIN spotlight_revision_consent c
@@ -62,14 +68,43 @@ _Q_CANDIDATES = """
 # point, `display_country`) and the distinct count is taken over the NAMES.
 # Counting in SQL first would have counted codes, and no name mapping could
 # have reached the number afterwards.
-_Q_TOTALS = """
+#
+# Staff accounts are not new members (health review, 13 Oct 2026). Until then
+# this left out only the test addresses, so the W41 roundup said 4 joined
+# when 3 had: admin account 126 signed up that week.
+#
+# The week ends at `as_of`, NOW() unless a caller rebuilding an older
+# roundup names the moment it was created (scripts/regenerate_roundup.py).
+_Q_TOTALS = f"""
     SELECT count(*) AS n,
-           array_remove(array_agg(DISTINCT country), NULL) AS country_codes
-      FROM person
-     WHERE activated
-       AND sign_up_time > NOW() - make_interval(days => %(days)s)
-       AND lower(email) <> ALL(%(ex)s)
+           array_remove(array_agg(DISTINCT p.country), NULL) AS country_codes
+      FROM person p
+     WHERE p.activated
+       AND p.sign_up_time >  COALESCE(%(as_of)s::timestamptz, NOW()) - make_interval(days => %(days)s)
+       AND p.sign_up_time <= COALESCE(%(as_of)s::timestamptz, NOW())
+       AND lower(p.email) <> ALL(%(ex)s)
+       AND {member_sql('p')}
 """
+
+
+def roundup_caption(count: int, countries: int) -> str:
+    """The default public caption (sentence case, no em dashes). Lives here
+    rather than with the route so the regenerate script builds the same
+    sentence the route does."""
+    if count > 0:
+        return f'New this week on Ahavah. {count} joined from {countries} countries.'
+    return 'New this week on Ahavah.'
+
+
+def roundup_totals(tx, days: int = 7, as_of: Optional[datetime] = None) -> dict:
+    """How many members joined in the `days` before `as_of` (default now),
+    and from where. `countries` keeps its meaning and its type (the number
+    the caption says members joined from); `country_names` is the same set
+    spelled out, so a surface that wants to name them never has to
+    re-resolve the codes."""
+    totals = tx.execute(_Q_TOTALS, dict(days=days, as_of=as_of, ex=_excluded())).fetchone()
+    names = sorted({display_country(c) or c for c in (totals['country_codes'] or []) if c})
+    return dict(count=int(totals['n']), countries=len(names), country_names=names)
 
 
 def roundup_snapshot(tx, days: int = 7) -> dict:
@@ -97,10 +132,4 @@ def roundup_snapshot(tx, days: int = 7) -> dict:
             ))
             if len(tiles) == MAX_TILES:
                 break
-    totals = tx.execute(_Q_TOTALS, dict(days=days, ex=_excluded())).fetchone()
-    names = sorted({display_country(c) or c for c in (totals['country_codes'] or []) if c})
-    # `countries` keeps its meaning and its type (the number the caption says
-    # members joined from); `country_names` is the same set spelled out, so a
-    # surface that wants to name them never has to re-resolve the codes.
-    return dict(tiles=tiles, count=int(totals['n']),
-                countries=len(names), country_names=names)
+    return dict(tiles=tiles, **roundup_totals(tx, days))

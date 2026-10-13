@@ -60,7 +60,7 @@ from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enque
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
 from service.spotlight.restdays import next_valid_slot, slot_problem
-from service.spotlight.roundup import roundup_snapshot
+from service.spotlight.roundup import roundup_caption, roundup_snapshot
 from service.spotlight.storage import InvalidImage
 import service.spotlight.storage as st
 
@@ -1160,7 +1160,7 @@ def post_growth_spotlight_roundup():
                           dict(rk=week_key)).fetchone():
                 return dict(request_key=week_key, already=True)
             snapshot = roundup_snapshot(tx)
-            caption = _roundup_caption(snapshot['count'], snapshot['countries'])
+            caption = roundup_caption(snapshot['count'], snapshot['countries'])
             rk = create_candidate(tx, kind='roundup', subject_person_id=None,
                                   caption=caption, created_by=_actor(s), request_key=week_key)
             tx.execute(
@@ -1939,10 +1939,9 @@ def get_growth_token_health(s: t.SessionInfo):
 # Default captions (sentence case, no em dashes)
 # ---------------------------------------------------------------------------
 
-def _roundup_caption(count: int, countries: int) -> str:
-    if count > 0:
-        return f'New this week on Ahavah. {count} joined from {countries} countries.'
-    return 'New this week on Ahavah.'
+# The roundup's caption is built in service.spotlight.roundup
+# (`roundup_caption`), beside the counts it states, so the regenerate script
+# writes the same sentence.
 
 
 # Both builders take the raw `COALESCE(country, location_short_friendly)`

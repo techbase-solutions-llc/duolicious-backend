@@ -132,3 +132,68 @@ def test_reissued_revision_without_consent_drops_candidate(make_person):
             assert 'Reissued' not in names
         finally:
             set_setting(tx, 'roundup_tiles_enabled', 'false')
+
+
+# ---------------------------------------------------------------------------
+# Health review, 13 Oct 2026 (finding 2): staff accounts are not new members.
+# The W41 roundup said "4 joined" because admin account 126 signed up that
+# week and the roundup left out only the test addresses.
+# ---------------------------------------------------------------------------
+
+def _make_staff(tx, person_id):
+    tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(id)s",
+               dict(id=person_id))
+
+
+def test_a_staff_account_is_not_counted_as_a_new_member(make_person):
+    staff = make_person(name='RoundupStaff')
+    with api_tx() as tx:
+        # Tuvalu, so the country the staff account brings is its own.
+        tx.execute("UPDATE person SET country = 'TV' WHERE id = %(id)s", dict(id=staff['id']))
+        before = roundup_snapshot(tx)
+        _make_staff(tx, staff['id'])
+        after = roundup_snapshot(tx)
+    assert after['count'] == before['count'] - 1
+    assert 'Tuvalu' in before['country_names']
+    assert 'Tuvalu' not in after['country_names']
+    assert after['countries'] == before['countries'] - 1
+
+
+def test_a_staff_account_is_never_tiled(make_person):
+    staff = _make_eligible(make_person, name='StaffTile', gender='Woman')
+    with api_tx() as tx:
+        rk = create_candidate(tx, kind='welcome', subject_person_id=staff['id'], caption='c', created_by='t')
+        photo = tx.execute("SELECT uuid::text AS u FROM photo WHERE person_id = %(id)s",
+                           dict(id=staff['id'])).fetchone()['u']
+        _stamp_member_approval(tx, rk, photo)
+        _make_staff(tx, staff['id'])
+        set_setting(tx, 'roundup_tiles_enabled', 'true')
+        try:
+            names = [t['first_name'] for t in roundup_snapshot(tx)['tiles']]
+        finally:
+            set_setting(tx, 'roundup_tiles_enabled', 'false')
+    assert 'StaffTile' not in names
+
+
+def test_totals_can_be_taken_as_of_a_past_moment(make_person):
+    """A roundup describes the week before it was created. Rebuilding one
+    later (scripts/regenerate_roundup.py) must count that week, not the
+    seven days before the rebuild."""
+    from datetime import datetime, timedelta, timezone
+    from service.spotlight.roundup import roundup_totals
+
+    as_of = datetime.now(timezone.utc) - timedelta(days=30)
+    with api_tx() as tx:
+        before = roundup_totals(tx, as_of=as_of)['count']
+    inside = make_person(name='InsideWeek')
+    after_it = make_person(name='AfterWeek')
+    staff = make_person(name='StaffInsideWeek')
+    with api_tx() as tx:
+        for pid, offset in ((inside['id'], -2), (after_it['id'], 1), (staff['id'], -1)):
+            tx.execute("UPDATE person SET sign_up_time = (%(t)s::timestamptz + make_interval(days => %(d)s)) AT TIME ZONE 'UTC' "
+                       "WHERE id = %(id)s", dict(t=as_of, d=offset, id=pid))
+        _make_staff(tx, staff['id'])
+        after = roundup_totals(tx, as_of=as_of)['count']
+    # The member two days inside the week counts; the one who joined a day
+    # after it, and the staff account inside it, do not.
+    assert after == before + 1
