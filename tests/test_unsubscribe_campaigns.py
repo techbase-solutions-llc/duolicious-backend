@@ -173,3 +173,59 @@ def test_a_notifications_unsubscribe_still_turns_notification_emails_off(client,
     m = _mailable(make_person, 'LeavesAlerts')
     assert client.post(f"/u/{make_token('notifications', m['email'])}").status_code == 200
     assert _email_prefs(m['id'])['email_matches'] is False
+
+
+# The five one-off scripts (finding 62 follow-up). None is run by anything
+# automatic; they are imported here, never run.
+_ONE_OFF_SCRIPTS = (
+    'emails.send_comeback',
+    'emails.send_digest',
+    'emails.send_likes_waiting',
+    'emails.send_onboarding_nudge',
+    'emails.send_premium_referral',
+)
+
+
+@pytest.mark.parametrize('name', _ONE_OFF_SCRIPTS)
+def test_the_one_off_scripts_print_a_campaigns_link_and_skip_the_unsubscribed(name):
+    import importlib
+    import inspect
+
+    from service.campaigns import unsubscribed_predicate_sql
+
+    mod = importlib.import_module(name)
+    src = inspect.getsource(mod)
+    assert mod.UNSUB_SCOPE == 'campaigns'
+    assert '"notifications"' not in src and "'notifications'" not in src
+    assert 'unsubscribed_predicate_sql(UNSUB_SCOPE' in src
+    queries = [v for k, v in vars(mod).items() if k.startswith('_Q_') and isinstance(v, str)]
+    assert any(unsubscribed_predicate_sql('campaigns', 'p.id') in q for q in queries)
+
+
+def test_the_comeback_script_leaves_out_a_member_who_left_campaigns(make_person):
+    from emails.send_comeback import _Q_TARGETS
+
+    stays = _mailable(make_person, 'ComebackStays')
+    left = _mailable(make_person, 'ComebackLeft')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET activated = FALSE WHERE id = ANY(%(i)s)",
+                   dict(i=[stays['id'], left['id']]))
+        tx.execute("UPDATE person SET campaigns_unsubscribed_at = NOW() WHERE id = %(i)s",
+                   dict(i=left['id']))
+        emails = {r['email'] for r in tx.execute(_Q_TARGETS).fetchall()}
+    assert stays['email'] in emails and left['email'] not in emails
+
+
+def test_the_premium_script_marks_a_member_who_left_campaigns(make_person):
+    """Its member query also feeds --backfill (the grant and the invite
+    code), so nobody is filtered out of it; the send loop skips the flag."""
+    from emails.send_premium_referral import _Q_MEMBERS
+
+    stays = _mailable(make_person, 'PremiumStays')
+    left = _mailable(make_person, 'PremiumLeft')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET campaigns_unsubscribed_at = NOW() WHERE id = %(i)s",
+                   dict(i=left['id']))
+        rows = {r['email']: r for r in tx.execute(_Q_MEMBERS).fetchall()}
+    assert rows[stays['email']]['campaigns_unsubscribed'] is False
+    assert rows[left['email']]['campaigns_unsubscribed'] is True

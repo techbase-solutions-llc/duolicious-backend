@@ -20,6 +20,7 @@ from emails.likes_waiting import (
     subject_for,
     FROM_ADDR,
 )
+from service.campaigns import unsubscribed_predicate_sql
 from service.config import WEB_BASE_URL
 from service.unsubscribe import make_url as _unsub_url
 from smtp import make_aws_smtp
@@ -27,7 +28,12 @@ from smtp import make_aws_smtp
 MIN_LIKES = 1
 OFFLINE_DAYS = 3
 
-_Q_TARGETS = """
+# Campaign mail carries the `campaigns` unsubscribe scope (finding 62):
+# the `notifications` scope would also silence like, match and message
+# emails. Members who left campaigns are not selected.
+UNSUB_SCOPE = 'campaigns'
+
+_Q_TARGETS = f"""
     SELECT
         p.email,
         p.name,
@@ -35,6 +41,7 @@ _Q_TARGETS = """
     FROM person p
     JOIN liked l ON l.liked_id = p.id
     WHERE p.activated
+      AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
       AND p.last_online_time < NOW() - make_interval(days => %(offline_days)s)
       -- unanswered: they haven't liked this liker back
       AND NOT EXISTS (
@@ -82,7 +89,7 @@ def main() -> None:
             print(f"DRY RUN {mask_email(email):28s} likes waiting: {row['likes_waiting']}")
             sent += 1
             continue
-        unsub = _unsub_url("notifications", email, WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, email, WEB_BASE_URL)
         smtp.send(
             subject=subject_for(row["likes_waiting"]),
             body=likes_waiting_html(row["likes_waiting"], unsub),

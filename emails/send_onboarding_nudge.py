@@ -20,17 +20,24 @@ from emails.onboarding_nudge import (
     SUBJECT,
     FROM_ADDR,
 )
+from service.campaigns import unsubscribed_predicate_sql
 from service.config import WEB_BASE_URL
 from service.unsubscribe import make_url as _unsub_url
 from smtp import make_aws_smtp
 
 SIGNUP_WINDOW_DAYS = 14
 
-_Q_TARGETS = """
+# Campaign mail carries the `campaigns` unsubscribe scope (finding 62):
+# the `notifications` scope would also silence like, match and message
+# emails. Members who left campaigns are not selected.
+UNSUB_SCOPE = 'campaigns'
+
+_Q_TARGETS = f"""
     SELECT p.email, p.name
     FROM person p
     WHERE NOT p.activated
       AND p.deletion_requested_at IS NULL
+      AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
       AND p.sign_up_time > NOW() - make_interval(days => %(window_days)s)
       -- stalled, not mid-session: last touch over 6 hours ago
       AND p.last_online_time < NOW() - INTERVAL '6 hours'
@@ -64,7 +71,7 @@ def main() -> None:
             print("no targets to preview")
             return
         row = rows[0]
-        unsub = _unsub_url("notifications", args.preview, WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, args.preview, WEB_BASE_URL)
         smtp.send(
             subject=f"[PREVIEW] {SUBJECT}",
             body=onboarding_nudge_html(row["name"], unsub),
@@ -84,7 +91,7 @@ def main() -> None:
             print(f"DRY RUN {mask_email(email):28s} name: {row['name']}")
             sent += 1
             continue
-        unsub = _unsub_url("notifications", email, WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, email, WEB_BASE_URL)
         smtp.send(
             subject=SUBJECT,
             body=onboarding_nudge_html(row["name"], unsub),

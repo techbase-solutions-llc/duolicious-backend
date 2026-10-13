@@ -15,17 +15,24 @@ import argparse
 from database import api_tx
 from emails.base import is_suppressed_send, mask_email
 from emails.comeback import comeback_html, SUBJECT, FROM_ADDR
+from service.campaigns import unsubscribed_predicate_sql
 from service.config import WEB_BASE_URL
 from service.unsubscribe import make_url as _unsub_url
 from smtp import make_aws_smtp
 
-_Q_TARGETS = """
+# Campaign mail carries the `campaigns` unsubscribe scope (finding 62):
+# the `notifications` scope would also silence like, match and message
+# emails. Members who left campaigns are not selected.
+UNSUB_SCOPE = 'campaigns'
+
+_Q_TARGETS = f"""
     SELECT p.email, p.name
     FROM person p
     WHERE NOT p.activated
       -- dormancy only: members who asked to delete (mig 0008 soft-delete
       -- grace window) are never contacted
       AND p.deletion_requested_at IS NULL
+      AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
     ORDER BY p.email
 """
 
@@ -56,7 +63,7 @@ def main() -> None:
             print(f"DRY RUN {mask_email(email)}")
             sent += 1
             continue
-        unsub = _unsub_url("notifications", email, WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, email, WEB_BASE_URL)
         smtp.send(
             subject=SUBJECT,
             body=comeback_html(unsub),

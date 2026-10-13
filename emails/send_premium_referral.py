@@ -31,6 +31,7 @@ from emails.premium_referral import (
     SUBJECT_REMINDER,
     FROM_ADDR,
 )
+from service.campaigns import unsubscribed_predicate_sql
 from service.config import WEB_BASE_URL
 from service.entitlements import grant_founding_member_if_eligible
 from service.referrals import mint_person_code
@@ -53,10 +54,18 @@ _SQL_JUST_GRANTED = """
     )
 """
 
+# Campaign mail carries the `campaigns` unsubscribe scope (finding 62):
+# the `notifications` scope would also silence like, match and message
+# emails. _Q_MEMBERS also feeds --backfill (the grant and the invite
+# code), so it filters nobody; the send loop skips a member who left
+# campaigns.
+UNSUB_SCOPE = 'campaigns'
+
 _Q_MEMBERS = f"""
     SELECT p.id, p.uuid::TEXT AS uuid, p.email, p.name,
            p.referral_code, p.subscription_expires_at,
-           ({_SQL_JUST_GRANTED}) AS is_organic
+           ({_SQL_JUST_GRANTED}) AS is_organic,
+           ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')}) AS campaigns_unsubscribed
       FROM person p
      WHERE p.activated AND p.email <> 'admin@ahavah.app'
      ORDER BY p.sign_up_time
@@ -106,7 +115,7 @@ def main() -> None:
         # and REAL codes.
         organic = next((m for m in members if m["is_organic"]), None)
         founding = next((m for m in members if not m["is_organic"]), None)
-        unsub = _unsub_url("notifications", args.preview, WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, args.preview, WEB_BASE_URL)
         for label, subject, builder, fixture in (
             ("welcome", SUBJECT_WELCOME, welcome_html, organic),
             ("reminder", SUBJECT_REMINDER, reminder_html, founding),
@@ -135,6 +144,10 @@ def main() -> None:
         if is_suppressed_send(m["email"]):
             skipped += 1
             continue
+        if m["campaigns_unsubscribed"]:
+            print(f"SKIP left campaigns: {mask_email(m['email'])}")
+            skipped += 1
+            continue
         if m["subscription_expires_at"] is None or m["referral_code"] is None:
             print(f"SKIP not backfilled: {mask_email(m['email'])}")
             skipped += 1
@@ -146,7 +159,7 @@ def main() -> None:
                   f"code={m['referral_code']}")
             sent += 1
             continue
-        unsub = _unsub_url("notifications", m["email"], WEB_BASE_URL)
+        unsub = _unsub_url(UNSUB_SCOPE, m["email"], WEB_BASE_URL)
         builder = welcome_html if wave == "welcome" else reminder_html
         subject = SUBJECT_WELCOME if wave == "welcome" else SUBJECT_REMINDER
         smtp.send(
