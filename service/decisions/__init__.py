@@ -488,6 +488,9 @@ def post_decisions(req: t.PostDecision, s: t.SessionInfo):
                         url="/matches?tab=likes",
                         email_subject="Someone likes you on Ahavah",
                         email_html_factory=new_like_email,
+                        # One like email per liker, however often they
+                        # like again after an undo.
+                        email_event_id=f"like-{s.person_id}",
                     )
             except Exception:
                 import traceback
@@ -520,6 +523,7 @@ def post_decisions(req: t.PostDecision, s: t.SessionInfo):
                 tag=f"match:{row['match_id']}",
                 email_subject="You have a new match on Ahavah",
                 email_html_factory=new_match_email,
+                email_event_id=f"match-{row['match_id']}",
             )
         except Exception:
             import traceback

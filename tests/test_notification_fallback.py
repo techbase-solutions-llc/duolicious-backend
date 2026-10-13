@@ -30,6 +30,7 @@ def _row(**overrides):
         has_live_push=False,
         push_messages=True,
         email_messages=True,
+        person_id=0,
     )
     defaults.update(overrides)
     return n.PersonNotification(**defaults)

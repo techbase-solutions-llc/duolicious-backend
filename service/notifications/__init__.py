@@ -29,6 +29,7 @@ import json
 import os
 import threading
 import traceback
+import uuid
 from typing import Any, Dict, Literal, Optional
 
 
@@ -399,6 +400,50 @@ def _email_allowed_for_event(person_id: int, event_kind: EventKind) -> bool:
     return bool(row['allowed'])
 
 
+def enqueue_event_email(tx, *, campaign: str, event_id: str, person_id: int,
+                        email: str, subject: str, html: str,
+                        list_unsubscribe: Optional[str]) -> Optional[int]:
+    """Queue a like, match or message email in the durable outbox (health
+    review, 13 Oct 2026, finding 63). These used to go straight to SMTP and
+    left no email_send_log row, so their return rate could not be measured;
+    the drain now writes one on acceptance, as it does for every campaign.
+
+    `campaign` is one of service.campaigns.TRANSACTIONAL_CAMPAIGNS and
+    `event_id` names the event (`like-<liker id>`, `match-<match id>`,
+    `message-<unread state>`), so a replay of the same event queues nothing.
+    Exempt from the campaign cap. The unsubscribe scope stays
+    `notifications`: its predicate (every email channel off) is what the
+    drain re-checks. No sender: the mailer's default, as before."""
+    from service.campaigns import outbox
+    return outbox.enqueue(
+        tx, campaign=campaign, campaign_id=event_id, person_id=person_id,
+        email=email, subject=subject, html=html, from_addr=None,
+        unsub_scope='notifications', list_unsubscribe=list_unsubscribe,
+        exempt=True)
+
+
+def _queue_event_email(person_id, event_kind, event_id, subject, html_factory):
+    """The like and match fallback: build the email as the direct send did
+    and queue it. A suppressed or missing address queues nothing."""
+    from database import api_tx
+    from emails.base import is_suppressed_send
+    from service.unsubscribe import make_token
+    from service.config import API_BASE_URL
+    with api_tx() as tx:
+        row = tx.execute(
+            "SELECT email FROM person WHERE id = %(id)s",
+            dict(id=person_id),
+        ).fetchone()
+        email = (row or {}).get('email')
+        if not email or is_suppressed_send(email):
+            return
+        unsub = f"{API_BASE_URL}/u/{make_token('notifications', email)}"
+        enqueue_event_email(
+            tx, campaign=event_kind, event_id=event_id, person_id=person_id,
+            email=email, subject=subject, html=html_factory(unsub),
+            list_unsubscribe=f"<{unsub}>")
+
+
 def _send_event_email_blocking(person_id, subject, html_factory):
     from database import api_tx
     from emails.base import is_suppressed_send
@@ -470,12 +515,17 @@ def notify(
     tag: Optional[str] = None,
     email_subject: Optional[str] = None,
     email_html_factory=None,
+    email_event_id: Optional[str] = None,
 ):
     """Per-event dispatch with email fallback. Push if push_<event> is on AND
     the user has a live subscription; otherwise email if email_<event> is on
     and an email factory was provided. email_html_factory(unsubscribe_url) ->
     html, built lazily only when we actually email. Fire-and-forget; never
-    raises to the caller."""
+    raises to the caller.
+
+    A like or match email is queued in the outbox under `email_event_id`
+    (see enqueue_event_email); without one it gets a fresh id. Other events
+    still send directly."""
     try:
         if (
             PUSH_ENABLED
@@ -489,6 +539,12 @@ def notify(
             email_html_factory is not None
             and _email_allowed_for_event(person_id, event_kind)
         ):
+            if event_kind in ('like', 'match'):
+                _queue_event_email(
+                    person_id, event_kind,
+                    email_event_id or f'{event_kind}-{uuid.uuid4().hex}',
+                    email_subject, email_html_factory)
+                return
             threading.Thread(
                 target=_send_event_email_blocking,
                 kwargs=dict(

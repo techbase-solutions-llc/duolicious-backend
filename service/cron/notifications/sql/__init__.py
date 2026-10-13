@@ -25,6 +25,7 @@ WITH ten_minutes_ago AS (
 ), inbox_second_pass AS (
     SELECT
         inbox_first_pass.username AS person_uuid,
+        person.id AS person_id,
         inbox_first_pass.last_intro_seconds,
         inbox_first_pass.last_chat_seconds,
         COALESCE(person.intro_seconds, 0) AS last_intro_notification_seconds,
@@ -139,7 +140,8 @@ SELECT
     intros_drift_seconds,
     has_live_push,
     push_messages,
-    email_messages
+    email_messages,
+    person_id
 FROM
     inbox_second_pass
 WHERE

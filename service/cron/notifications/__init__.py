@@ -1,4 +1,5 @@
 from database.asyncdatabase import api_tx
+from database import api_tx as _sync_api_tx
 from dataclasses import dataclass
 from service.cron.notifications.sql import (
     Q_UNREAD_INBOX,
@@ -19,7 +20,6 @@ from commonsql import (
     Q_UPSERT_LAST_CHAT_NOTIFICATION_TIME,
 )
 import asyncio
-from smtp import make_aws_smtp
 import random
 import json
 import traceback
@@ -44,6 +44,7 @@ class PersonNotification:
     has_live_push: bool
     push_messages: bool
     email_messages: bool
+    person_id: int
 
 def do_send_notification(row: PersonNotification):
     email = row.email
@@ -81,22 +82,33 @@ async def send_email_notification(row: PersonNotification):
               f'person_uuid={row.person_uuid}')
         return
 
+    await asyncio.to_thread(_queue_message_email, row)
+
+def _queue_message_email(row: PersonNotification):
+    """Queue the email in the outbox rather than sending it here (health
+    review, 13 Oct 2026, finding 63): the drain writes email_send_log on
+    acceptance, so how many message emails go out, and whether they bring
+    anyone back, can be measured. The id is the unread state the email is
+    about, so the same state never queues twice. Sync, on a thread: the
+    outbox takes a sync transaction."""
+    from service.notifications import enqueue_event_email
+
     # Setting message email frequency to "Never" is the one-click opt-out;
     # also doubles as the RFC-8058 List-Unsubscribe target.
     unsubscribe_url = frequency_url(row.email, 'Every', 'Never')
-    send_args = dict(
-        subject="You have a new message on Ahavah",
-        body=new_message_email(
-            headline=big_part(row.has_intro, row.has_chat),
-            open_url=f"{WEB_BASE_URL}/inbox",
-            unsubscribe_url=unsubscribe_url,
-        ),
-        to_addr=row.email,
-        list_unsubscribe=f"<{unsubscribe_url}>",
-    )
-
-    aws_smtp = make_aws_smtp()
-    await asyncio.to_thread(aws_smtp.send, **send_args)
+    with _sync_api_tx() as tx:
+        enqueue_event_email(
+            tx, campaign='message',
+            event_id=f'message-{row.last_intro_seconds}-{row.last_chat_seconds}',
+            person_id=row.person_id, email=row.email,
+            subject="You have a new message on Ahavah",
+            html=new_message_email(
+                headline=big_part(row.has_intro, row.has_chat),
+                open_url=f"{WEB_BASE_URL}/inbox",
+                unsubscribe_url=unsubscribe_url,
+            ),
+            list_unsubscribe=f"<{unsubscribe_url}>",
+        )
 
 async def send_notification(row: PersonNotification):
     # The real-time web push fires in service/chat/messagestorage. This cron

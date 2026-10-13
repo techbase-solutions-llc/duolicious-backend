@@ -18,6 +18,14 @@ from service.config import WEB_BASE_URL
 # abused as an open redirect (see make_campaign_link's docstring).
 ALLOWED_EXTERNAL_HOSTS = ('www.facebook.com', 'www.instagram.com')
 
+# The emails that tell a member something happened to them: a like, a match,
+# a message. They go through the outbox and the send log like any campaign
+# (health review, 13 Oct 2026, finding 63), but they are not campaign mail:
+# they are queued `exempt`, so the cap never holds one back, and the cap
+# below never counts one, so a busy week of matches cannot hold back E2.
+TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
+_TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS)
+
 # The two send rules, each written once and correlated to `person_ref` (a
 # bind or a column), so `can_send` and `count_sendable` cannot drift apart.
 def _same_run_sql(person_ref: str) -> str:
@@ -26,7 +34,8 @@ def _same_run_sql(person_ref: str) -> str:
 
 def _recent_send_sql(person_ref: str) -> str:
     return f"""SELECT 1 FROM email_send_log
-     WHERE person_id = {person_ref} AND sent_at > NOW() - make_interval(days => %(d)s)"""
+     WHERE person_id = {person_ref} AND sent_at > NOW() - make_interval(days => %(d)s)
+       AND campaign NOT IN ({_TRANSACTIONAL_SQL})"""
 
 _Q_SAME_RUN = _same_run_sql('%(pid)s')
 _Q_RECENT = f"{_recent_send_sql('%(pid)s')} LIMIT 1"

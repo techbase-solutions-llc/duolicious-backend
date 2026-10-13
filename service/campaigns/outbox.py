@@ -144,7 +144,7 @@ _Q_UNKNOWN_SUMMARY = """
 
 
 def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
-            subject: str, html: str, from_addr: str, unsub_scope: str,
+            subject: str, html: str, from_addr: Optional[str], unsub_scope: str,
             list_unsubscribe: Optional[str] = None, exempt: bool = False,
             cap_days: int = 7, post_send: Optional[str] = None,
             requires_spotlight_opt_in: bool = False,
@@ -152,6 +152,9 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
     """Queue one message. Returns the new row id, or None when this exact
     (campaign, campaign_id, person_id) was already queued, sent, skipped or
     failed -- which is what makes a retried caller safe.
+
+    `from_addr` None sends from the mailer's default address (the like,
+    match and message emails, which never named one).
 
     `not_before` holds the row until that instant: the drain only reserves
     rows whose next_attempt_at has passed, so a message can be queued today
