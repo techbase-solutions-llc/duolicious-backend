@@ -33,6 +33,13 @@ from duohash import sha512
 from antiabuse.antispam.signupemail import normalize_email
 from service.person.sql import Q_INSERT_DUO_SESSION
 from service.spotlight.withdrawal import withdraw_member
+from service.hard_delete import (
+    Q_DELETE_BETA_SIGNUP_OF,
+    Q_DELETE_INBOX_OF,
+    Q_DELETE_WAITLIST_OF,
+    Q_STAGE_AUDIO_FOR_REMOVAL,
+    Q_STAGE_PHOTOS_FOR_REMOVAL,
+)
 from service.referrals import Q_FORGET_CLICK_INVITER, Q_PURGE_REFERRALS_OF
 
 
@@ -89,7 +96,7 @@ _Q_REACTIVATE = """
 
 _Q_HARD_DELETE = """
     DELETE FROM person WHERE uuid = %(uuid)s::uuid
-    RETURNING email
+    RETURNING email, uuid::text AS uuid
 """
 
 _Q_PATCH_ROLES = """
@@ -296,7 +303,19 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
             emails = [row['email']]
             tx.execute(Q_PURGE_REFERRALS_OF, dict(emails=emails))
             tx.execute(Q_FORGET_CLICK_INVITER, dict(emails=emails))
+        # The member's photos and voice recording go to the CDN cleaners'
+        # queues before the cascade removes the rows that name them, and
+        # their inbox, waitlist and beta rows (no cascade) go with them, as
+        # in the deletion cron. Until 13 Oct 2026 this route did none of it,
+        # so the files stayed fetchable.
+        person_ids = [int(row['id'])]
+        tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
+        tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
         del_row = tx.execute(_Q_HARD_DELETE, dict(uuid=uuid)).fetchone()
+        tx.execute(Q_DELETE_INBOX_OF, dict(uuids=[del_row['uuid']]))
+        if row['email']:
+            tx.execute(Q_DELETE_WAITLIST_OF, dict(emails=[row['email']]))
+            tx.execute(Q_DELETE_BETA_SIGNUP_OF, dict(emails=[row['email']]))
         record_audit(
             tx, s, 'hard_delete',
             target_email=del_row['email'], target_uuid=uuid,

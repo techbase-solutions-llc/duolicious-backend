@@ -189,3 +189,101 @@ def test_admin_hard_delete_purges_referrals_and_click_addresses(make_person, cli
             tx.execute("DELETE FROM referral_link_click WHERE code = 'ADMDELT'")
             tx.execute("DELETE FROM referral WHERE invitee_email = 'admin-ghost-invitee@example.org' "
                        "OR inviter_email = 'admin-ghost-inviter@example.org'")
+
+
+def _seed_leaver_traces(tx, person_id: int, uuid: str, email: str, tag: str) -> None:
+    """A photo, a voice recording, an inbox row, a waitlist row and a beta
+    row for the person, each keyed on `tag` so the test can find them."""
+    tx.execute(
+        "INSERT INTO photo (person_id, position, uuid, blurhash, hash) "
+        "VALUES (%(p)s, 1, %(u)s, '', %(h)s)",
+        dict(p=person_id, u=f'{tag}-photo', h=f'{tag}-hash'))
+    tx.execute(
+        "INSERT INTO audio (person_id, position, uuid) VALUES (%(p)s, 1, %(u)s)",
+        dict(p=person_id, u=f'{tag}-audio'))
+    tx.execute(
+        "INSERT INTO inbox (luser, remote_bare_jid, content, timestamp, unread_count) "
+        "VALUES (%(l)s, %(r)s, 'hello'::bytea, 1, 1)",
+        dict(l=uuid, r=f'{tag}-peer@ahavah.app'))
+    tx.execute(
+        "INSERT INTO waitlist_signup (email) VALUES (%(e)s) ON CONFLICT DO NOTHING",
+        dict(e=email))
+    tx.execute(
+        "INSERT INTO beta_signup (email) VALUES (%(e)s) ON CONFLICT DO NOTHING",
+        dict(e=email))
+
+
+def _assert_leaver_traces_gone(tx, uuid: str, email: str, tag: str) -> None:
+    assert tx.execute("SELECT 1 FROM undeleted_photo WHERE uuid = %(u)s",
+                      dict(u=f'{tag}-photo')).fetchone(), \
+        'the photo was not staged for the CDN cleaner'
+    assert tx.execute("SELECT 1 FROM undeleted_audio WHERE uuid = %(u)s",
+                      dict(u=f'{tag}-audio')).fetchone(), \
+        'the voice recording was not staged for the CDN cleaner'
+    assert tx.execute("SELECT 1 FROM inbox WHERE luser = %(l)s",
+                      dict(l=uuid)).fetchone() is None, \
+        "the deleted member's inbox survived"
+    assert tx.execute("SELECT 1 FROM waitlist_signup WHERE email = %(e)s",
+                      dict(e=email)).fetchone() is None, \
+        "the deleted member's waitlist row survived"
+    assert tx.execute("SELECT 1 FROM beta_signup WHERE email = %(e)s",
+                      dict(e=email)).fetchone() is None, \
+        "the deleted member's beta row survived"
+
+
+def _clean_leaver_traces(uuid: str, email: str, tag: str) -> None:
+    with api_tx() as tx:
+        tx.execute("DELETE FROM undeleted_photo WHERE uuid = %(u)s", dict(u=f'{tag}-photo'))
+        tx.execute("DELETE FROM undeleted_audio WHERE uuid = %(u)s", dict(u=f'{tag}-audio'))
+        tx.execute("DELETE FROM inbox WHERE luser = %(l)s", dict(l=uuid))
+        tx.execute("DELETE FROM waitlist_signup WHERE email = %(e)s", dict(e=email))
+        tx.execute("DELETE FROM beta_signup WHERE email = %(e)s", dict(e=email))
+
+
+def test_the_deletion_cron_clears_inbox_waitlist_and_beta_rows(make_person):
+    """Pins what the cron already did, so moving its statements to a shared
+    module (for the admin hard delete below) cannot drop one."""
+    p = make_person(name='CronLeaver', gender='Woman')
+    tag = f"cron-leaver-{p['id']}"
+    with api_tx() as tx:
+        email = tx.execute('SELECT email FROM person WHERE id = %(p)s',
+                           dict(p=p['id'])).fetchone()['email']
+        _seed_leaver_traces(tx, p['id'], p['uuid'], email, tag)
+        tx.execute(
+            "UPDATE person SET activated = FALSE, "
+            "deletion_requested_at = NOW() - INTERVAL '8 days', "
+            "sign_in_time = NOW() - INTERVAL '9 days' "
+            "WHERE id = %(p)s", dict(p=p['id']))
+
+    asyncio.run(hard_delete_expired_once())
+
+    try:
+        with api_tx() as tx:
+            _assert_leaver_traces_gone(tx, p['uuid'], email, tag)
+    finally:
+        _clean_leaver_traces(p['uuid'], email, tag)
+
+
+def test_admin_hard_delete_stages_media_and_clears_inbox_and_waitlist(make_person, client):
+    """Wave 1 review (privacy): the admin's DELETE /admin/users/:uuid left the
+    member's photos and voice recording publicly fetchable (nothing staged
+    them for the CDN cleaners) and kept their inbox and waitlist rows. It
+    now does what the deletion cron does."""
+    headers = _admin_headers(make_person)
+    p = make_person(name='AdminLeaver', gender='Woman')
+    tag = f"admin-leaver-{p['id']}"
+    with api_tx() as tx:
+        email = tx.execute('SELECT email FROM person WHERE id = %(p)s',
+                           dict(p=p['id'])).fetchone()['email']
+        _seed_leaver_traces(tx, p['id'], p['uuid'], email, tag)
+
+    try:
+        r = client.delete(f"/admin/users/{p['uuid']}",
+                          json={'confirm_email': email, 'reason': 'test'}, headers=headers)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        with api_tx() as tx:
+            assert tx.execute('SELECT 1 FROM person WHERE id = %(p)s',
+                              dict(p=p['id'])).fetchone() is None
+            _assert_leaver_traces_gone(tx, p['uuid'], email, tag)
+    finally:
+        _clean_leaver_traces(p['uuid'], email, tag)

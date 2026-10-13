@@ -16,6 +16,13 @@ cancel-deletion endpoint can land later.
 from database.asyncdatabase import api_tx
 from database import api_tx as _sync_api_tx
 from service.cron.cronutil import env_int, print_stacktrace, MAX_RANDOM_START_DELAY
+from service.hard_delete import (
+    Q_DELETE_BETA_SIGNUP_OF,
+    Q_DELETE_INBOX_OF,
+    Q_DELETE_WAITLIST_OF,
+    Q_STAGE_AUDIO_FOR_REMOVAL,
+    Q_STAGE_PHOTOS_FOR_REMOVAL,
+)
 from service.referrals import Q_FORGET_CLICK_INVITER, Q_PURGE_REFERRALS_OF
 from service.spotlight.withdrawal import withdraw_member
 import asyncio
@@ -129,22 +136,10 @@ async def hard_delete_expired_once():
 
             # F11: stage photo/audio uuids for the CDN cleaners BEFORE the
             # cascading person delete removes the rows we'd read them from.
-            await tx.execute(
-                """
-                INSERT INTO undeleted_photo (uuid)
-                SELECT uuid FROM photo WHERE person_id = ANY(%(ids)s)
-                ON CONFLICT DO NOTHING
-                """,
-                dict(ids=person_ids),
-            )
-            await tx.execute(
-                """
-                INSERT INTO undeleted_audio (uuid)
-                SELECT uuid FROM audio WHERE person_id = ANY(%(ids)s)
-                ON CONFLICT DO NOTHING
-                """,
-                dict(ids=person_ids),
-            )
+            # The admin's hard delete runs the same statements
+            # (service/hard_delete).
+            await tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
+            await tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
 
             # F12 (0037 regression): referral emails have no FK anymore;
             # purge both directions so deleted members' addresses do not
@@ -165,25 +160,16 @@ async def hard_delete_expired_once():
             # Audit Privacy #1: inbox has no FK + no cascade; clean here.
             # Schema (init-api.sql:1639): luser = local JID name; we match
             # on it. Use ANY for the batch.
-            await tx.execute(
-                "DELETE FROM inbox WHERE luser = ANY(%(uuids)s)",
-                dict(uuids=uuids),
-            )
+            await tx.execute(Q_DELETE_INBOX_OF, dict(uuids=uuids))
 
             # Audit Privacy #2: waitlist_signup has no FK; clean here.
             if emails:
-                await tx.execute(
-                    "DELETE FROM waitlist_signup WHERE email = ANY(%(emails)s)",
-                    dict(emails=emails),
-                )
+                await tx.execute(Q_DELETE_WAITLIST_OF, dict(emails=emails))
                 # And the beta cohort row, same rationale. beta_signup
                 # gained an FK in migration 0022, so this is belt-and-
                 # braces in case the cascade somehow misses on email
                 # equality (e.g. if person_id was NULL at delete time).
-                await tx.execute(
-                    "DELETE FROM beta_signup WHERE email = ANY(%(emails)s)",
-                    dict(emails=emails),
-                )
+                await tx.execute(Q_DELETE_BETA_SIGNUP_OF, dict(emails=emails))
 
     if rows:
         print(f'Hard-deleted {len(rows)} pending-deletion person row(s) + inbox/waitlist cleanup')
