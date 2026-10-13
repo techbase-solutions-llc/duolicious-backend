@@ -1898,6 +1898,13 @@ WITH photo_ AS (
     SELECT json_object_agg(position, verified) AS j
     FROM photo
     WHERE person_id = %(person_id)s
+), photo_moderation_status AS (
+    -- Each own photo's moderation state, by position (finding 93): the
+    -- app showed every saved photo as approved, so a rejected or held
+    -- photo looked live to its owner.
+    SELECT json_object_agg(position, moderation_status::text) AS j
+    FROM photo
+    WHERE person_id = %(person_id)s
 ), audio_bio AS (
     SELECT uuid AS j FROM audio WHERE person_id = %(person_id)s AND position = -1
 ), name AS (
@@ -2157,6 +2164,7 @@ SELECT
         'photo_extra_exts',       (SELECT j FROM photo_extra_exts),
         'photo_blurhash',         (SELECT j FROM photo_blurhash),
         'photo_verification',     (SELECT j FROM photo_verification),
+        'photo_moderation_status', (SELECT j FROM photo_moderation_status),
         'audio_bio_max_seconds',  {constants.MAX_AUDIO_SECONDS},
         'audio_bio',              (SELECT j FROM audio_bio),
         'name',                   (SELECT j FROM name),

@@ -16,7 +16,7 @@ from service import metapixel
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
-from service.photo_gate import gate_params
+from service.photo_gate import gate_params, photo_gate_enabled
 from commonsql import *
 from service.person.template import otp_template
 from service.referrals import (
@@ -1050,6 +1050,7 @@ def get_me(
         'citySet': row.get('city_set', False),
     }
     if include_email:
+        out.update(_own_photo_state(row['person_id']))
         # Account-management surface fields. The frontend's
         # /settings/account renders these as the current values; without
         # them we showed hardcoded fakes ("ehud@example.com", etc.).
@@ -1059,6 +1060,49 @@ def get_me(
         # not leak it to an attacker who only knows a UUID.
         out['person_id'] = row['person_id']
     return out
+
+# The member's own photo situation, for /me (finding 93; the fields the
+# photos design brief draws against). photo_state, first match wins:
+#   ok        an approved photo that lets them see members' photos: the
+#             detector saw a face, a moderator confirmed one, or the photo
+#             was never checked (the can_view_photos() rule, 0062)
+#   checking  a photo still waiting for its automatic check (pending)
+#   held      a photo waiting for a person (manual_review)
+#   no_face   approved photos, none showing a face nobody has confirmed
+#   declined  rejected photos only
+#   none      no photo at all
+# A photo being checked or held comes before no_face, because asking for a
+# photo that shows the member is wrong while one is waiting for a decision.
+# photos_locked is the gate (service/photo_gate.py): only ever true with the
+# switch on, and never for an admin, so photo_state is never ok while it is.
+_Q_OWN_PHOTO_STATE = """
+SELECT
+    CASE
+        WHEN bool_or(moderation_status = 'approved'
+                     AND (face_count IS NULL OR face_count > 0
+                          OR face_confirmed_at IS NOT NULL))  THEN 'ok'
+        WHEN bool_or(moderation_status = 'pending')           THEN 'checking'
+        WHEN bool_or(moderation_status = 'manual_review')     THEN 'held'
+        WHEN bool_or(moderation_status = 'approved')          THEN 'no_face'
+        WHEN bool_or(moderation_status = 'rejected')          THEN 'declined'
+        ELSE 'none'
+    END AS photo_state,
+    can_view_photos(%(person_id)s) AS can_view_photos
+FROM
+    photo
+WHERE
+    person_id = %(person_id)s
+"""
+
+
+def _own_photo_state(person_id: int) -> dict:
+    with api_tx('READ COMMITTED') as tx:
+        row = tx.execute(_Q_OWN_PHOTO_STATE, dict(person_id=person_id)).fetchone()
+    return dict(
+        photo_state=row['photo_state'],
+        photos_locked=photo_gate_enabled() and not row['can_view_photos'],
+    )
+
 
 def get_prospect_profile(s: Optional[t.SessionInfo], prospect_uuid):
     params = dict(
