@@ -21,3 +21,18 @@ def is_rude(s: str) -> bool:
                 normalize_string(s, chat, do_remove_modifiers=False))) or \
             bool(_rude_matcher.search(
                 normalize_string(s, chat, do_remove_modifiers=True)))
+
+
+def rude_matches(s: str) -> list[str]:
+    """The listed words or phrases a message matched, in the list's own
+    spelling, each once. Moderation shows these instead of the message
+    (owner, 13 Oct 2026): a moderator sees why it was flagged, never what
+    else the member wrote."""
+    found: list[str] = []
+    for remove_modifiers in (False, True):
+        normalized = normalize_string(s, chat, do_remove_modifiers=remove_modifiers)
+        for m in _rude_matcher.finditer(normalized):
+            word = m.group(2).lower()
+            if word not in found:
+                found.append(word)
+    return found

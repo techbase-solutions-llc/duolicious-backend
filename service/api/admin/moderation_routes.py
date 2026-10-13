@@ -109,6 +109,11 @@ def get_moderation_rude_messages(s: t.SessionInfo):
     try:
         with api_tx('read committed') as tx:
             rows = [dict(r) for r in tx.execute(Q_RUDE_MESSAGES).fetchall()]
+        # Only the flagged word or phrase leaves the server, never the rest
+        # of the message (owner, 13 Oct 2026).
+        from antiabuse.antirude.chat import rude_matches
+        for r in rows:
+            r['snippet'] = ', '.join(rude_matches(r['snippet'] or '')) or '(flagged)'
         return {'rows': rows}
     except Exception:
         # Table may not exist on a given env; degrade gracefully so the
