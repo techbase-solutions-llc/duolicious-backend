@@ -126,6 +126,10 @@ LEFT JOIN
     photo
 ON
     photo.person_id = person.id
+AND
+    -- Approved photos only (finding 92). In the join, not the WHERE, so a
+    -- sender with no approved photo still gets the notification.
+    photo.moderation_status = 'approved'
 WHERE
     id = %(from_id)s
 AND

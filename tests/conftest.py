@@ -442,3 +442,64 @@ def _calendar_without_rest_days(monkeypatch, request):
     import service.spotlight.restdays as rd
     monkeypatch.setattr(rd, 'REST_DAYS', ())
     monkeypatch.setattr(rd, 'KNOWN_THROUGH', date.today() + timedelta(days=365))
+
+
+# ---------------------------------------------------------------------------
+# Photos and sessions (health review, Wave 2 photos lane)
+# ---------------------------------------------------------------------------
+# `add_photo(person_id, ...)` inserts a scored photo row with the given
+# moderation status and face count, and returns its uuid. The row goes when
+# make_person deletes the person (photo cascades). `sign_in(person)` gives a
+# signed-in session for a make_person row and returns the request headers.
+
+@pytest.fixture
+def add_photo():
+    import secrets
+
+    from database import api_tx
+
+    def _add(person_id: int, position: int = 1, status: str = 'approved',
+             face_count: int | None = 1, face_confirmed: bool = False) -> str:
+        uuid = secrets.token_hex(32)
+        with api_tx() as tx:
+            tx.execute(
+                """
+                INSERT INTO photo (uuid, person_id, position, blurhash, hash,
+                                   nsfw_score, moderation_status, face_count,
+                                   face_checked_at)
+                VALUES (%(u)s, %(p)s, %(pos)s, %(b)s, %(h)s, 0.01,
+                        %(s)s::photo_moderation_status, %(f)s,
+                        CASE WHEN %(f)s::int IS NULL THEN NULL ELSE NOW() END)
+                """,
+                dict(u=uuid, p=person_id, pos=position, b=f'blur-{uuid[:8]}',
+                     h=secrets.token_hex(16), s=status, f=face_count))
+            if face_confirmed:
+                tx.execute(
+                    "UPDATE photo SET face_confirmed_at = NOW() WHERE uuid = %(u)s",
+                    dict(u=uuid))
+        return uuid
+
+    return _add
+
+
+@pytest.fixture
+def sign_in():
+    import hashlib
+    import secrets
+
+    from database import api_tx
+
+    def _sign_in(person: dict) -> dict:
+        tok = secrets.token_hex(32)
+        with api_tx() as tx:
+            email = tx.execute('SELECT email FROM person WHERE id = %(i)s',
+                               dict(i=person['id'])).fetchone()['email']
+            tx.execute(
+                """INSERT INTO duo_session (session_token_hash, email, person_id,
+                                            signed_in, otp)
+                   VALUES (%(h)s, %(e)s, %(p)s, TRUE, '123456')""",
+                dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=email,
+                     p=person['id']))
+        return {'Authorization': f'Bearer {tok}'}
+
+    return _sign_in

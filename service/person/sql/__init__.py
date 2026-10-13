@@ -1419,6 +1419,9 @@ WITH prospect AS (
         photo
     JOIN
         prospect ON prospect.id = photo.person_id
+    -- Approved photos only (finding 92), as every other surface.
+    WHERE
+        photo.moderation_status = 'approved'
     ORDER BY
         photo.position
     LIMIT 1
@@ -1675,6 +1678,9 @@ SELECT
                     photo
                 WHERE
                     person_id = prospect.person_id
+                AND
+                    -- Approved photos only (finding 92).
+                    moderation_status = 'approved'
                 ORDER BY
                     position
                 LIMIT 1
@@ -1692,6 +1698,9 @@ SELECT
                     photo
                 WHERE
                     person_id = prospect.person_id
+                AND
+                    -- Approved photos only (finding 92).
+                    moderation_status = 'approved'
                 ORDER BY
                     position
                 LIMIT 1
@@ -3637,6 +3646,11 @@ WITH checker AS (
             photo
         WHERE
             photo.person_id = prospect.id
+        AND
+            -- Approved photos only (finding 92): a rejected, held or
+            -- unchecked photo was the picture beside a member's name in
+            -- someone else's Views list.
+            photo.moderation_status = 'approved'
         ORDER BY
             photo.position
         LIMIT 1
