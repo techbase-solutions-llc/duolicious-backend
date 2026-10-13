@@ -5,7 +5,7 @@ import argparse, uuid
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.spotlight_announcement import spotlight_announcement_html, SUBJECT, FROM_ADDR
-from service.campaigns import suppressed_predicate_sql, unsubscribed_predicate_sql
+from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns.runner import audit_send, run_campaign
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
@@ -32,8 +32,20 @@ def build_for(row: dict) -> tuple[str, str]:
     # runner marks the row, and the token then carries a placeholder nonce
     # that is never stored (health review, 13 Oct 2026; until then a dry
     # run wrote one spotlight_token_nonce row per recipient).
+    #
+    # Both links go through /s/ campaign links of kind 'e1', with the reader
+    # as the link's subject (finding 90): a view of the confirm page used to
+    # leave no trace, so nobody could tell whether the copy or the reach was
+    # the problem. The click is counted on the way through; the consent
+    # record is still written only by the confirm POST.
+    dry = row.get('dry_run', False)
     with api_tx() as tx:
-        confirm_url = spotlight_confirm_url(tx, row['email'], dry_run=row.get('dry_run', False))
+        confirm_url = spotlight_confirm_url(tx, row['email'], dry_run=dry)
+        if confirm_url is not None:
+            subject_id = row['person_id'] or None
+            confirm_url = make_campaign_link(tx, 'e1', confirm_url, subject_id, dry_run=dry)
+            settings_url = make_campaign_link(tx, 'e1', f"{WEB_BASE_URL}/settings/privacy",
+                                              subject_id, dry_run=dry)
     if confirm_url is None:
         # No activated person matches this email (deactivated, deleted, or
         # a bad row) -- there is nothing to mint a token against. Raising
@@ -43,7 +55,7 @@ def build_for(row: dict) -> tuple[str, str]:
         raise ValueError('no_person')
     return SUBJECT, spotlight_announcement_html(
         confirm_url,
-        f"{WEB_BASE_URL}/settings/privacy",
+        settings_url,
         _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
 
 _Q_RECIPIENT_COUNT = f"""

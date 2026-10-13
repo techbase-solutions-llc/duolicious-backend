@@ -74,7 +74,8 @@ _Q_LAST_SENT = """
 # outbox row is only searched for its own member's few links. Matching on
 # kind alone searched every link the campaign ever minted in every mail of
 # the run, about 53 more e2 links a week. `links` is 0 when the mail carried
-# no tracked link (e1's confirm link, or a run from before the outbox), and
+# no tracked link (an e1 run before 13 Oct 2026, when its confirm link was
+# bare, or a run from before the outbox), and
 # then there is no click figure to give.
 _Q_RUN_RESULTS = """
     WITH run_links AS (
