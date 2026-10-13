@@ -1,4 +1,11 @@
-"""SQL for the 3 Cohorts sub-tabs."""
+"""SQL for the 3 Cohorts sub-tabs.
+
+Waitlist and beta rows are pre-account records and are counted as rows. A
+`person` on this tab is counted only when it is a member (members.py)."""
+from service.admin.queries.members import member_sql
+
+_MEMBER = member_sql('person')
+_MEMBER_P = member_sql('p')
 
 # ---- WAITLIST -----------------------------------------------------------
 
@@ -12,7 +19,7 @@ Q_WAITLIST_KPIS = """
 """
 
 # 30-day signup velocity, stacked across the 3 sources.
-Q_WAITLIST_VELOCITY_30D = """
+Q_WAITLIST_VELOCITY_30D = f"""
     WITH days AS (
         SELECT generate_series(
             (CURRENT_DATE - INTERVAL '29 days')::date,
@@ -23,7 +30,7 @@ Q_WAITLIST_VELOCITY_30D = """
         days.d::text AS day,
         COALESCE((SELECT COUNT(*) FROM waitlist_signup WHERE created_at::date = days.d), 0) AS waitlist,
         COALESCE((SELECT COUNT(*) FROM beta_signup WHERE created_at::date = days.d), 0) AS beta,
-        COALESCE((SELECT COUNT(*) FROM person WHERE sign_up_time::date = days.d), 0) AS person
+        COALESCE((SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time::date = days.d), 0) AS person
       FROM days
      ORDER BY days.d
 """
@@ -73,11 +80,11 @@ Q_WAITLIST_SOURCE = """
 
 # ---- BETA ---------------------------------------------------------------
 
-Q_BETA_KPIS = """
+Q_BETA_KPIS = f"""
     SELECT
         (SELECT COUNT(*) FROM beta_signup) AS cohort_size,
         (SELECT COUNT(*) FROM beta_signup b
-            WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email)) AS completed_onboarding,
+            WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email AND {_MEMBER_P})) AS completed_onboarding,
         (SELECT COUNT(*) FROM beta_signup WHERE referral_code IS NOT NULL) AS codes_minted,
         (SELECT COUNT(*) FROM beta_signup WHERE referral_intro_sent_at IS NOT NULL) AS intro_sent,
         (SELECT COUNT(*) FROM beta_signup WHERE referral_intro_sent_at IS NULL) AS never_emailed
@@ -97,14 +104,15 @@ Q_BETA_ROWS = """
      LIMIT 100
 """
 
-Q_BETA_FUNNEL = """
+Q_BETA_FUNNEL = f"""
     SELECT
         (SELECT COUNT(*) FROM waitlist_signup) AS waitlist_total,
         (SELECT COUNT(*) FROM beta_signup) AS beta_total,
         (SELECT COUNT(*) FROM beta_signup b
-            WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email)) AS person_from_beta,
+            WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email AND {_MEMBER_P})) AS person_from_beta,
         (SELECT COUNT(*) FROM person p
-            WHERE EXISTS (SELECT 1 FROM beta_signup b WHERE b.email = p.email)) AS completed_onboarding
+            WHERE {_MEMBER_P}
+              AND EXISTS (SELECT 1 FROM beta_signup b WHERE b.email = p.email)) AS completed_onboarding
 """
 
 # ---- REFERRALS ----------------------------------------------------------

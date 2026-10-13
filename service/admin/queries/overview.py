@@ -1,7 +1,15 @@
 """SQL for GET /admin/overview — the dashboard's top-of-page KPIs +
-3 chart series + recent activity feed."""
+3 chart series + recent activity feed.
 
-Q_OVERVIEW_KPIS = """
+Every count of people here is a count of MEMBERS (members.py): staff
+accounts have profiles, photos and Premium too, and counting them put
+Overview at 61 persons on 13 Oct 2026 when there were 58 members."""
+from service.admin.queries.members import member_sql
+
+_MEMBER = member_sql('person')
+_MEMBER_P = member_sql('p')
+
+Q_OVERVIEW_KPIS = f"""
     SELECT
         -- Signups are PEOPLE.
         --
@@ -29,16 +37,21 @@ Q_OVERVIEW_KPIS = """
         -- puts every evening signup on the wrong day in the direction that
         -- looks plausible.
         (SELECT COUNT(*) FROM person
-          WHERE (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
+          WHERE {_MEMBER}
+            AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
                 = (NOW() AT TIME ZONE 'America/Barbados')::date) AS signups_today,
         -- A real yesterday to compare against. The card printed the literal
         -- string "vs 0 yesterday" every day, because nothing was sent.
         (SELECT COUNT(*) FROM person
-          WHERE (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
+          WHERE {_MEMBER}
+            AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
                 = (NOW() AT TIME ZONE 'America/Barbados')::date - 1) AS signups_yesterday,
-        (SELECT COUNT(*) FROM person WHERE last_online_time > NOW() - INTERVAL '24 hours') AS active_24h,
-        (SELECT COUNT(*) FROM person) AS person_total,
-        (SELECT COUNT(*) FROM person WHERE 'premium' = ANY(entitlements)) AS premium_holders,
+        (SELECT COUNT(*) FROM person
+          WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '24 hours') AS active_24h,
+        -- Named person_total for the admin build that reads it; it counts
+        -- members.
+        (SELECT COUNT(*) FROM person WHERE {_MEMBER}) AS person_total,
+        (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND 'premium' = ANY(entitlements)) AS premium_holders,
         -- "Premium holders" was a tautology on the dashboard: every person
         -- in the database holds premium (51 of 51 on 2026-09-24, all with a
         -- subscription_expires_at), so the card restated "Total persons"
@@ -54,7 +67,8 @@ Q_OVERVIEW_KPIS = """
         -- top of every event; the nested path covers a payload stored as
         -- the event object itself.
         (SELECT COUNT(*) FROM person p
-          WHERE 'premium' = ANY(p.entitlements)
+          WHERE {_MEMBER_P}
+            AND 'premium' = ANY(p.entitlements)
             AND EXISTS (SELECT 1 FROM entitlement_event e
                          WHERE e.app_user_id = p.id::text
                            AND COALESCE(e.payload->>'livemode',
@@ -90,7 +104,8 @@ Q_OVERVIEW_SIGNUPS_30D = f"""
         COALESCE((SELECT COUNT(*) FROM beta_signup
                    WHERE (created_at AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS beta,
         COALESCE((SELECT COUNT(*) FROM person
-                   WHERE (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS person
+                   WHERE {_MEMBER}
+                     AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS person
       FROM days
      ORDER BY days.d
 """
@@ -150,7 +165,7 @@ Q_OVERVIEW_PREMIUM_30D = f"""
      ORDER BY days.d
 """
 
-Q_OVERVIEW_RECENT_ACTIVITY = """
+Q_OVERVIEW_RECENT_ACTIVITY = f"""
     SELECT * FROM (
         -- A real member joining. Until 2026-09-24 the feed's only two
         -- signup sources were beta_signup and waitlist_signup, the
@@ -164,7 +179,7 @@ Q_OVERVIEW_RECENT_ACTIVITY = """
         -- `object` so the row can open the user drawer instead.
         SELECT 'signup_member' AS kind, name AS subject, uuid::text AS object,
                sign_up_time AT TIME ZONE 'UTC' AS created_at
-          FROM person ORDER BY sign_up_time DESC LIMIT 10
+          FROM person WHERE {_MEMBER} ORDER BY sign_up_time DESC LIMIT 10
     ) sub_person
     UNION ALL SELECT * FROM (
         SELECT 'signup' AS kind, email AS subject, NULL::text AS object,

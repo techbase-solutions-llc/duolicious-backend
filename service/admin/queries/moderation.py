@@ -2,6 +2,9 @@
 
 Reports sub-tab continues to use the existing /admin/reports surface
 from service/api/moderation_routes.py — we DON'T reimplement here."""
+from service.admin.queries.members import member_sql
+
+_MEMBER_P = member_sql('p')
 
 Q_PHOTOS_LIST = """
     SELECT
@@ -27,13 +30,20 @@ Q_PHOTOS_LIST = """
      LIMIT 100
 """
 
-Q_PHOTOS_KPIS = """
+# Two kinds of number. Pending and manual review are the WORK queue, the
+# rows the list above shows, so they count every photo waiting for a
+# decision: a staff profile is shown to members like any other and its
+# photos are moderated the same way. Approved and rejected describe the
+# community, so they count members' photos only (members.py); on 13 Oct
+# 2026 Approved read 164, 4 of them on staff accounts.
+Q_PHOTOS_KPIS = f"""
     SELECT
-        COUNT(*) FILTER (WHERE moderation_status::text = 'pending') AS pending,
-        COUNT(*) FILTER (WHERE moderation_status::text = 'manual_review') AS manual_review,
-        COUNT(*) FILTER (WHERE moderation_status::text = 'approved') AS approved,
-        COUNT(*) FILTER (WHERE moderation_status::text = 'rejected') AS rejected
-      FROM photo
+        COUNT(*) FILTER (WHERE ph.moderation_status::text = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE ph.moderation_status::text = 'manual_review') AS manual_review,
+        COUNT(*) FILTER (WHERE ph.moderation_status::text = 'approved' AND {_MEMBER_P}) AS approved,
+        COUNT(*) FILTER (WHERE ph.moderation_status::text = 'rejected' AND {_MEMBER_P}) AS rejected
+      FROM photo ph
+      JOIN person p ON p.id = ph.person_id
 """
 
 # rude_message schema (init-api.sql:1675):

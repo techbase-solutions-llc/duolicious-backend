@@ -36,13 +36,21 @@ ANSWER.
    58 rows joined cleanly to `person` on it, and it carried no domain part.
    `split_part(..., '@', 1)` is used anyway: it is a no-op on a bare uuid
    and keeps working if the chat service ever starts qualifying JIDs.
+
+Every figure here is between MEMBERS (members.py). A like, match or message
+with a staff account on either end is the staff account's, not the
+community's; on 13 Oct 2026, 2 of the 127 likes involved one.
 """
 from __future__ import annotations
 
-# One row per message actually sent, with both ends resolved to person ids
-# and the pair normalised so {a,b} and {b,a} are the same conversation.
-# Everything below builds on this, which is why the traps are handled once.
-_SENT_MESSAGES = """
+from service.admin.queries.members import member_sql
+
+# One row per message actually sent between two members, with both ends
+# resolved to person ids and the pair normalised so {a,b} and {b,a} are the
+# same conversation. Everything below builds on this, which is why the traps
+# are handled once. The Growth tab reuses it, so a message means the same
+# thing on both tabs.
+_SENT_MESSAGES = f"""
     SELECT
         m.person_id                                   AS sender_id,
         p.id                                          AS recipient_id,
@@ -50,13 +58,26 @@ _SENT_MESSAGES = """
         GREATEST(m.person_id, p.id)                   AS hi,
         to_timestamp(m.id / 1000000 / 256)            AS sent_at
       FROM mam_message m
+      JOIN person s ON s.id = m.person_id
       JOIN person p
         ON p.uuid::text = split_part(m.remote_bare_jid, '@', 1)
      WHERE m.direction = 'O'
+       AND {member_sql('s')}
+       AND {member_sql('p')}
+"""
+
+# A like with a member on both ends. `a` liked `b`.
+_MEMBER_LIKES = f"""
+    SELECT l.liker_id, l.liked_id, l.created_at
+      FROM liked l
+      JOIN person a ON a.id = l.liker_id
+      JOIN person b ON b.id = l.liked_id
+     WHERE {member_sql('a')} AND {member_sql('b')}
 """
 
 Q_ENGAGEMENT_KPIS = f"""
     WITH sent AS ({_SENT_MESSAGES}),
+    likes AS ({_MEMBER_LIKES}),
     -- One row per conversation, carrying how many distinct people have
     -- written in it. Two means both sides did.
     convo AS (
@@ -64,15 +85,15 @@ Q_ENGAGEMENT_KPIS = f"""
           FROM sent GROUP BY lo, hi
     )
     SELECT
-        (SELECT COUNT(*) FROM liked) AS likes_total,
+        (SELECT COUNT(*) FROM likes) AS likes_total,
 
-        (SELECT COUNT(*) FROM liked
+        (SELECT COUNT(*) FROM likes
           WHERE created_at > NOW() - INTERVAL '7 days') AS likes_7d,
 
         -- Both directions of a mutual like are rows, so this guard is what
         -- stops every match being counted twice.
-        (SELECT COUNT(*) FROM liked a
-           JOIN liked b ON a.liker_id = b.liked_id AND a.liked_id = b.liker_id
+        (SELECT COUNT(*) FROM likes a
+           JOIN likes b ON a.liker_id = b.liked_id AND a.liked_id = b.liker_id
           WHERE a.liker_id < a.liked_id) AS matches_total,
 
         -- Someone reached out. Whether anyone answered is the next figure.

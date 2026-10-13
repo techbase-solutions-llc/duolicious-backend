@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from emails.base import suppressed_sql_pattern
+from service.admin.queries.members import member_sql
 from service.campaigns import (PLATFORMS, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.spotlight.country import display_country
@@ -35,6 +36,16 @@ def last_action_at(tx, person_id: int) -> Optional[datetime]:
     la = row['last_action'] if row else None
     return None if la is None or la.timestamp() == 0 else la
 
+# The Growth tab counts MEMBERS (service/admin/queries/members.py), and on
+# top of that leaves out the test addresses above. Until 13 Oct 2026 it left
+# out only the test addresses, so two of the three staff accounts were
+# counted: Members read 60 for 58, and Spotlight opt-ins 2 for 1.
+#
+# A like, match or message counts only when NEITHER end is staff or a test
+# account, the same rule the Overview's engagement figures use.
+def _not_member_or_test(x: str) -> str:
+    return f"(lower({x}.email) = ANY(%(ex)s) OR NOT ({member_sql(x)}))"
+
 _Q_STATS_BY_GENDER = f"""
     WITH act AS (
       SELECT p.id, g.name AS gender, p.sign_up_time, p.spotlight_opt_in,
@@ -42,7 +53,7 @@ _Q_STATS_BY_GENDER = f"""
              EXISTS (SELECT 1 FROM photo ph WHERE ph.person_id = p.id) AS has_photo,
              {_last_action_sql('p.id')} AS last_action
         FROM person p JOIN gender g ON g.id = p.gender_id
-       WHERE p.activated AND lower(p.email) <> ALL(%(ex)s)
+       WHERE p.activated AND {member_sql('p')} AND lower(p.email) <> ALL(%(ex)s)
     )
     SELECT gender,
            count(*)                                                              AS members,
@@ -57,43 +68,45 @@ _Q_STATS_BY_GENDER = f"""
       FROM act GROUP BY gender ORDER BY gender
 """
 
-_Q_TOTALS = """
+_Q_TOTALS = f"""
     SELECT
       (SELECT count(*) FROM ahavah_match m
         WHERE NOT EXISTS (
-          SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND lower(x.email) = ANY(%(ex)s)
+          SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND {_not_member_or_test('x')}
         )
       ) AS matches,
       (SELECT count(*) FROM ahavah_match m
         WHERE m.created_at > NOW() - interval '30 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND lower(x.email) = ANY(%(ex)s)
+            SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND {_not_member_or_test('x')}
           )
       ) AS matches_30d,
       (SELECT count(*) FROM liked l
         WHERE NOT EXISTS (
-          SELECT 1 FROM person x WHERE x.id IN (l.liker_id, l.liked_id) AND lower(x.email) = ANY(%(ex)s)
+          SELECT 1 FROM person x WHERE x.id IN (l.liker_id, l.liked_id) AND {_not_member_or_test('x')}
         )
       ) AS likes_total,
       (SELECT count(*) FROM liked l
         WHERE l.created_at > NOW() - interval '7 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (l.liker_id, l.liked_id) AND lower(x.email) = ANY(%(ex)s)
+            SELECT 1 FROM person x WHERE x.id IN (l.liker_id, l.liked_id) AND {_not_member_or_test('x')}
           )
       ) AS likes_7d,
       (SELECT count(*) FROM messaged msg
         WHERE msg.created_at > NOW() - interval '7 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND lower(x.email) = ANY(%(ex)s)
+            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND {_not_member_or_test('x')}
           )
       ) AS msgs_7d,
       (SELECT count(*) FROM messaged msg
         WHERE msg.created_at > NOW() - interval '30 days'
           AND NOT EXISTS (
-            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND lower(x.email) = ANY(%(ex)s)
+            SELECT 1 FROM person x WHERE x.id IN (msg.subject_person_id, msg.object_person_id) AND {_not_member_or_test('x')}
           )
       ) AS msgs_30d,
-      (SELECT count(*) FROM person WHERE activated AND spotlight_opt_in AND lower(email) <> ALL(%(ex)s)) AS opted_in
+      (SELECT count(*) FROM person p
+        WHERE p.activated AND p.spotlight_opt_in AND {member_sql('p')}
+          AND lower(p.email) <> ALL(%(ex)s)) AS opted_in
 """
 
 def growth_stats(tx) -> dict:
