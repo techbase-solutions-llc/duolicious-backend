@@ -4,6 +4,7 @@ Entitlement holders and Stripe customers are members only (members.py):
 on 13 Oct 2026 the tab read 60 Premium holders for 58 members, and 2 of its
 3 Stripe customers were staff. The token ledger is an accounting record of
 every account and stays whole."""
+from service.admin.queries.days import BARBADOS_TODAY, barbados_day
 from service.admin.queries.members import member_sql
 
 _MEMBER = member_sql('person')
@@ -36,12 +37,14 @@ Q_LEDGER_COUNT = """
        AND tl.created_at > NOW() - (%(days)s || ' days')::INTERVAL
 """
 
-Q_LEDGER_KPIS = """
+# "Today net" is the Barbados day, as on every tab (days.py).
+Q_LEDGER_KPIS = f"""
     SELECT
         (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE delta > 0) AS total_credits,
         (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE delta < 0) AS total_debits,
         (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger) AS circulation,
-        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE created_at::date = CURRENT_DATE) AS today
+        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger
+          WHERE {barbados_day('created_at')} = {BARBADOS_TODAY}) AS today
 """
 
 # Entitlement holders.

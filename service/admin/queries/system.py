@@ -1,14 +1,18 @@
 """SQL for the System tab — operational health snapshot."""
+from service.admin.queries.days import BARBADOS_TODAY, barbados_day_of_naive_utc
 from service.admin.queries.members import member_sql
 
 _MEMBER = member_sql('person')
 
 # Sign-ups and DAU/WAU/MAU count members (members.py). The `*_total` figures
 # below them are raw table sizes, labelled by table name on the tab, and
-# stay raw.
+# stay raw. "Today" is the Barbados day, as on every tab (days.py); the 7
+# and 30 day figures are durations and stay in UTC.
 Q_SYSTEM_HEALTH = f"""
     SELECT
-        (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time::date = CURRENT_DATE) AS signups_today,
+        (SELECT COUNT(*) FROM person
+          WHERE {_MEMBER}
+            AND {barbados_day_of_naive_utc('sign_up_time')} = {BARBADOS_TODAY}) AS signups_today,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time > NOW() - INTERVAL '7 days') AS signups_7d,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time > NOW() - INTERVAL '30 days') AS signups_30d,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '24 hours') AS dau,

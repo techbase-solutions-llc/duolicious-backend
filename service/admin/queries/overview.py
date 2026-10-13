@@ -4,10 +4,15 @@
 Every count of people here is a count of MEMBERS (members.py): staff
 accounts have profiles, photos and Premium too, and counting them put
 Overview at 61 persons on 13 Oct 2026 when there were 58 members."""
+from service.admin.queries.days import (
+    BARBADOS_TODAY, barbados_day, barbados_day_of_naive_utc, barbados_days)
 from service.admin.queries.members import member_sql
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
+
+# Every date bucket on this tab is a Barbados day (days.py).
+_JOINED_ON = barbados_day_of_naive_utc('sign_up_time')
 
 Q_OVERVIEW_KPIS = f"""
     SELECT
@@ -20,32 +25,14 @@ Q_OVERVIEW_KPIS = f"""
         -- signup. The 30 day chart directly below the card already counted
         -- `person`, so the two disagreed on one screen.
         --
-        -- Barbados, not UTC. The dashboard is read in Barbados, and under
-        -- CURRENT_DATE a member who joins after 20:00 local lands on the
-        -- next day's number. The conversion has to be on BOTH sides of the
-        -- comparison; one side alone is an off-by-one that only shows near
-        -- midnight.
-        --
-        -- The DOUBLE conversion is not redundant. `person.sign_up_time` is
-        -- `timestamp WITHOUT time zone`, alone among the timestamps this
-        -- file touches (waitlist_signup, beta_signup, referral,
-        -- referral_link_click and entitlement_event are all timestamptz).
-        -- On a naive column, `AT TIME ZONE 'America/Barbados'` READS the
-        -- value as Barbados local, which is backwards: the column stores
-        -- UTC. `AT TIME ZONE 'UTC'` first marks it as UTC, and only then
-        -- does the second conversion mean what it says. Getting this wrong
-        -- puts every evening signup on the wrong day in the direction that
-        -- looks plausible.
+        -- Barbados days, not UTC ones, and `person.sign_up_time` is the one
+        -- naive column here, so it takes the double conversion (days.py).
         (SELECT COUNT(*) FROM person
-          WHERE {_MEMBER}
-            AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
-                = (NOW() AT TIME ZONE 'America/Barbados')::date) AS signups_today,
+          WHERE {_MEMBER} AND {_JOINED_ON} = {BARBADOS_TODAY}) AS signups_today,
         -- A real yesterday to compare against. The card printed the literal
         -- string "vs 0 yesterday" every day, because nothing was sent.
         (SELECT COUNT(*) FROM person
-          WHERE {_MEMBER}
-            AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date
-                = (NOW() AT TIME ZONE 'America/Barbados')::date - 1) AS signups_yesterday,
+          WHERE {_MEMBER} AND {_JOINED_ON} = {BARBADOS_TODAY} - 1) AS signups_yesterday,
         (SELECT COUNT(*) FROM person
           WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '24 hours') AS active_24h,
         -- Named person_total for the admin build that reads it; it counts
@@ -77,54 +64,31 @@ Q_OVERVIEW_KPIS = f"""
         (SELECT COUNT(*) FROM referral WHERE created_at > NOW() - INTERVAL '7 days') AS referral_signups_7d
 """
 
-# Every date bucket on this tab is a BARBADOS day, because that is where the
-# dashboard is read. `CURRENT_DATE` is UTC, and after 20:00 in Barbados the
-# UTC date is already tomorrow, so a series bounded by it ends a day ahead of
-# the dashboard's own sense of today and puts evening activity on the wrong
-# bar. The conversion belongs on both the series bounds and the per-day
-# comparison; one without the other is an off-by-one that only shows near
-# midnight.
-#
-# Durations stay in UTC. Retention windows and expiry arithmetic are lengths
-# of time, not calendar days, and a timezone would be wrong there.
-_BARBADOS_TODAY = "(NOW() AT TIME ZONE 'America/Barbados')::date"
-
 Q_OVERVIEW_SIGNUPS_30D = f"""
-    WITH days AS (
-        SELECT generate_series(
-            ({_BARBADOS_TODAY} - INTERVAL '29 days')::date,
-            {_BARBADOS_TODAY},
-            INTERVAL '1 day'
-        )::date AS d
+    WITH days AS ({barbados_days(30)}
     )
     SELECT
         days.d::text AS day,
         COALESCE((SELECT COUNT(*) FROM waitlist_signup
-                   WHERE (created_at AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS waitlist,
+                   WHERE {barbados_day('created_at')} = days.d), 0) AS waitlist,
         COALESCE((SELECT COUNT(*) FROM beta_signup
-                   WHERE (created_at AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS beta,
+                   WHERE {barbados_day('created_at')} = days.d), 0) AS beta,
         COALESCE((SELECT COUNT(*) FROM person
-                   WHERE {_MEMBER}
-                     AND (sign_up_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS person
+                   WHERE {_MEMBER} AND {_JOINED_ON} = days.d), 0) AS person
       FROM days
      ORDER BY days.d
 """
 
 Q_OVERVIEW_REFERRAL_CTR_7D = f"""
-    WITH days AS (
-        SELECT generate_series(
-            ({_BARBADOS_TODAY} - INTERVAL '6 days')::date,
-            {_BARBADOS_TODAY},
-            INTERVAL '1 day'
-        )::date AS d
+    WITH days AS ({barbados_days(7)}
     )
     SELECT
         days.d::text AS day,
         COALESCE((SELECT COUNT(*) FROM referral_link_click
-                   WHERE (created_at AT TIME ZONE 'America/Barbados')::date = days.d
+                   WHERE {barbados_day('created_at')} = days.d
                      AND user_agent_class != 'bot'), 0) AS clicks,
         COALESCE((SELECT COUNT(*) FROM referral
-                   WHERE (created_at AT TIME ZONE 'America/Barbados')::date = days.d), 0) AS signups
+                   WHERE {barbados_day('created_at')} = days.d), 0) AS signups
       FROM days
      ORDER BY days.d
 """
@@ -147,19 +111,14 @@ Q_OVERVIEW_REFERRAL_CTR_7D = f"""
 _PURCHASE_EVENTS = ('checkout.session.completed', 'customer.subscription.created')
 
 Q_OVERVIEW_PREMIUM_30D = f"""
-    WITH days AS (
-        SELECT generate_series(
-            ({_BARBADOS_TODAY} - INTERVAL '29 days')::date,
-            {_BARBADOS_TODAY},
-            INTERVAL '1 day'
-        )::date AS d
+    WITH days AS ({barbados_days(30)}
     )
     SELECT
         days.d::text AS day,
         COALESCE((
             SELECT COUNT(*) FROM entitlement_event
              WHERE event_type IN {_PURCHASE_EVENTS}
-               AND (received_at AT TIME ZONE 'America/Barbados')::date = days.d
+               AND {barbados_day('received_at')} = days.d
         ), 0) AS adds
       FROM days
      ORDER BY days.d

@@ -2,35 +2,40 @@
 
 Waitlist and beta rows are pre-account records and are counted as rows. A
 `person` on this tab is counted only when it is a member (members.py)."""
+from service.admin.queries.days import (
+    BARBADOS_TODAY, barbados_day, barbados_day_of_naive_utc, barbados_days)
 from service.admin.queries.members import member_sql
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
 
+# Calendar days are Barbados days, as on every tab (days.py). "This week" is
+# a duration and stays a plain 7 days back from now.
+
 # ---- WAITLIST -----------------------------------------------------------
 
-Q_WAITLIST_KPIS = """
+Q_WAITLIST_KPIS = f"""
     SELECT
         (SELECT COUNT(*) FROM waitlist_signup) AS total,
-        (SELECT COUNT(*) FROM waitlist_signup WHERE answers <> '{}'::jsonb) AS complete,
-        (SELECT COUNT(*) FROM waitlist_signup WHERE answers = '{}'::jsonb) AS empty,
-        (SELECT COUNT(*) FROM waitlist_signup WHERE created_at::date = CURRENT_DATE) AS today,
+        (SELECT COUNT(*) FROM waitlist_signup WHERE answers <> '{{}}'::jsonb) AS complete,
+        (SELECT COUNT(*) FROM waitlist_signup WHERE answers = '{{}}'::jsonb) AS empty,
+        (SELECT COUNT(*) FROM waitlist_signup
+          WHERE {barbados_day('created_at')} = {BARBADOS_TODAY}) AS today,
         (SELECT COUNT(*) FROM waitlist_signup WHERE created_at > NOW() - INTERVAL '7 days') AS this_week
 """
 
 # 30-day signup velocity, stacked across the 3 sources.
 Q_WAITLIST_VELOCITY_30D = f"""
-    WITH days AS (
-        SELECT generate_series(
-            (CURRENT_DATE - INTERVAL '29 days')::date,
-            CURRENT_DATE, INTERVAL '1 day'
-        )::date AS d
+    WITH days AS ({barbados_days(30)}
     )
     SELECT
         days.d::text AS day,
-        COALESCE((SELECT COUNT(*) FROM waitlist_signup WHERE created_at::date = days.d), 0) AS waitlist,
-        COALESCE((SELECT COUNT(*) FROM beta_signup WHERE created_at::date = days.d), 0) AS beta,
-        COALESCE((SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time::date = days.d), 0) AS person
+        COALESCE((SELECT COUNT(*) FROM waitlist_signup
+                   WHERE {barbados_day('created_at')} = days.d), 0) AS waitlist,
+        COALESCE((SELECT COUNT(*) FROM beta_signup
+                   WHERE {barbados_day('created_at')} = days.d), 0) AS beta,
+        COALESCE((SELECT COUNT(*) FROM person
+                   WHERE {_MEMBER} AND {barbados_day_of_naive_utc('sign_up_time')} = days.d), 0) AS person
       FROM days
      ORDER BY days.d
 """
@@ -125,19 +130,18 @@ Q_REFERRALS_KPIS = """
         (SELECT COUNT(*) FROM referral WHERE status = 'credited') AS credits_fired
 """
 
-# Click stream by UA class, 7d.
-Q_REFERRALS_CLICK_STREAM_7D = """
-    WITH days AS (
-        SELECT generate_series(
-            (CURRENT_DATE - INTERVAL '6 days')::date,
-            CURRENT_DATE, INTERVAL '1 day'
-        )::date AS d
+# Click stream by UA class, 7d. The same Barbados days as the Overview's
+# referral chart, which reads the same table.
+_CLICKED_ON = barbados_day('created_at')
+
+Q_REFERRALS_CLICK_STREAM_7D = f"""
+    WITH days AS ({barbados_days(7)}
     )
     SELECT
         days.d::text AS day,
-        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE created_at::date = days.d AND user_agent_class = 'mobile'), 0) AS mobile,
-        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE created_at::date = days.d AND user_agent_class = 'desktop'), 0) AS desktop,
-        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE created_at::date = days.d AND user_agent_class = 'bot'), 0) AS bot
+        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE {_CLICKED_ON} = days.d AND user_agent_class = 'mobile'), 0) AS mobile,
+        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE {_CLICKED_ON} = days.d AND user_agent_class = 'desktop'), 0) AS desktop,
+        COALESCE((SELECT COUNT(*) FROM referral_link_click WHERE {_CLICKED_ON} = days.d AND user_agent_class = 'bot'), 0) AS bot
       FROM days
      ORDER BY days.d
 """
