@@ -41,6 +41,38 @@ class ClubHttpArg:
 # pool, and its only override was a female-only intent option.)
 LOCAL_RADIUS_M = 160_000
 
+# The web age slider's range (ahavah-web src/components/app/filters-sheet.tsx).
+AGE_FLOOR = 18
+AGE_CEILING = 80
+
+_Q_SAVED_AGE_BAND = """
+SELECT min_age, max_age FROM search_preference_age WHERE person_id = %(person_id)s
+"""
+
+
+def saved_age_band(tx, person_id: int) -> Tuple[int | None, int | None]:
+    """The age band the deck uses when the client sends no age filter
+    (health review, 13 Oct 2026, finding 34).
+
+    `search_preference_age` is computed for every member at sign-up (own
+    age plus or minus 2 and a fifth of the years past 18, see
+    Q_FINISH_ONBOARDING) but search never read it, so the deck opened on
+    everyone from 18 to 80 and most decisions were passes outside it. Each
+    bound is clamped to the slider's range; an open (NULL) bound stays
+    open. Fails open like every other filter: no row, or a band whose
+    bounds cross, returns (None, None) and the member sees everyone."""
+    row = tx.execute(_Q_SAVED_AGE_BAND, dict(person_id=person_id)).fetchone()
+    if row is None:
+        return None, None
+
+    def clamp(age):
+        return None if age is None else min(max(int(age), AGE_FLOOR), AGE_CEILING)
+
+    lo, hi = clamp(row['min_age']), clamp(row['max_age'])
+    if lo is not None and hi is not None and lo > hi:
+        return None, None
+    return lo, hi
+
 
 def _uncached_search_results(
     tx,
@@ -184,6 +216,12 @@ def get_search(
         gender_preference = [row['gender_id'] for row in rows]
 
         if search_type == 'uncached-search':
+            # No age filter from the client, at either end: the member's
+            # saved band (finding 34). A bound the client sends is its own
+            # filter and the band is not mixed into it.
+            if age_min is None and age_max is None:
+                age_min, age_max = saved_age_band(tx, s.person_id)
+
             return _uncached_search_results(
                 tx=tx,
                 searcher_person_id=s.person_id,
