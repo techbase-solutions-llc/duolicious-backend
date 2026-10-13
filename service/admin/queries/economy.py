@@ -10,8 +10,16 @@ from service.admin.queries.members import member_sql
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
 
-# Ledger explorer: paginated, filter by reason + email + range.
-Q_LEDGER = """
+# Ledger explorer: paginated, filter by reason + email + period.
+#
+# The table and the KPIs above it share ONE period, `days`, where 0 means all
+# time (the default). Until 13 Oct 2026 the table was silently held to the
+# last 30 days while the KPIs summed every row: the footer read 44 entries
+# under totals built from 127, and filtering on "purchase" found nothing
+# although 5 purchases existed, all older than the window.
+_IN_PERIOD = "(%(days)s = 0 OR tl.created_at > NOW() - make_interval(days => %(days)s))"
+
+Q_LEDGER = f"""
     SELECT
         tl.created_at,
         tl.delta,
@@ -23,25 +31,29 @@ Q_LEDGER = """
       LEFT JOIN person p ON p.uuid = tl.person_id
      WHERE (%(reason)s = '' OR tl.reason = %(reason)s)
        AND (%(email)s = '' OR p.email ILIKE %(email_like)s)
-       AND tl.created_at > NOW() - (%(days)s || ' days')::INTERVAL
+       AND {_IN_PERIOD}
      ORDER BY tl.created_at DESC
      LIMIT %(limit)s OFFSET %(offset)s
 """
 
-Q_LEDGER_COUNT = """
+Q_LEDGER_COUNT = f"""
     SELECT COUNT(*) AS total
       FROM token_ledger tl
       LEFT JOIN person p ON p.uuid = tl.person_id
      WHERE (%(reason)s = '' OR tl.reason = %(reason)s)
        AND (%(email)s = '' OR p.email ILIKE %(email_like)s)
-       AND tl.created_at > NOW() - (%(days)s || ' days')::INTERVAL
+       AND {_IN_PERIOD}
 """
 
-# "Today net" is the Barbados day, as on every tab (days.py).
+# Credits and debits cover the table's period. Circulation is the balance of
+# every token ever issued, a stock rather than a flow, so it is all time
+# whatever the period. "Today net" is the Barbados day (days.py).
 Q_LEDGER_KPIS = f"""
     SELECT
-        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE delta > 0) AS total_credits,
-        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE delta < 0) AS total_debits,
+        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger tl
+          WHERE delta > 0 AND {_IN_PERIOD}) AS total_credits,
+        (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger tl
+          WHERE delta < 0 AND {_IN_PERIOD}) AS total_debits,
         (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger) AS circulation,
         (SELECT COALESCE(SUM(delta), 0)::int FROM token_ledger
           WHERE {barbados_day('created_at')} = {BARBADOS_TODAY}) AS today

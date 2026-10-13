@@ -22,11 +22,13 @@ def get_economy_ledger(s: t.SessionInfo):
     require_admin(s)
     reason = (request.args.get('reason') or '').strip()
     email = (request.args.get('email') or '').strip()
+    # `days` is the period for the table AND its KPIs; 0, the default, is all
+    # time. It used to default to 30 for the table alone (see Q_LEDGER).
     try:
         page = max(1, int(request.args.get('page', '1')))
-        days = int(request.args.get('days', '30'))
+        days = max(0, int(request.args.get('days', '0')))
     except ValueError:
-        page, days = 1, 30
+        page, days = 1, 0
     params = {
         'reason': reason,
         'email': email,
@@ -38,12 +40,13 @@ def get_economy_ledger(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         rows = [dict(r) for r in tx.execute(Q_LEDGER, params).fetchall()]
         total_row = tx.execute(Q_LEDGER_COUNT, params).fetchone()
-        kpis = tx.execute(Q_LEDGER_KPIS).fetchone() or {}
+        kpis = tx.execute(Q_LEDGER_KPIS, params).fetchone() or {}
     return {
         'rows': rows,
         'total': int(total_row['total']) if total_row else 0,
         'page': page,
         'page_size': _PAGE_SIZE,
+        'days': days,
         'kpis': dict(kpis),
     }
 

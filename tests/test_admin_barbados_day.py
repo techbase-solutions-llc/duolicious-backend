@@ -38,9 +38,9 @@ EARLY_EVENING = _AT.format(day=0, t='19:30')
 LATE_EVENING = _AT.format(day=0, t='22:00')
 
 
-def _one(sql: str) -> dict:
+def _one(sql: str, params: dict | None = None) -> dict:
     with api_tx('read committed') as tx:
-        return dict(tx.execute(sql).fetchone())
+        return dict(tx.execute(sql, params).fetchone())
 
 
 def _series(sql: str) -> list[dict]:
@@ -126,12 +126,12 @@ def test_waitlist_today_is_the_barbados_day(rows):
 
 def test_ledger_today_net_is_the_barbados_day(make_person):
     p = make_person(name='BarbadosLedger')
-    before = _one(Q_LEDGER_KPIS)['today']
+    before = _one(Q_LEDGER_KPIS, dict(days=0))['today']
     _ledger_at(p['uuid'], LAST_NIGHT, 100)
-    assert _one(Q_LEDGER_KPIS)['today'] == before, 'last night counted as today'
+    assert _one(Q_LEDGER_KPIS, dict(days=0))['today'] == before, 'last night counted as today'
     _ledger_at(p['uuid'], EARLY_EVENING, 7)
     _ledger_at(p['uuid'], LATE_EVENING, 5)
-    assert _one(Q_LEDGER_KPIS)['today'] == before + 12
+    assert _one(Q_LEDGER_KPIS, dict(days=0))['today'] == before + 12
 
 
 # ---------------------------------------------------------------------------
