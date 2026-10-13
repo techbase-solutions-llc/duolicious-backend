@@ -348,7 +348,11 @@ def finish_onboarding(client, monkeypatch):
 
     emails_used: list[str] = []
 
-    def _finish(body: dict | None = None, lead_source: str | None = None):
+    def _finish(body: dict | None = None, lead_source: str | None = None,
+                photo: str | None = 'pending'):
+        # `photo`: the moderation status of the one photo the onboardee
+        # uploaded (an upload starts 'pending'), or None for no photo. The
+        # server requires one to finish (finding 94).
         email = f'onboard-{uuid4()}@example.com'
         emails_used.append(email)
         token = secrets.token_hex(64)
@@ -362,6 +366,16 @@ def finish_onboarding(client, monkeypatch):
                         (SELECT id FROM gender WHERE name = 'Woman'), %(ls)s)
                 """,
                 dict(e=email, ls=lead_source))
+            if photo is not None:
+                tx.execute(
+                    """
+                    INSERT INTO onboardee_photo (email, position, uuid, blurhash,
+                                                 hash, moderation_status)
+                    VALUES (%(e)s, 1, %(u)s, 'blur', %(h)s,
+                            %(s)s::photo_moderation_status)
+                    """,
+                    dict(e=email, u=secrets.token_hex(32), h=secrets.token_hex(16),
+                         s=photo))
             tx.execute(
                 """
                 INSERT INTO duo_session (session_token_hash, email, otp, signed_in)

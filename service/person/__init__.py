@@ -840,18 +840,30 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
             """
             SELECT (name IS NULL)          AS missing_name,
                    (date_of_birth IS NULL) AS missing_dob,
-                   (gender_id IS NULL)     AS missing_gender
+                   (gender_id IS NULL)     AS missing_gender,
+                   -- Finding 94: only the browser asked for a photo. An
+                   -- upload is written 'pending' and stays so until
+                   -- graduation, so anyone who uploaded one passes, as
+                   -- the web's own Continue rule (approved or pending).
+                   NOT EXISTS (
+                       SELECT 1 FROM onboardee_photo op
+                        WHERE op.email = onboardee.email
+                          AND op.moderation_status IN ('approved', 'pending')
+                   )                       AS missing_photo
               FROM onboardee
              WHERE email = %(email)s
             """,
             dict(email=s.email),
         ).fetchone()
-    if row and (row['missing_name'] or row['missing_dob'] or row['missing_gender']):
+    if row and (row['missing_name'] or row['missing_dob'] or row['missing_gender']
+                or row['missing_photo']):
+        # Photo last: the web routes on the first field it recognises.
         missing = [
             f for f, m in (
                 ('name', row['missing_name']),
                 ('date_of_birth', row['missing_dob']),
                 ('gender', row['missing_gender']),
+                ('photo', row['missing_photo']),
             ) if m
         ]
         return 'Onboarding incomplete: ' + ', '.join(missing), 409
