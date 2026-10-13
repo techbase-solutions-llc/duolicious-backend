@@ -137,10 +137,18 @@ Q_BETA_FUNNEL = f"""
 
 # ---- REFERRALS ----------------------------------------------------------
 
-Q_REFERRALS_KPIS = """
+# A click is a person's: link previews and crawlers (user_agent_class
+# 'bot') are left out of every click count on this sub-tab but the
+# click-stream chart, which draws them as their own line. The Overview's
+# click-through leaves them out the same way. Until 13 Oct 2026 Total clicks
+# read 128, of which 48 were bots.
+_HUMAN_CLICK = "user_agent_class IS DISTINCT FROM 'bot'"
+
+Q_REFERRALS_KPIS = f"""
     SELECT
-        (SELECT COUNT(*) FROM referral_link_click) AS total_clicks,
-        (SELECT COUNT(DISTINCT code) FROM referral_link_click WHERE code IS NOT NULL) AS distinct_codes_clicked,
+        (SELECT COUNT(*) FROM referral_link_click WHERE {_HUMAN_CLICK}) AS total_clicks,
+        (SELECT COUNT(DISTINCT code) FROM referral_link_click
+          WHERE code IS NOT NULL AND {_HUMAN_CLICK}) AS distinct_codes_clicked,
         (SELECT COUNT(*) FROM referral) AS signups_via_link,
         (SELECT COUNT(*) FROM referral WHERE status = 'credited') AS credits_fired
 """
@@ -161,19 +169,65 @@ Q_REFERRALS_CLICK_STREAM_7D = f"""
      ORDER BY days.d
 """
 
-Q_REFERRALS_PER_INVITER = """
-    SELECT
-        bs.email AS inviter,
-        bs.referral_code,
-        COUNT(DISTINCT rc.id) AS clicks,
-        COUNT(DISTINCT r.id) AS signups,
-        COUNT(DISTINCT r.id) FILTER (WHERE r.status = 'credited') AS credited,
-        (COUNT(DISTINCT r.id) FILTER (WHERE r.status IN ('pending','graduated'))) * 5 AS pending_token_balance
-      FROM beta_signup bs
-      LEFT JOIN referral_link_click rc ON rc.inviter_email = bs.email
-      LEFT JOIN referral r ON r.inviter_email = bs.email
-     WHERE bs.referral_intro_sent_at IS NOT NULL
-     GROUP BY bs.email, bs.referral_code
-     ORDER BY clicks DESC NULLS LAST, signups DESC NULLS LAST
+# One row per person who holds an invite code: a member's own
+# (person.referral_code, every member since migration 0037) or a beta-era one
+# (beta_signup.referral_code), grouped by address, so a beta tester who became
+# a member is one row. The code shown is the member's, the link they share
+# now; clicks on either code count.
+#
+# Until 13 Oct 2026 (health review findings 7, 25 and 73) this was built from
+# beta_signup rows with the beta intro sent, joined to clicks on the address
+# the logger stored. The logger stored no address for a member's code, and
+# the referralintro cron's intro is in email_send_log, not beta_signup, so the
+# 32 members sent the intro since 1 Oct could never appear and 87 of 128
+# clicks were counted against nobody. Clicks are now counted on the code, so
+# the figure does not wait on the logger or its backfill.
+#
+# A holder is listed once the intro has gone to them (either kind) or their
+# link has a click or a sign-up. Clicks are well-formed and not bots, as the
+# logger only resolves well-formed codes. Staff accounts are listed like
+# anyone else: this is who shared a link, not a count of members.
+Q_REFERRALS_PER_INVITER = f"""
+    WITH code_holder AS (
+        SELECT lower(p.email) AS email, p.referral_code AS code, 0 AS beta,
+               EXISTS (SELECT 1 FROM email_send_log l
+                        WHERE l.person_id = p.id AND l.campaign = 'referral') AS intro_sent
+          FROM person p
+         WHERE p.referral_code IS NOT NULL
+        UNION ALL
+        SELECT lower(b.email), b.referral_code, 1,
+               b.referral_intro_sent_at IS NOT NULL
+          FROM beta_signup b
+         WHERE b.referral_code IS NOT NULL OR b.referral_intro_sent_at IS NOT NULL
+    ),
+    inviter AS (
+        SELECT email,
+               (array_agg(code ORDER BY beta))[1] AS referral_code,
+               array_agg(code) FILTER (WHERE code IS NOT NULL) AS codes,
+               bool_or(intro_sent) AS intro_sent
+          FROM code_holder
+         GROUP BY email
+    ),
+    counted AS (
+        SELECT i.email AS inviter,
+               i.referral_code,
+               i.intro_sent,
+               (SELECT COUNT(*) FROM referral_link_click rc
+                 WHERE rc.code = ANY(i.codes) AND rc.well_formed
+                   AND {_HUMAN_CLICK}) AS clicks,
+               (SELECT COUNT(*) FROM referral r
+                 WHERE lower(r.inviter_email) = i.email) AS signups,
+               (SELECT COUNT(*) FROM referral r
+                 WHERE lower(r.inviter_email) = i.email
+                   AND r.status = 'credited') AS credited,
+               (SELECT COUNT(*) FROM referral r
+                 WHERE lower(r.inviter_email) = i.email
+                   AND r.status IN ('pending','graduated')) * 5 AS pending_token_balance
+          FROM inviter i
+    )
+    SELECT inviter, referral_code, clicks, signups, credited, pending_token_balance
+      FROM counted
+     WHERE intro_sent OR clicks > 0 OR signups > 0
+     ORDER BY clicks DESC, signups DESC, inviter
      LIMIT 50
 """
