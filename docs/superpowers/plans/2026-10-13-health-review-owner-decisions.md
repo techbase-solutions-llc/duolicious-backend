@@ -138,3 +138,43 @@ The checklist has been emailed once since July, and the site has 3 guides. We su
 - Add one guide a month tied to the biblical calendar, for example preparing for Passover and Unleavened Bread as a single person.
 
 I need: a go. Each guide comes to you for voice before it is published.
+
+## Added after Wave 1 (13 Oct)
+
+### Staff accounts and the campaign emails (2, 4)
+
+Your 3 staff accounts (your member account, Admin and Techbase Admin) no longer count as members anywhere on the dashboard or in what members read. They still receive the Spotlight announcement, the weekly community email and the re-invite when those go out. The notifications email and the referral intro already leave staff out. We suggest keeping your member account on the weekly email, so you see exactly what members see, and leaving the other two off.
+
+I need: yes, or a different split.
+
+### The retired sign-up host
+
+The workflow that copied every release to the second Vercel project (signup.ahavah.app) was removed in Wave 1. That host sits behind Vercel's own sign-in wall, so no member could reach it, and each release was a build nobody used. The project and its domain still exist in Vercel.
+
+I need: delete the `ahavah-signup` project in the Vercel dashboard when convenient, or tell me to leave it.
+
+## Added during Wave 2 (13 Oct)
+
+### How a new member found Ahavah, and the privacy page (42)
+
+From Wave 2, when someone finishes sign-up, the app sends the link that brought them (the campaign tags on it, the site that linked to them and any invite code), and later their answer to "How did you hear about Ahavah?". This is how the dashboard will stop showing 54 of 58 members as "unknown". Neither privacy page mentions it today. We suggest adding this line to both:
+
+> When you join, we note how you found Ahavah: the website or campaign link that brought you, any invite code you used and your answer if you tell us how you heard about us. We use this only to see which outreach works. Other members never see it.
+
+The web part is built and held. It goes live with the API part, in the same release, after you confirm the wording.
+
+I need: yes to the line, or your changes.
+
+### Three chat messages members can see (41)
+
+When a message is not sent, the chat says why. Three of those reasons said the wrong thing, and Wave 2 corrects them. After Wave 2 a member inside a match can no longer meet the second and third; they remain for the cases where they still apply. Changed in-app words wait for your confirmation.
+
+| When | Today | Proposed |
+|---|---|---|
+| Not matched | You can message each other once you match | Not sent. You can only message people you are matched with |
+| Daily limit | You are sending too quickly. Wait a moment and try again | Not sent. You have reached the 24-hour limit on starting new conversations. Try again later |
+| Same opening words | You already sent this exact message | Not sent. These exact words were used to start a conversation in the past 7 days. Try your own words |
+
+The short line under each message on a phone changes to match: "(not sent: you are not matched)", "(24-hour limit on new conversations reached)" and "(these exact words were used recently, try your own)".
+
+I need: yes, or your changes. Until then these 3 changes stay out of the release.
