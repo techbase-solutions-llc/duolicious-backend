@@ -44,6 +44,15 @@ _KNOWN_HAND_ROLLED = {
 # Staff-only mail, outside the member brand shell by design.
 _STAFF_ONLY = {'feedback.py', 'waitlist_admin.py'}
 
+# A plain personal note the owner asked for in place of the shell, named one
+# by one with the reason. It may skip render() and build its own document;
+# the headline check still applies to it.
+_PLAIN_BY_OWNER_REQUEST = {
+    'warm_leads_note.py':
+        'his note to the warm leads must read as a personal email, not a campaign '
+        '(health review, 13 Oct 2026, finding 48)',
+}
+
 # Large type that is DATA, not design: the six sign-in code digits change with
 # every email, so they cannot be an image. Named one by one, with the reason,
 # so the exception cannot quietly widen.
@@ -134,6 +143,11 @@ def test_the_big_type_allowance_names_files_that_exist():
         assert (EMAILS_DIR.parent / rel).is_file(), f'{rel} is allowed big type but is gone'
 
 
+def test_the_plain_note_allowance_names_files_that_exist():
+    for name in _PLAIN_BY_OWNER_REQUEST:
+        assert (EMAILS_DIR / name).is_file(), f'{name} is allowed off the shell but is gone'
+
+
 def test_no_new_template_hand_rolls_a_headline():
     offenders = []
     for path in _template_files():
@@ -159,7 +173,7 @@ def test_every_template_renders_through_the_shell():
     builds its own document is not."""
     offenders = []
     for path in _template_files():
-        if path.name in _STAFF_ONLY:
+        if path.name in _STAFF_ONLY or path.name in _PLAIN_BY_OWNER_REQUEST:
             continue
         text = path.read_text(encoding='utf-8')
         if '<html' in text.lower():

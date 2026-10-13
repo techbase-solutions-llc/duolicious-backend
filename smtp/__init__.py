@@ -275,6 +275,8 @@ class Smtp:
         from_addr: str | None = None,
         reply_to: str | None = None,
         list_unsubscribe: str | None = None,
+        from_name: str | None = None,
+        text_body: str | None = None,
     ) -> str | None:
         # Phase W: branch to Resend HTTPS API when DUO_USE_RESEND_API=true.
         # See module docstring for context (DO blocks outbound SMTP ports).
@@ -286,6 +288,8 @@ class Smtp:
                 from_addr=from_addr,
                 reply_to=reply_to,
                 list_unsubscribe=list_unsubscribe,
+                from_name=from_name,
+                text_body=text_body,
             )
 
         if self._smtp is None:
@@ -302,6 +306,10 @@ class Smtp:
         body, inline = _prepare_inline_body(body)
 
         alternative = MIMEMultipart("alternative")
+        # The plain part goes first: in multipart/alternative the last part
+        # is the one a capable client prefers, so html stays the default.
+        if text_body:
+            alternative.attach(MIMEText(text_body, "plain"))
         alternative.attach(MIMEText(body, "html"))
 
         # No cid in the body means no wrapper: the message is exactly the
@@ -325,9 +333,11 @@ class Smtp:
                 # point every image at its url so none of them comes out dead.
                 print(f"Inline email assets skipped: {exc}")
                 msg = MIMEMultipart("alternative")
+                if text_body:
+                    msg.attach(MIMEText(text_body, "plain"))
                 msg.attach(MIMEText(_restore_remote_srcs(body), "html"))
 
-        msg["From"] = f"{PRODUCT_NAME} <{_from_addr}>"
+        msg["From"] = f"{from_name or PRODUCT_NAME} <{_from_addr}>"
         msg["To"] = to_addr
         msg["Subject"] = subject
         if reply_to:
@@ -353,6 +363,8 @@ class Smtp:
         from_addr: str | None = None,
         reply_to: str | None = None,
         list_unsubscribe: str | None = None,
+        from_name: str | None = None,
+        text_body: str | None = None,
     ) -> str | None:
         """Send via Resend's HTTPS API (port 443) instead of SMTP.
 
@@ -376,13 +388,15 @@ class Smtp:
         # the html that ships never holds a cid with no attachment behind it.
         body, inline = _prepare_inline_body(body)
         payload: dict = {
-            "from": f"{PRODUCT_NAME} <{_from_addr}>",
+            "from": f"{from_name or PRODUCT_NAME} <{_from_addr}>",
             "to": [to_addr],
             "subject": subject,
             "html": body,
         }
         if reply_to:
             payload["reply_to"] = reply_to
+        if text_body:
+            payload["text"] = text_body
         if list_unsubscribe:
             payload["headers"] = {
                 "List-Unsubscribe": list_unsubscribe,
@@ -450,6 +464,8 @@ class Smtp:
         from_addr: str | None = None,
         reply_to: str | None = None,
         list_unsubscribe: str | None = None,
+        from_name: str | None = None,
+        text_body: str | None = None,
         retries: int | None = None,
         backoff: int | None = None,
     ) -> str | None:
@@ -463,6 +479,9 @@ class Smtp:
           list_unsubscribe: RFC 8058 one-click unsubscribe — required by
                             Gmail/Yahoo for bulk senders. Format:
                             "<mailto:unsub@...>, <https://...?token=...>"
+          from_name:        the display name on From (default PRODUCT_NAME),
+                            for a note sent personally by someone.
+          text_body:        a text/plain alternative to the html.
         """
         max_attempts: int = 1 + (2 if retries is None else retries)
 
@@ -476,6 +495,8 @@ class Smtp:
                         from_addr=from_addr,
                         reply_to=reply_to,
                         list_unsubscribe=list_unsubscribe,
+                        from_name=from_name,
+                        text_body=text_body,
                     )
                 return message_id  # Success (Resend message id, or None for SMTP)
             except Exception:
