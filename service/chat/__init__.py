@@ -280,6 +280,38 @@ async def fetch_is_intro(from_id: int, to_id: int) -> bool:
 
     return not bool(row)
 
+async def first_message_refusal(
+    from_id: int,
+    message: Message,
+    is_intro: bool,
+    is_matched: bool,
+) -> list[str]:
+    """The cold-contact filters inherited from Duolicious, for a first
+    message to someone who has not written back (an intro): a daily cap
+    for unverified members, and wording no member has used as an opener in
+    the last 7 days. Returns the refusal stanzas, or [] to send.
+
+    A matched pair skips both (health review, 13 Oct 2026, finding 41).
+    Both people have already said yes, and chat is open to matched pairs
+    only, so the filters could only refuse a hello: two members who both
+    open with "Shalom" in the same week, or a member greeting a busy day's
+    matches. An unmatched first message keeps both filters and their
+    reasons, for the day intros come back."""
+    if not is_intro or is_matched:
+        return []
+
+    maybe_rate_limit = await maybe_fetch_rate_limit(
+            from_id=from_id,
+            stanza_id=message.stanza_id)
+
+    if maybe_rate_limit:
+        return maybe_rate_limit
+
+    if not await is_unique_message(message):
+        return [f'<duo_message_not_unique id="{message.stanza_id}"/>']
+
+    return []
+
 @AsyncLruCache(ttl=5)  # 5 seconds
 async def fetch_is_trusted_account(from_id: int) -> bool:
     async with api_tx('read committed') as tx:
@@ -421,7 +453,8 @@ async def process_text(
     # Consequence, deliberately accepted: the intro path is dead while
     # this holds. The spam / rate-limit / uniqueness machinery below is
     # retained untouched so re-enabling intros is a one-line revert.
-    if not await fetch_is_matched(from_id=from_id, to_id=to_id):
+    is_matched = await fetch_is_matched(from_id=from_id, to_id=to_id)
+    if not is_matched:
         return await redis_publish_many(connection_uuid, [
             f'<duo_message_blocked id="{stanza_id}" reason="not-matched"/>'
         ])
@@ -472,18 +505,14 @@ async def process_text(
             f'<duo_message_blocked id="{stanza_id}" reason="spam"/>'
         ])
 
-    if is_intro:
-        maybe_rate_limit = await maybe_fetch_rate_limit(
-                from_id=from_id,
-                stanza_id=stanza_id)
+    maybe_refusal = await first_message_refusal(
+            from_id=from_id,
+            message=maybe_message,
+            is_intro=is_intro,
+            is_matched=is_matched)
 
-        if maybe_rate_limit:
-            return await redis_publish_many(connection_uuid, maybe_rate_limit)
-
-    if is_intro and not await is_unique_message(maybe_message):
-        return await redis_publish_many(connection_uuid, [
-            f'<duo_message_not_unique id="{stanza_id}"/>'
-        ])
+    if maybe_refusal:
+        return await redis_publish_many(connection_uuid, maybe_refusal)
 
     async def store_audio_and_notify() -> None:
         if \
