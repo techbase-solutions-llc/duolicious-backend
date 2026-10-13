@@ -235,7 +235,7 @@ WITH subject_person_id AS (
         %(reported)s,
         %(report_reason)s
     )
-    -- Re-passing must RESTART the 7-day suppression window (0036).
+    -- Re-passing must RESTART the pass window (0036; 30 days since 0059).
     -- The old ON CONFLICT DO NOTHING left created_at at its original
     -- value, so once a pass was 7 days old the profile recycled into
     -- the deck EVERY session and re-passing was a silent no-op - the

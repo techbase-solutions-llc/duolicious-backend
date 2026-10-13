@@ -205,7 +205,10 @@ def test_views_never_leaks_a_private_profile(make_person):
     assert private['uuid'] not in you_visited, 'private profile leaked into You viewed'
 
 
-# --- Rule 5: re-passing restarts the 7-day window (2026-08-11 fix) --------
+# --- Rule 5: re-passing restarts the pass window (2026-08-11 fix) ---------
+#
+# The window was 7 days (0036) and is 30 days since migration 0059
+# (health review finding 40, 13 Oct 2026).
 #
 # These three tests run the REAL upsert (Q_INSERT_SKIPPED), not the _skip
 # helper above, because the bug they pin lived in that SQL's conflict
@@ -237,7 +240,7 @@ def _backdate_pass(tx, subject: int, obj: int, days: int) -> None:
     )
 
 
-def test_repass_restarts_the_seven_day_window(make_person):
+def test_repass_restarts_the_pass_window(make_person):
     searcher = make_person(name='Reuven', gender='Man')
     prospect = make_person(name='Tova', gender='Woman')
 
@@ -251,13 +254,13 @@ def test_repass_restarts_the_seven_day_window(make_person):
         _real_skip(tx, searcher['uuid'], prospect['uuid'])
         assert suppressed(), 'fresh pass must suppress'
 
-        _backdate_pass(tx, searcher['id'], prospect['id'], days=8)
+        _backdate_pass(tx, searcher['id'], prospect['id'], days=31)
         assert not suppressed(), 'expired pass must recycle the profile'
 
         # The fix under test: a second pass must RESTART the window.
         _real_skip(tx, searcher['uuid'], prospect['uuid'])
         assert suppressed(), \
-            're-pass must restart the 7-day window (was a silent no-op)'
+            're-pass must restart the pass window (was a silent no-op)'
 
         age = tx.execute(
             """
@@ -268,6 +271,31 @@ def test_repass_restarts_the_seven_day_window(make_person):
             dict(s=searcher['id'], o=prospect['id']),
         ).fetchone()['fresh']
         assert age, 're-pass must refresh created_at'
+
+
+def test_a_pass_hides_them_for_30_days(make_person):
+    """Finding 40: on a pool this small a 7 day window put the median
+    woman's whole deck back every week. A pass now holds for 30 days."""
+    searcher = make_person(name='Ezra', gender='Man')
+    prospect = make_person(name='Galit', gender='Woman')
+
+    with api_tx() as tx:
+        def suppressed():
+            return tx.execute(
+                'SELECT is_deck_suppressed(%(a)s, %(b)s) AS s',
+                dict(a=searcher['id'], b=prospect['id']),
+            ).fetchone()['s']
+
+        _real_skip(tx, searcher['uuid'], prospect['uuid'])
+
+        _backdate_pass(tx, searcher['id'], prospect['id'], days=8)
+        assert suppressed(), 'a pass 8 days old must still hide them'
+
+        _backdate_pass(tx, searcher['id'], prospect['id'], days=29)
+        assert suppressed(), 'a pass 29 days old must still hide them'
+
+        _backdate_pass(tx, searcher['id'], prospect['id'], days=31)
+        assert not suppressed(), 'a pass 31 days old must let them back'
 
 
 def test_repass_never_clears_a_report(make_person):
