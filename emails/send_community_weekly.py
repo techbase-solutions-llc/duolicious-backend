@@ -23,7 +23,7 @@ CAP_DAYS = 6
 
 # Same suppression + scope-unsubscribe filters run_campaign() applies
 # per-row (service/campaigns/runner.py), baked in here too so
-# recipient_count() (the admin index number) never overstates what a real
+# recipient_count() never overstates what a real
 # run would send.
 _Q_RECIPIENTS = f"""
     SELECT p.id AS person_id, p.email, p.name FROM person p

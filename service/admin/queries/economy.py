@@ -1,4 +1,4 @@
-"""SQL for the Economy tab — token ledger, entitlements, subscriptions.
+"""SQL for the Economy tab: token ledger, entitlements, subscriptions.
 
 Entitlement holders and Stripe customers are members only (members.py):
 on 13 Oct 2026 the tab read 60 Premium holders for 58 members, and 2 of its

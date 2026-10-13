@@ -69,16 +69,20 @@ _Q_LAST_SENT = """
 # (the drain writes the send log on acceptance). `clicks` counts clicks on
 # the /s/ links that run's own mail carried, found in the outbox payload,
 # with bots left out as service.growth.queries.post_stats leaves them out.
-# A campaign mints its CTA links under its own key as the link kind, which
-# narrows the scan. `links` is 0 when the mail carried no tracked link
-# (e1's confirm link, or a run from before the outbox), and then there is
-# no click figure to give.
+# A campaign mints its CTA links under its own key as the link kind and with
+# the recipient as the link's subject (each module's build_for), so each
+# outbox row is only searched for its own member's few links. Matching on
+# kind alone searched every link the campaign ever minted in every mail of
+# the run, about 53 more e2 links a week. `links` is 0 when the mail carried
+# no tracked link (e1's confirm link, or a run from before the outbox), and
+# then there is no click figure to give.
 _Q_RUN_RESULTS = """
     WITH run_links AS (
         SELECT DISTINCT l.key
           FROM email_outbox o
           JOIN campaign_link l
             ON l.kind = o.campaign
+           AND l.subject_person_id = o.person_id
            AND strpos(o.payload->>'html', '/s/' || l.key) > 0
          WHERE o.campaign = %(c)s AND o.campaign_id = %(cid)s
     )
@@ -89,10 +93,13 @@ _Q_RUN_RESULTS = """
              WHERE c.ua_class <> 'bot') AS clicks
 """
 
-# The id a send pressed now would use, where the campaign has one: e2's is
-# the week's (the cron, the CLI and the Send button all compute it), so a
-# member who already has this week's e2 would be skipped as a repeat even
-# once the cap has passed. Every other campaign gets a fresh id per run.
+# The id a send pressed now would use. The Send button keys all four
+# campaigns by ISO week (ahavah-admin src/lib/growth-api.ts campaignId), and
+# the e2 cron and CLI compute the same id for e2, so a member who already has
+# this week's id is skipped as a repeat. Only e2 needs that check here: its 6
+# day cap is shorter than an ISO week, so a member can be past the cap and
+# still hold this week's e2. The 7 day cap on e1, e3 and e6 already covers
+# any send in the same ISO week, so for them no id gives the same figure.
 _NEXT_RUN_ID = {'e2': lambda now: week_campaign_id(now, 'e2')}
 
 

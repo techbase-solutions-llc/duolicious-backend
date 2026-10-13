@@ -106,8 +106,10 @@ def recipients(offline_days: int | None = None, ignore_resend: bool = False) -> 
 
 
 def recipient_count() -> int:
-    """Matches recipients() exactly, including the "somebody joined" rule, so
-    the admin index can never promise a number a real send would not hit."""
+    """Matches recipients() exactly, including the "somebody joined" rule.
+    The Growth index stopped calling this on 13 Oct 2026 (it now reports
+    eligible_now and would_reach_now); kept for the CLI and the tests that
+    prove the cohort and its count agree."""
     return len(recipients())
 
 

@@ -16,7 +16,7 @@ UNSUB_SCOPE = 'notifications'
 
 # The same suppression + scope-unsubscribe filters run_campaign() applies
 # per-row (see service/campaigns/runner.py) are baked into these queries too,
-# so recipient_count() (the admin index number) and recipients() (what a run
+# so recipient_count() and recipients() (what a run
 # actually sends) can never drift from what a real send would do.
 _Q_RECIPIENTS = f"""
     SELECT p.id AS person_id, p.email, p.name FROM person p
@@ -58,8 +58,9 @@ def recipients() -> list[dict]:
         return [dict(r) for r in tx.execute(_Q_RECIPIENTS, dict(ex=_excluded(), sup=suppressed_sql_pattern())).fetchall()]
 
 def recipient_count() -> int:
-    """How many rows recipients() would return, without materialising them:
-    the admin dashboard only needs the number. Opens its own transaction, so
+    """How many rows recipients() would return, without materialising them.
+    The Growth index stopped calling this on 13 Oct 2026; kept for the CLI and
+    the tests that prove the cohort and its count agree. Opens its own transaction, so
     never call it while holding one (the api connection lock is not
     reentrant)."""
     with api_tx('read committed') as tx:

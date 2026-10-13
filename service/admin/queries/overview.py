@@ -181,7 +181,12 @@ Q_OVERVIEW_RECENT_ACTIVITY = f"""
     ) sub_ref
     UNION ALL SELECT * FROM (
         SELECT 'admin_action' AS kind, actor_email AS subject, action AS object,
-               created_at FROM admin_audit_log ORDER BY created_at DESC LIMIT 10
+               created_at FROM admin_audit_log
+         -- Scheduled and command-line sends write audit rows as 'cron' and
+         -- 'cli' (health review, finding 20). They belong on the Audit tab,
+         -- not in a feed of what people did.
+         WHERE actor_email NOT IN ('cron', 'cli')
+         ORDER BY created_at DESC LIMIT 10
     ) sub_admin
     ORDER BY created_at DESC LIMIT 20
 """

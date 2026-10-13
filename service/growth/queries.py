@@ -64,12 +64,18 @@ _Q_STATS_BY_GENDER = f"""
              EXISTS (SELECT 1 FROM photo ph
                       WHERE ph.person_id = p.id
                         AND ph.moderation_status = 'approved') AS has_photo,
-             (EXISTS (SELECT 1 FROM liked l
+             -- The other end must be a member too: a like or a message to a
+             -- staff or test account is not a member acting (the rule the
+             -- match tiles below already use).
+             (EXISTS (SELECT 1 FROM liked l JOIN person t ON t.id = l.liked_id
                        WHERE l.liker_id = p.id
-                         AND l.created_at > NOW() - interval '14 days')
+                         AND l.created_at > NOW() - interval '14 days'
+                         AND NOT {_not_member_or_test('t')})
               OR EXISTS (SELECT 1 FROM mam_message m
+                          JOIN person t ON t.uuid::text = split_part(m.remote_bare_jid, '@', 1)
                           WHERE m.person_id = p.id AND m.direction = 'O'
-                            AND to_timestamp(m.id / 1000000 / 256) > NOW() - interval '14 days')
+                            AND to_timestamp(m.id / 1000000 / 256) > NOW() - interval '14 days'
+                            AND NOT {_not_member_or_test('t')})
              ) AS liked_or_messaged_14d,
              {_last_action_sql('p.id')} AS last_action
         FROM person p JOIN gender g ON g.id = p.gender_id
