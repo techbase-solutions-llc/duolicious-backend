@@ -18,14 +18,23 @@ from service.config import WEB_BASE_URL
 # abused as an open redirect (see make_campaign_link's docstring).
 ALLOWED_EXTERNAL_HOSTS = ('www.facebook.com', 'www.instagram.com')
 
-_Q_SAME_RUN = """
-    SELECT 1 FROM email_send_log
-     WHERE person_id = %(pid)s AND campaign = %(c)s AND campaign_id = %(cid)s
-"""
-_Q_RECENT = """
-    SELECT 1 FROM email_send_log
-     WHERE person_id = %(pid)s AND sent_at > NOW() - make_interval(days => %(d)s)
-     LIMIT 1
+# The two send rules, each written once and correlated to `person_ref` (a
+# bind or a column), so `can_send` and `count_sendable` cannot drift apart.
+def _same_run_sql(person_ref: str) -> str:
+    return f"""SELECT 1 FROM email_send_log
+     WHERE person_id = {person_ref} AND campaign = %(c)s AND campaign_id = %(cid)s"""
+
+def _recent_send_sql(person_ref: str) -> str:
+    return f"""SELECT 1 FROM email_send_log
+     WHERE person_id = {person_ref} AND sent_at > NOW() - make_interval(days => %(d)s)"""
+
+_Q_SAME_RUN = _same_run_sql('%(pid)s')
+_Q_RECENT = f"{_recent_send_sql('%(pid)s')} LIMIT 1"
+
+_Q_COUNT_SENDABLE = f"""
+    SELECT count(*) AS n FROM unnest(%(ids)s::int[]) AS r(pid)
+     WHERE NOT EXISTS ({_same_run_sql('r.pid')})
+       AND NOT EXISTS ({_recent_send_sql('r.pid')})
 """
 
 def can_send(tx, person_id: int, campaign: str, campaign_id: str, *,
@@ -35,6 +44,16 @@ def can_send(tx, person_id: int, campaign: str, campaign_id: str, *,
     if exempt:
         return True
     return tx.execute(_Q_RECENT, dict(pid=person_id, d=cap_days)).fetchone() is None
+
+def count_sendable(tx, person_ids: list[int], campaign: str, campaign_id: Optional[str], *,
+                   cap_days: int = 7) -> int:
+    """How many of `person_ids` `can_send` would pass right now, in one
+    query: the admin's "would reach now" (health review, 13 Oct 2026; the
+    Growth tab used to show the cohort before the cap, 59 for an e2 send
+    that would have queued nobody). `campaign_id` is the id a send pressed
+    now would use, or None for a fresh one, which no member has yet."""
+    return int(tx.execute(_Q_COUNT_SENDABLE, dict(
+        ids=list(person_ids), c=campaign, cid=campaign_id, d=cap_days)).fetchone()['n'])
 
 # Footer unsubscribes are per-scope, and each scope is stamped on a
 # different row (see service.unsubscribe._Q_UNSUB). A campaign must honour

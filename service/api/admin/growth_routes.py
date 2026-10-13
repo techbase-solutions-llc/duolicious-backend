@@ -10,8 +10,10 @@ from flask import abort, jsonify, request
 from database import api_tx
 from service.admin import require_admin, record_audit
 from service.api.decorators import aget, apost
+from service.campaigns import count_sendable
 from service.campaigns.runner import SEND_AUDIT_ACTION
 from service.campaigns.schedule import COMMUNITY_WEEKLY_ENABLED, next_send_at
+from service.campaigns.weekid import week_campaign_id
 from service.growth.queries import growth_stats
 import emails.send_spotlight_announcement as e1
 import emails.send_community_weekly as e2
@@ -58,26 +60,95 @@ def _schedule_for(campaign: str, now: datetime, last_sent_at: datetime | None) -
 _Q_LAST_SENT = """
     SELECT campaign, max(sent_at) AS at,
            (array_agg(campaign_id ORDER BY sent_at DESC))[1] AS cid,
-           count(*) AS n
+           count(*) AS n,
+           count(DISTINCT person_id) AS people
       FROM email_send_log GROUP BY campaign
 """
 
+# What one run achieved. `reached` is the members its mail was accepted for
+# (the drain writes the send log on acceptance). `clicks` counts clicks on
+# the /s/ links that run's own mail carried, found in the outbox payload,
+# with bots left out as service.growth.queries.post_stats leaves them out.
+# A campaign mints its CTA links under its own key as the link kind, which
+# narrows the scan. `links` is 0 when the mail carried no tracked link
+# (e1's confirm link, or a run from before the outbox), and then there is
+# no click figure to give.
+_Q_RUN_RESULTS = """
+    WITH run_links AS (
+        SELECT DISTINCT l.key
+          FROM email_outbox o
+          JOIN campaign_link l
+            ON l.kind = o.campaign
+           AND strpos(o.payload->>'html', '/s/' || l.key) > 0
+         WHERE o.campaign = %(c)s AND o.campaign_id = %(cid)s
+    )
+    SELECT (SELECT count(*) FROM email_send_log
+             WHERE campaign = %(c)s AND campaign_id = %(cid)s) AS reached,
+           (SELECT count(*) FROM run_links) AS links,
+           (SELECT count(*) FROM campaign_click c JOIN run_links r ON r.key = c.link_key
+             WHERE c.ua_class <> 'bot') AS clicks
+"""
+
+# The id a send pressed now would use, where the campaign has one: e2's is
+# the week's (the cron, the CLI and the Send button all compute it), so a
+# member who already has this week's e2 would be skipped as a repeat even
+# once the cap has passed. Every other campaign gets a fresh id per run.
+_NEXT_RUN_ID = {'e2': lambda now: week_campaign_id(now, 'e2')}
+
+
+def _run_results(tx, campaign: str, campaign_id: str | None) -> tuple[int | None, int | None]:
+    if not campaign_id:
+        return None, None
+    r = tx.execute(_Q_RUN_RESULTS, dict(c=campaign, cid=campaign_id)).fetchone()
+    return int(r['reached']), (int(r['clicks']) if r['links'] else None)
+
+
 @aget('/admin/growth/emails')
 def get_admin_growth_emails(s: t.SessionInfo):
+    """One row per campaign (health review, 13 Oct 2026, finding 3).
+
+    For the admin-run campaigns (e1, e2, e3, e6):
+      eligible_now      the cohort a send is aimed at, unsubscribed and
+                        suppressed addresses already out, before the cap
+      would_reach_now   who a send pressed now would queue: eligible_now
+                        less members inside the campaign's frequency cap
+                        (or already sent this run's id)
+      last_run_reached  members the last run's mail was accepted for
+      last_run_clicks   clicks on the links in that run's mail, bots out;
+                        null when the mail carried no tracked link
+      recipients        kept equal to eligible_now for the admin build that
+                        reads it, until the redesigned table lands
+
+    For the rows the platform sends one member at a time (e4, e5, welcome,
+    referral) there is no cohort and no run, so those four are null;
+    `recipients` stays every row ever sent and `people_reached` counts
+    distinct people. `people_reached` is on every row."""
     require_admin(s)
     with api_tx('read committed') as tx:
         last_sent = {r['campaign']: r for r in tx.execute(_Q_LAST_SENT).fetchall()}
-    # recipient_count() opens its own transaction per campaign, so it must be
-    # called OUTSIDE the block above: the api connection lock is not
-    # reentrant and nesting would deadlock the request.
+    # recipients() opens its own transaction per campaign, so it must be
+    # called OUTSIDE any block here: the api connection lock is not
+    # reentrant and nesting would deadlock the request. The materialised
+    # list is what lets would_reach_now apply the runner's own rules to
+    # exactly the people a send would be handed.
     now = datetime.now(timezone.utc)
+    cohorts = {key: [r['person_id'] for r in mod.recipients()] for key, mod in _CAMPAIGNS.items()}
     out = []
-    for key, mod in _CAMPAIGNS.items():
-        last = last_sent.get(key)
-        out.append(dict(campaign=key, recipients=mod.recipient_count(),
-                        last_sent_at=last['at'].isoformat() if last and last['at'] else None,
-                        last_campaign_id=last['cid'] if last else None, system=False,
-                        schedule=_schedule_for(key, now, last['at'] if last else None)))
+    with api_tx('read committed') as tx:
+        for key, mod in _CAMPAIGNS.items():
+            last = last_sent.get(key)
+            ids = cohorts[key]
+            next_id = _NEXT_RUN_ID.get(key)
+            would_reach = count_sendable(tx, ids, key, next_id(now) if next_id else None,
+                                         cap_days=getattr(mod, 'CAP_DAYS', 7))
+            reached, clicks = _run_results(tx, key, last['cid'] if last else None)
+            out.append(dict(campaign=key, recipients=len(ids),
+                            eligible_now=len(ids), would_reach_now=would_reach,
+                            last_run_reached=reached, last_run_clicks=clicks,
+                            people_reached=int(last['people']) if last else 0,
+                            last_sent_at=last['at'].isoformat() if last and last['at'] else None,
+                            last_campaign_id=last['cid'] if last else None, system=False,
+                            schedule=_schedule_for(key, now, last['at'] if last else None)))
     # e4 (the member invite) and e5 (the card-went-live receipt) are sent by
     # the platform itself, not run from this admin screen: they have no
     # recipients()/recipient_count() module to ask, so their count comes
@@ -91,6 +162,9 @@ def get_admin_growth_emails(s: t.SessionInfo):
     for key in ('e4', 'e5', 'welcome', 'referral'):
         last = last_sent.get(key)
         out.append(dict(campaign=key, recipients=int(last['n']) if last else 0,
+                        eligible_now=None, would_reach_now=None,
+                        last_run_reached=None, last_run_clicks=None,
+                        people_reached=int(last['people']) if last else 0,
                         last_sent_at=last['at'].isoformat() if last and last['at'] else None,
                         last_campaign_id=last['cid'] if last else None, system=True,
                         schedule=None))
