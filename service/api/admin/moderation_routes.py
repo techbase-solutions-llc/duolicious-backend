@@ -31,9 +31,17 @@ def approve_photo_admin(s: t.SessionInfo, photo_uuid: str):
         row = tx.execute(
             """
             UPDATE photo
-               SET moderation_status = 'approved', moderated_at = NOW()
+               SET moderation_status = 'approved', moderated_at = NOW(),
+                   -- A person looked at a photo the detector saw no face
+                   -- in and accepted it (finding 97). Kept on the photo so
+                   -- the face rule never holds it again and the photo gate
+                   -- counts it as showing the member.
+                   face_confirmed_at = CASE
+                       WHEN face_count = 0 THEN COALESCE(face_confirmed_at, NOW())
+                       ELSE face_confirmed_at
+                   END
              WHERE uuid = %(uuid)s
-            RETURNING person_id
+            RETURNING person_id, face_confirmed_at IS NOT NULL AS face_confirmed
             """,
             dict(uuid=photo_uuid),
         ).fetchone()
@@ -42,7 +50,8 @@ def approve_photo_admin(s: t.SessionInfo, photo_uuid: str):
         record_audit(
             tx, s, 'approve_photo',
             target_email=None, target_uuid=None,
-            metadata={'photo_uuid': photo_uuid},
+            metadata={'photo_uuid': photo_uuid,
+                      'face_confirmed': bool(row['face_confirmed'])},
         )
     return {'ok': True}
 

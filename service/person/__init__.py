@@ -15,6 +15,7 @@ from service import entitlements
 from service import metapixel
 from service.person.sql import *
 from service.search.sql import *
+from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
 from commonsql import *
 from service.person.template import otp_template
 from service.referrals import (
@@ -1523,6 +1524,9 @@ def delete_profile_info(req: t.DeleteProfileInfo, s: t.SessionInfo):
         with api_tx() as tx:
             tx.executemany(Q_DELETE_PROFILE_INFO_PHOTO, files_params)
             tx.execute(Q_UPDATE_VERIFICATION_LEVEL, files_params[0])
+            # The next photo may now be the main one (finding 98).
+            tx.execute(Q_RECHECK_MAIN_PHOTO_FACE,
+                       dict(person_ids=[s.person_id]))
 
     if audio_files_params:
         with api_tx() as tx:
@@ -2233,6 +2237,10 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
             with api_tx() as tx:
                 if q1: tx.execute(q1, params)
                 if q2: tx.execute(q2, params)
+                if field_name == 'photo_assignments':
+                    # A new main photo meets the face rule (finding 98).
+                    tx.execute(Q_RECHECK_MAIN_PHOTO_FACE,
+                               dict(person_ids=[s.person_id]))
                 if spotlight_opt_in_value is not None:
                     from service.spotlight import set_spotlight_opt_in
                     set_spotlight_opt_in(tx, s.person_id, spotlight_opt_in_value)
@@ -2989,6 +2997,9 @@ def post_admin_delete_photo(token: str):
         if rows:
             params = dict(person_id=rows[0]['person_id'])
             tx.execute(Q_UPDATE_VERIFICATION_LEVEL, params)
+            # The next photo may now be the main one (finding 98).
+            tx.execute(Q_RECHECK_MAIN_PHOTO_FACE,
+                       dict(person_ids=[rows[0]['person_id']]))
 
     if rows:
         return f'Deleted photo {rows}'

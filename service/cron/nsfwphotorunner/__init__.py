@@ -2,6 +2,7 @@ from antiabuse.antiporn import predict_nsfw
 from antiabuse.facecheck import count_faces as count_faces_in
 from database.asyncdatabase import api_tx
 from service.cron.nsfwphotorunner.sql import *
+from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS
 from service.cron.cronutil import (
     MAX_RANDOM_START_DELAY,
     download_450_images,
@@ -73,6 +74,12 @@ async def predict_nsfw_photos_once():
 
     async with api_tx() as tx:
         await tx.executemany(Q_SET_NSFW_SCORE, params_seq)
+        # The scoring rule looks at position 1 only. A photo scored into
+        # the main place from another position (position 1 empty) meets
+        # the face rule here (finding 98).
+        if uuids_:
+            await tx.execute(
+                Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS, dict(uuids=uuids_))
 
 async def predict_nsfw_photos_forever():
     await asyncio.sleep(random.randint(0, MAX_RANDOM_START_DELAY))
