@@ -205,10 +205,15 @@ def _newcomer_predicate_sql(person_ref: str = '%(pid)s', since_ref: str = '%(sin
     three can never drift apart. Binds: %(ex)s, plus %(pid)s / %(since)s when
     the default refs are used. `person_ref` / `since_ref` let a caller
     correlate the predicate to an enclosing row instead (e.g. `d.id` and
-    `d.last_action`) without re-typing it."""
+    `d.last_action`) without re-typing it.
+
+    A newcomer is a member: a staff account that signs up is not news to
+    anyone (health review, 13 Oct 2026, findings 2 and 4). The same holds
+    for the two counts below that do not use this predicate."""
     return f"""
        p.activated AND p.id <> {person_ref}
        AND lower(p.email) <> ALL(%(ex)s)
+       AND {member_sql('p')}
        AND p.sign_up_time > {since_ref}
        AND p.gender_id IN (SELECT gender_id FROM search_preference_gender WHERE person_id = {person_ref})
        AND (
@@ -247,10 +252,11 @@ def count_newcomers_since(tx, person_id: int, since: datetime) -> int:
 # Owner decision 1 Oct 2026 (TEC-1607): a member with nobody new inside
 # their preferences still hears that the community grew, in words that do
 # not claim a match.
-_Q_COUNT_ANY_NEWCOMERS = """
+_Q_COUNT_ANY_NEWCOMERS = f"""
     SELECT count(*) AS n FROM person p
      WHERE p.activated AND p.id <> %(pid)s
        AND lower(p.email) <> ALL(%(ex)s)
+       AND {member_sql('p')}
        AND p.sign_up_time > %(since)s
 """
 
@@ -389,12 +395,13 @@ def sought_gender_label(tx, person_id: int, *, fallback: str = 'new members') ->
     return _PLURALS.get(name, f'{name.lower()}s')
 
 
-_Q_OPPOSITE_GENDER_JOINERS = """
+_Q_OPPOSITE_GENDER_JOINERS = f"""
     SELECT count(*) AS n
       FROM person p
      WHERE p.activated
        AND p.id <> %(pid)s
        AND lower(p.email) <> ALL(%(ex)s)
+       AND {member_sql('p')}
        AND p.sign_up_time > %(since)s
        AND p.gender_id = %(gid)s
 """
@@ -402,7 +409,7 @@ _Q_OPPOSITE_GENDER_JOINERS = """
 
 def count_joiners_of_gender(tx, person_id: int, gender_id: int, since: datetime) -> int:
     """Activated members of one gender who joined after `since`, excluding the
-    reader and the test accounts. Used for people who never finished
+    reader, staff and the test accounts. Used for people who never finished
     onboarding, who have a gender but no search preferences yet."""
     return tx.execute(_Q_OPPOSITE_GENDER_JOINERS,
                       dict(pid=person_id, gid=gender_id, since=since, ex=_excluded())).fetchone()['n']

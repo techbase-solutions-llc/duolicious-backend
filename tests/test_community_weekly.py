@@ -194,3 +194,30 @@ def test_week_context_skips_a_published_row_with_no_external_post_id(make_person
         _publish_member_of_week(tx, p['id'], rk, external_post_id=None)
     spotlight = _week_context()['spotlight']
     assert spotlight is None or spotlight['post_url'] != 'https://www.facebook.com/None'
+
+
+def _make_staff(person_id: int) -> None:
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(id)s",
+                   dict(id=person_id))
+
+
+def test_a_staff_account_is_not_counted_as_a_new_member(make_person):
+    """Health review, 13 Oct 2026 (findings 2 and 4): the weekly email names
+    each new member by first name and country and states the member total.
+    Admin account 126 joined on 2 Oct and would have been listed to members
+    as a new member, the same defect the W41 roundup had. Staff accounts
+    are left out by the one member rule (service/admin/queries/members.py)."""
+    before = _week_context()
+    staff = make_person(name='Staffer Weekly')
+    _make_staff(staff['id'])
+    after = _week_context()
+    assert 'Staffer' not in [m['first_name'] for m in after['new_members']]
+    assert len(after['new_members']) == len(before['new_members'])
+    assert after['total'] == before['total']
+
+    # A member joining moves both, so the figures are live.
+    make_person(name='Miriam Weekly')
+    later = _week_context()
+    assert len(later['new_members']) == len(before['new_members']) + 1
+    assert later['total'] == before['total'] + 1

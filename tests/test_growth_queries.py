@@ -170,3 +170,36 @@ def test_newcomers_since_boundary(make_person):
     names_wide = [r['first_name'] for r in rows_wide]
     assert 'RecentSignup' not in names_narrow
     assert 'RecentSignup' in names_wide
+
+def test_a_staff_account_is_not_a_newcomer(make_person):
+    """Health review, 13 Oct 2026 (findings 2 and 4): E3 and the push
+    reactivation script tell a member how many people joined since they were
+    last here. A staff account that signed up was counted as one of them.
+    Every newcomer count uses the member rule now."""
+    from service.growth.queries import count_all_newcomers_since, count_joiners_of_gender
+    me = make_person(name='NewcomerReader', gender='Man')
+    staff = make_person(name='StaffNewcomer', gender='Woman')
+    make_person(name='MemberNewcomer', gender='Woman')
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+
+    def counts():
+        with api_tx('read committed') as tx:
+            woman = tx.execute("SELECT id FROM gender WHERE name = 'Woman'").fetchone()['id']
+            names = [r['first_name'] for r in newcomers_since(tx, me['id'], since, limit=100)]
+            return (names, count_newcomers_since(tx, me['id'], since),
+                    count_all_newcomers_since(tx, me['id'], since),
+                    count_joiners_of_gender(tx, me['id'], woman, since))
+
+    with api_tx() as tx:
+        _prefers(tx, me['id'], 'Woman')
+    names, matched, everyone, women = counts()
+    assert 'StaffNewcomer' in names and 'MemberNewcomer' in names
+
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(id)s",
+                   dict(id=staff['id']))
+    names_after, matched_after, everyone_after, women_after = counts()
+    assert 'StaffNewcomer' not in names_after and 'MemberNewcomer' in names_after
+    assert matched_after == matched - 1
+    assert everyone_after == everyone - 1
+    assert women_after == women - 1

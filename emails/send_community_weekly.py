@@ -9,6 +9,7 @@ from emails.community_weekly import community_weekly_html, SUBJECT, FROM_ADDR
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.weekid import week_campaign_id
+from service.admin.queries.members import member_sql
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
 from service.unsubscribe import make_url as _unsub_url
@@ -32,12 +33,22 @@ _Q_RECIPIENTS = f"""
        AND NOT ({suppressed_predicate_sql('p.email')})
      ORDER BY p.id
 """
-_Q_NEW = """
+# What members read: who joined this week, by first name and country, and how
+# many members there are. Members only (service/admin/queries/members.py), so
+# a staff account is never introduced to the community as a new member, as
+# admin account 126 would have been on 2 Oct (health review, 13 Oct 2026,
+# findings 2 and 4). Who RECEIVES this email is the recipient query above,
+# which still includes staff until the owner decides otherwise.
+_Q_NEW = f"""
     SELECT split_part(name, ' ', 1) AS first_name, country FROM person
      WHERE activated AND sign_up_time > NOW() - interval '7 days' AND lower(email) <> ALL(%(ex)s)
+       AND {member_sql('person')}
      ORDER BY sign_up_time DESC
 """
-_Q_TOTAL = "SELECT count(*) AS n FROM person WHERE activated AND lower(email) <> ALL(%(ex)s)"
+_Q_TOTAL = f"""
+    SELECT count(*) AS n FROM person
+     WHERE activated AND lower(email) <> ALL(%(ex)s) AND {member_sql('person')}
+"""
 _Q_RECIPIENT_COUNT = f"""
     SELECT count(*) AS n FROM person p
      WHERE p.activated AND p.deletion_requested_at IS NULL
