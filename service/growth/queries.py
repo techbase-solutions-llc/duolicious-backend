@@ -11,7 +11,9 @@ from service.campaigns import (PLATFORMS, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.spotlight.country import display_country
 
-EXCLUDED_EMAILS = ('admin@ahavah.app',)
+# Staff accounts left out of campaign email and member-facing counts. The
+# owner's own member account is deliberately not here (owner, 13 Oct 2026).
+EXCLUDED_EMAILS = ('admin@ahavah.app', 'admin@techbaseltd.com')
 
 def _excluded() -> list[str]:
     extra = [e.strip().lower() for e in os.environ.get('AHAVAH_TEST_ACCOUNT_EMAILS', '').split(',') if e.strip()]
