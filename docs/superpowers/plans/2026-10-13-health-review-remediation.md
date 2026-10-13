@@ -171,26 +171,26 @@ Added 13 Oct after the Wave 1 review, before the code. "Same fix as 7" under-sco
 Reordered 13 Oct 2026 after the messaging check: chat works (33 messages ever, chat server and dashboard agree, last on 2 Oct) and 6 of 7 matches produced messages, so the bottleneck is matching. The levers that let a like be seen and answered move here from Wave 3. Two API agents run one after the other (shared test database); the web lane runs beside them.
 
 **API lane A, likes and the deck (findings 32, 33, 34, 40, 41, 42, 58, 62, 63, 77, plus the admin hard-delete privacy gap):**
-- [ ] Enabling push turns like alerts on unless the member chose otherwise, and current subscribers with no saved choice get them on (58). Like notifications open  (32).
+- [ ] Enabling push turns like alerts on unless the member chose otherwise, and current subscribers with no saved choice get them on (58). Like notifications open `/matches?tab=likes` (32).
 - [ ] A hello inside a match is never blocked by the 7 day uniqueness check or the intro rate limit (41); the API's failure reasons stay accurate for unmatched cases.
 - [ ] Campaign unsubscribes get their own scope; match, message and like emails are transactional and stay on (62).
 - [ ] Like, match and message emails go through the outbox and the send log (63).
 - [ ] Deck order: seen in the last 30 days first, then the rest (33; away members stay visible, owner decision 1 Oct).
-- [ ] Default age band: with no client age filter, search uses , clamped to the slider's range, failing open (34).
+- [ ] Default age band: with no client age filter, search uses `search_preference_age`, clamped to the slider's range, failing open (34).
 - [ ] Pass window 30 days (40, migration).
 - [ ] Missing referral codes minted for the 4 members; a new person row always gets one (77).
-- [ ]  and an optional  written from the captured first touch at onboarding (42).
+- [ ] `lead_source` and an optional `heard_about` written from the captured first touch at onboarding (42).
 - [ ] The admin hard delete stages the member's photos and audio for removal as the deletion cron does, and clears their inbox and waitlist rows (found in the Wave 1 review; a privacy defect).
 
 **API lane B, photos (findings 91, 92, 93 data half, 94, 95, 97, 98, 99):**
 - [ ] Views list returns approved photos only (92).
-- [ ]  carries each own photo's moderation state, and  carries  and , the fields the photos brief designs against (93 data half).
+- [ ] `/profile-info` carries each own photo's moderation state, and `/me` carries `photo_state` and `photos_locked`, the fields the photos brief designs against (93 data half).
 - [ ] Server requires an approved-or-pending photo to finish onboarding (94).
 - [ ] Members with no approved photo leave decks and the map (95).
-- [ ]  (migration) set when a moderator approves a no-face photo; the face rule re-runs when the main photo changes (97, 98).
-- [ ] Photo gate: ; the queries that return other members' photos return none unless it is true, the profile is the viewer's own, or the pair has a match or a message. Behind  (off) until the W8 prompt screen ships. Admin metric for gated members (91, 99).
+- [ ] `photo.face_confirmed_at` (migration) set when a moderator approves a no-face photo; the face rule re-runs when the main photo changes (97, 98).
+- [ ] Photo gate: `can_view_photos(viewer)`; the queries that return other members' photos return none unless it is true, the profile is the viewer's own, or the pair has a match or a message. Behind `AHAVAH_PHOTO_GATE_ENABLED` (off) until the W8 prompt screen ships. Admin metric for gated members (91, 99).
 
-**Web lane (findings 32, 41, 42):**  opens Liked you; the first touch and  are sent with onboarding once the API accepts them; the chat failure messages for the remaining unmatched cases say what happened (ux-writing). Nothing visual.
+**Web lane (findings 32, 41, 42):** `/matches?tab=likes` opens Liked you; the first touch and `heard_about` are sent with onboarding once the API accepts them; the chat failure messages for the remaining unmatched cases say what happened (ux-writing). Nothing visual.
 
 ### Wave 3: messages that bring people back (built, held for proof)
 
