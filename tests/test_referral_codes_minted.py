@@ -114,3 +114,32 @@ def test_finishing_onboarding_mints_a_code(finish_onboarding):
     with api_tx() as tx:
         code = _code_of(tx, person_id)
     assert code and len(code) == 7
+
+
+def test_the_route_mints_under_read_committed(client, make_person, sign_in, monkeypatch):
+    """Two first loads of /invite at once could both find no code and both
+    mint. Under the default REPEATABLE READ the second one's retry loop
+    saw only its own snapshot and raised ReferralCodeCollision, a 500. The
+    route now opens its transaction at READ COMMITTED, so the retry sees
+    the code the first load stored and returns it."""
+    import service.api.referrals_routes as routes
+
+    levels = []
+    real_api_tx = routes.api_tx
+
+    def recording_api_tx(*args, **kwargs):
+        levels.append(args[0].upper() if args else 'DEFAULT')
+        return real_api_tx(*args, **kwargs)
+
+    monkeypatch.setattr(routes, 'api_tx', recording_api_tx)
+
+    member = make_person(name='RouteMint', gender='Woman')
+    r = client.get('/referrals/me', headers=sign_in(member))
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+
+    with api_tx() as tx:
+        code = _code_of(tx, member['id'])
+    assert code and body['code'] == code
+    assert body['link'] == f'https://ahavah.app/i/{code}'
+    assert levels == ['READ COMMITTED']
