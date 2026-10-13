@@ -40,7 +40,9 @@ def body_for(total_new: int) -> str:
 def select_recipients(tx, offline_days: int = 30) -> list[dict]:
     out = []
     for r in tx.execute(_Q, dict(days=offline_days, ex=_excluded())).fetchall():
-        if campaign_unsubscribed(tx, r['person_id'], 'notifications'):
+        # A member who left campaigns (or every email, the old way) is not
+        # sent a campaign push either.
+        if campaign_unsubscribed(tx, r['person_id'], 'campaigns'):
             continue
         # Prefer the people they are looking for; fall back to everyone who
         # joined (owner decision 1 Oct 2026: nobody is skipped). The body

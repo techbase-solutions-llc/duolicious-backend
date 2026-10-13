@@ -18,7 +18,7 @@ from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
 from service.unsubscribe import make_url as _unsub_url
 
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 ACTIVE_DAYS = 30
 
 _WHERE = f"""

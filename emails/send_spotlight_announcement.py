@@ -12,7 +12,7 @@ from service.growth.queries import _excluded
 from service.spotlight import spotlight_confirm_url
 from service.unsubscribe import make_url as _unsub_url
 
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 
 # The same suppression + scope-unsubscribe filters run_campaign() applies
 # per-row (see service/campaigns/runner.py) are baked into these queries too,

@@ -79,8 +79,9 @@ You're receiving this because you opted into the Ahavah beta at
 
 def _member_footer(email: str) -> str:
     """For a member who joined Ahavah rather than a beta sign-up: the standard
-    member footer and the notifications unsubscribe scope (TEC-1613)."""
-    unsub = _unsub_url("notifications", email, WEB_BASE_URL)
+    member footer (TEC-1613) and the campaigns unsubscribe scope (finding 62),
+    so leaving the intro never silences match and message emails."""
+    unsub = _unsub_url("campaigns", email, WEB_BASE_URL)
     return f"""
 Ahavah &middot; Matchmaking for Torah-observant believers.<br/>
 You're receiving this because you're a member of Ahavah.

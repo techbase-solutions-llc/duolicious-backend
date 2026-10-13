@@ -162,11 +162,12 @@ def test_dry_run_send_returns_the_result_and_writes_one_audit_row(client, admin,
     assert rows[0]['metadata']['built'] == 1
 
 
-def test_e1_send_sets_the_notifications_list_unsubscribe_header(client, admin, make_person,
-                                                                monkeypatch, outbox_drain):
+def test_e1_send_sets_the_campaigns_list_unsubscribe_header(client, admin, make_person,
+                                                            monkeypatch, outbox_drain):
     """The header is built at enqueue time and rides the outbox payload, so
     it is asserted on what the DRAIN hands SMTP -- the send endpoint itself
-    no longer touches SMTP at all (F07)."""
+    no longer touches SMTP at all (F07). The scope is `campaigns` since
+    13 Oct 2026 (finding 62)."""
     p = make_person(name='E1Target')
     email = _sendable_email(p['id'], 'growth-e1')
     monkeypatch.setattr(e1, 'recipients',
@@ -177,7 +178,7 @@ def test_e1_send_sets_the_notifications_list_unsubscribe_header(client, admin, m
     assert r.status_code == 200 and r.get_json()['queued'] == 1
     sent = outbox_drain(p['id'])
     assert len(sent) == 1
-    assert '/u/notifications.' in sent[0]['list_unsubscribe']
+    assert '/u/campaigns.' in sent[0]['list_unsubscribe']
 
 
 def test_e2_send_sets_the_community_list_unsubscribe_header(client, admin, make_person,

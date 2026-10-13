@@ -111,7 +111,9 @@ def send_member_welcome(email: str) -> bool:
         row = tx.execute(_Q_MEMBER, dict(email=email)).fetchone()
         if not row or not row['subscription_expires_at'] or not row['referral_code']:
             return False
-        unsub = unsub_url('notifications', email, WEB_BASE_URL)
+        # The campaigns scope (finding 62): leaving the welcome must not
+        # silence match and message emails.
+        unsub = unsub_url('campaigns', email, WEB_BASE_URL)
         row_id = outbox.enqueue(
             tx, campaign='welcome', campaign_id=f"welcome-{row['id']}", person_id=row['id'],
             email=email, subject=SUBJECT,
@@ -120,7 +122,7 @@ def send_member_welcome(email: str) -> bool:
                 f"https://ahavah.app/i/{row['referral_code']}",
                 unsub,
             ),
-            from_addr=FROM_ADDR, unsub_scope='notifications',
+            from_addr=FROM_ADDR, unsub_scope='campaigns',
             list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
             exempt=True)
     return row_id is not None

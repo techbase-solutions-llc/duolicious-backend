@@ -179,7 +179,8 @@ def test_e2_list_unsubscribe_header_uses_community_scope(make_person, outbox_dra
     assert '/u/community.' in calls[0]['list_unsubscribe']
 
 
-def test_e1_list_unsubscribe_header_uses_notifications_scope(make_person, outbox_drain):
+def test_e1_list_unsubscribe_header_uses_campaigns_scope(make_person, outbox_drain):
+    # `campaigns`, not `notifications`, since 13 Oct 2026 (finding 62).
     import emails.send_spotlight_announcement as e1
 
     p = make_person(name='E1Header')
@@ -192,4 +193,4 @@ def test_e1_list_unsubscribe_header_uses_notifications_scope(make_person, outbox
 
     calls = outbox_drain(p['id'])
     assert len(calls) == 1
-    assert '/u/notifications.' in calls[0]['list_unsubscribe']
+    assert '/u/campaigns.' in calls[0]['list_unsubscribe']

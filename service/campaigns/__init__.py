@@ -75,6 +75,23 @@ _Q_UNSUBSCRIBED = {
         SELECT 1 FROM person
          WHERE id = %(pid)s AND community_unsubscribed_at IS NOT NULL
     """,
+    # E1, E3, E6, the referral intro, the welcome and the Spotlight emails
+    # (finding 62). Their own stamp, or every email channel off: until
+    # 13 Oct 2026 these campaigns printed the `notifications` link, so a
+    # member who left one then is recorded only that way, and still counts
+    # as having left campaigns.
+    'campaigns': """
+        SELECT 1 FROM person
+         WHERE id = %(pid)s AND campaigns_unsubscribed_at IS NOT NULL
+        UNION ALL
+        SELECT 1 FROM notification_preference
+         WHERE person_id = %(pid)s
+           AND NOT email_messages
+           AND NOT email_matches
+           AND NOT email_likes
+           AND NOT email_verification
+           AND NOT email_profile_views
+    """,
 }
 
 def campaign_unsubscribed(tx, person_id: int, scope: str) -> bool:

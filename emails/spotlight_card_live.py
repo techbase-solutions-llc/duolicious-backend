@@ -22,7 +22,7 @@ from service.unsubscribe import make_url as unsub_url
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 SUBJECT = "Your Spotlight is live"
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 
 # Until Task 7 stores the real Instagram permalink shortcode (see module
 # docstring), share/see-the-post links for Instagram posts point here.

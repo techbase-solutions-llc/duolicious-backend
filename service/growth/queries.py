@@ -147,7 +147,7 @@ def growth_stats(tx) -> dict:
     totals = tx.execute(_Q_TOTALS, dict(ex=ex)).fetchone()
     return {'members_by_gender': [dict(r) for r in by_gender], **dict(totals)}
 
-# E3 (send_reinvite) is a `notifications`-scope campaign, so a dormant
+# E3 (send_reinvite) is a `campaigns`-scope campaign, so a dormant
 # member must also clear the same suppression + scope-unsubscribe filters
 # run_campaign() applies per-row (service/campaigns/runner.py) -- otherwise
 # the admin index number (recipient_count) and the actual send list
@@ -159,7 +159,7 @@ _Q_DORMANT = f"""
         FROM person p
        WHERE p.activated AND p.deletion_requested_at IS NULL
          AND lower(p.email) <> ALL(%(ex)s)
-         AND NOT ({unsubscribed_predicate_sql('notifications', 'p.id')})
+         AND NOT ({unsubscribed_predicate_sql('campaigns', 'p.id')})
          AND NOT ({suppressed_predicate_sql('p.email')})
     )
     SELECT id AS person_id, email, name, last_action
@@ -186,7 +186,7 @@ _Q_ALL_MEMBERS = f"""
         FROM person p
        WHERE p.activated AND p.deletion_requested_at IS NULL
          AND lower(p.email) <> ALL(%(ex)s)
-         AND NOT ({unsubscribed_predicate_sql('notifications', 'p.id')})
+         AND NOT ({unsubscribed_predicate_sql('campaigns', 'p.id')})
          AND NOT ({suppressed_predicate_sql('p.email')})
     )
     SELECT id AS person_id, email, name,
@@ -282,7 +282,7 @@ _Q_COUNT_REINVITE_COHORT = f"""
         FROM person p
        WHERE p.activated AND p.deletion_requested_at IS NULL
          AND lower(p.email) <> ALL(%(ex)s)
-         AND NOT ({unsubscribed_predicate_sql('notifications', 'p.id')})
+         AND NOT ({unsubscribed_predicate_sql('campaigns', 'p.id')})
          AND NOT ({suppressed_predicate_sql('p.email')})
     )
     SELECT count(*) AS n

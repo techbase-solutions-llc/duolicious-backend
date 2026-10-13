@@ -13,7 +13,7 @@ from service.unsubscribe import make_url as unsub_url
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 SUBJECT = "Your Spotlight card is ready"
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 
 _KIND_LABELS = {
     'welcome': 'a new member of the community',

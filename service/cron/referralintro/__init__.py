@@ -36,7 +36,7 @@ from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktr
 from service.growth.queries import _excluded
 from service.unsubscribe import make_url as unsub_url
 
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 REFERRAL_INTRO_AFTER_DAYS = 7
 
 REFERRAL_INTRO_ENABLED = env_int('DUO_CRON_REFERRAL_INTRO_ENABLED', 1) == 1

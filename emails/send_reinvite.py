@@ -24,7 +24,7 @@ from service.growth.queries import (_excluded, count_all_newcomers_since, count_
                                     sought_gender_label)
 from service.unsubscribe import make_url as _unsub_url
 
-UNSUB_SCOPE = 'notifications'
+UNSUB_SCOPE = 'campaigns'
 
 # A member is "quiet" once they have not liked, passed or messaged for this
 # long. The dormancy cron deactivates at 30 days offline, so the two cohorts

@@ -21,7 +21,7 @@ import os
 from urllib.parse import quote
 
 
-_SCOPES = ("waitlist", "beta", "notifications", "claim", "community")
+_SCOPES = ("waitlist", "beta", "notifications", "claim", "community", "campaigns")
 
 
 def _secret() -> bytes:
@@ -96,7 +96,9 @@ _Q_UNSUB = {
     """,
     # Notification emails (match/like/verification/message fallbacks): turn
     # off every email_* channel for the matching person. Keyed by person, so
-    # resolve email -> person and upsert the preference row.
+    # resolve email -> person and upsert the preference row. Campaigns used
+    # this scope until 13 Oct 2026 (finding 62), so leaving one silenced
+    # match, message and like emails too; they now print `campaigns`.
     "notifications": """
         INSERT INTO notification_preference (
             person_id, email_messages, email_matches, email_likes,
@@ -117,6 +119,16 @@ _Q_UNSUB = {
            SET community_unsubscribed_at = COALESCE(community_unsubscribed_at, NOW())
          WHERE lower(email) = %(email)s
         RETURNING (community_unsubscribed_at = NOW()) AS just_now
+    """,
+    # E1, E3, E6, the referral intro, the welcome and the Spotlight emails
+    # (health review, 13 Oct 2026, finding 62): their own category, so
+    # leaving a campaign never turns off the emails that tell a member about
+    # a match, a message or a like.
+    "campaigns": """
+        UPDATE person
+           SET campaigns_unsubscribed_at = COALESCE(campaigns_unsubscribed_at, NOW())
+         WHERE lower(email) = %(email)s
+        RETURNING (campaigns_unsubscribed_at = NOW()) AS just_now
     """,
 }
 
