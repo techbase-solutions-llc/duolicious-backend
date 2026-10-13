@@ -172,6 +172,11 @@ def test_a_staff_account_is_never_tiled(make_person):
             names = [t['first_name'] for t in roundup_snapshot(tx)['tiles']]
         finally:
             set_setting(tx, 'roundup_tiles_enabled', 'false')
+            # Not left in the shared queue, where the render tick's 200 rows
+            # would have to step over it.
+            tx.execute("DELETE FROM publishing_queue WHERE request_key = %(k)s", dict(k=rk))
+            tx.execute("DELETE FROM spotlight_revision WHERE request_key = %(k)s", dict(k=rk))
+            tx.execute("DELETE FROM campaign_link WHERE kind = %(k)s", dict(k=f'post:{rk}'))
     assert 'StaffTile' not in names
 
 
