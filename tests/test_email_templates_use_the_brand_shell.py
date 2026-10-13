@@ -47,11 +47,7 @@ _STAFF_ONLY = {'feedback.py', 'waitlist_admin.py'}
 # A plain personal note the owner asked for in place of the shell, named one
 # by one with the reason. It may skip render() and build its own document;
 # the headline check still applies to it.
-_PLAIN_BY_OWNER_REQUEST = {
-    'warm_leads_note.py':
-        'his note to the warm leads must read as a personal email, not a campaign '
-        '(health review, 13 Oct 2026, finding 48)',
-}
+_PLAIN_BY_OWNER_REQUEST: dict[str, str] = {}
 
 # Large type that is DATA, not design: the six sign-in code digits change with
 # every email, so they cannot be an image. Named one by one, with the reason,

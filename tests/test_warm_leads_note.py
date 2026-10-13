@@ -227,13 +227,20 @@ def test_the_note_carries_the_approved_wording():
         assert '\u2014' not in body, 'no em dash in the note'
 
 
-def test_the_note_is_plain_with_no_image_and_no_button():
+def test_the_note_is_plain_inside_the_minimal_brand_shell():
+    """Owner, 13 Oct 2026: "nice and plain but there should still be some
+    minimal branding". The note sits in the standard shell (the dark band
+    with the white logo, and the footer), with no title image, chip or
+    button: the logo is the only image."""
+    from emails.base import LIME, LOGO_WHITE_URL
     from emails.warm_leads_note import note_html
     html = note_html('Ruth', 58, 'https://x/u/t')
-    assert '<img' not in html
-    assert '<table' not in html
+    assert LOGO_WHITE_URL in html
+    assert html.count('<img') == 1
+    assert f'bgcolor="{LIME}"' not in html, 'no button'
     assert 'href="https://ahavah.app"' in html
     assert '>ahavah.app</a>' in html
+    assert 'Torah-observant believers' in html
 
 
 def test_the_unsubscribe_link_is_in_both_parts():
