@@ -110,6 +110,7 @@ def _figures(client, headers) -> dict:
     for k in ('total_stripe_customers', 'active', 'expired'):
         out[f'economy.subscriptions.{k}'] = subs[k]
     out['cohorts.beta.completed_onboarding'] = beta['kpis']['completed_onboarding']
+    out['cohorts.funnel.started_onboarding'] = beta['funnel']['started_onboarding']
     out['cohorts.funnel.completed_onboarding'] = beta['funnel']['completed_onboarding']
     out['cohorts.velocity.person'] = sum(d['person'] for d in wl['velocity_30d'])
     for k in ('approved', 'rejected'):
@@ -201,7 +202,8 @@ def test_a_staff_account_changes_no_member_figure(client, admin_headers, make_pe
         'system.signups_today', 'system.dau', 'system.mau',
         'economy.entitlements.holders', 'economy.entitlements.expiring_7d',
         'economy.subscriptions.total_stripe_customers', 'economy.subscriptions.active',
-        'cohorts.beta.completed_onboarding', 'cohorts.funnel.completed_onboarding',
+        'cohorts.beta.completed_onboarding', 'cohorts.funnel.started_onboarding',
+        'cohorts.funnel.completed_onboarding',
         'cohorts.velocity.person',
         'moderation.approved',
         'engagement.likes_total', 'engagement.matches_total', 'engagement.conversations_total',

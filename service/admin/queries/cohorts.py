@@ -109,10 +109,25 @@ Q_BETA_ROWS = """
      LIMIT 100
 """
 
+# Waitlist, then beta, then started onboarding, then completed it.
+#
+# started_onboarding is a beta address that has signed in: it has an
+# `onboardee` row, which exists from the first sign-in until onboarding
+# finishes, or a member's person row, which is written when it finishes.
+# completed_onboarding is the person row alone. Until 13 Oct 2026 the funnel
+# had no started step: its "Person" and "Completed" steps were the same set
+# of email pairs by construction (both columns are unique), so both read 22
+# and the funnel could only show 100% between them.
+#
+# person_from_beta is that old duplicate, equal to completed_onboarding by
+# construction. It stays only for the admin build that still reads it.
 Q_BETA_FUNNEL = f"""
     SELECT
         (SELECT COUNT(*) FROM waitlist_signup) AS waitlist_total,
         (SELECT COUNT(*) FROM beta_signup) AS beta_total,
+        (SELECT COUNT(*) FROM beta_signup b
+            WHERE EXISTS (SELECT 1 FROM onboardee o WHERE o.email = b.email)
+               OR EXISTS (SELECT 1 FROM person p WHERE p.email = b.email AND {_MEMBER_P})) AS started_onboarding,
         (SELECT COUNT(*) FROM beta_signup b
             WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email AND {_MEMBER_P})) AS person_from_beta,
         (SELECT COUNT(*) FROM person p
