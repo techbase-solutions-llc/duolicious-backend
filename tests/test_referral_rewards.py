@@ -172,7 +172,10 @@ def test_early_member_grant_covers_organic_signups(make_person):
     with api_tx() as tx:
         state = _premium_state(tx, p['id'])
         assert state['has_premium']
-        expected = datetime.now(timezone.utc) + timedelta(days=183)
+        # Owner decision 13 Oct 2026: every member's Premium runs to one
+        # date, 30 June 2027, unless 6 months from joining is later.
+        expected = max(datetime.now(timezone.utc) + timedelta(days=183),
+                       datetime(2027, 6, 30, 23, 59, 59, tzinfo=timezone.utc))
         assert _about(expected, state['subscription_expires_at'])
         assert _token_balance(tx, p['uuid']) == tokens_before + 30
         first_expiry = state['subscription_expires_at']
@@ -186,6 +189,21 @@ def test_early_member_grant_covers_organic_signups(make_person):
         state2 = _premium_state(tx, p['id'])
         assert state2['subscription_expires_at'] == first_expiry
         assert _token_balance(tx, p['uuid']) == tokens_before + 30
+
+
+def test_early_member_grant_gives_six_months_once_the_shared_date_is_near(make_person, monkeypatch):
+    """After the shared date is less than 6 months away, a new member still
+    gets 6 months from the day they join."""
+    import service.entitlements as ent
+    monkeypatch.setattr(ent, 'PREMIUM_SHARED_EXPIRY',
+                        datetime.now(timezone.utc) + timedelta(days=10))
+    p = make_person(name='Later', gender='Woman')
+    with api_tx() as tx:
+        email = _email_of(tx, p['id'])
+    assert grant_founding_member_if_eligible(p['id'], p['uuid'], email)
+    with api_tx() as tx:
+        state = _premium_state(tx, p['id'])
+    assert _about(datetime.now(timezone.utc) + timedelta(days=183), state['subscription_expires_at'])
 
 
 # --- Rule 5: personal codes ------------------------------------------------

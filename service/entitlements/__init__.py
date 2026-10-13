@@ -288,6 +288,12 @@ def expire_stale(now: Optional[datetime] = None) -> int:
 
 _FOUNDING_MEMBER_PREMIUM_DAYS = 183  # ~6 months
 
+# Owner decision, 13 Oct 2026: every member's free Premium runs to one
+# shared date while Stripe stays in test mode. A new member gets this date,
+# or 6 months from joining if that is later. Existing members were moved to
+# it the same day (GREATEST, so nobody's date came earlier).
+PREMIUM_SHARED_EXPIRY = datetime(2027, 6, 30, 23, 59, 59, tzinfo=timezone.utc)
+
 _FOUNDING_MEMBER_STARTER_TOKENS = 30  # one month's stipend equivalent
 
 
@@ -360,7 +366,8 @@ def grant_founding_member_if_eligible(
     if has_entitlement(person_id, 'premium'):
         return False
 
-    expires_at = datetime.now(timezone.utc) + timedelta(days=_FOUNDING_MEMBER_PREMIUM_DAYS)
+    expires_at = max(datetime.now(timezone.utc) + timedelta(days=_FOUNDING_MEMBER_PREMIUM_DAYS),
+                     PREMIUM_SHARED_EXPIRY)
     granted = grant(person_id, 'premium', expires_at=expires_at)
     if granted and person_uuid:
         # Local import to avoid an entitlements <-> tokens import cycle
