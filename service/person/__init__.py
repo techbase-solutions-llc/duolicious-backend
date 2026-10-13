@@ -867,6 +867,12 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         from service.spotlight.attribution import attribute_signup
         attribute_signup(tx, row['person_id'], req.spotlight_ref)
 
+        # Where the member came from (finding 42): the first touch and the
+        # "How did you hear about Ahavah?" answer the web sends, cleaned,
+        # and lead_source written from them. Never fails the sign-up.
+        from service.person.attribution import record_attribution
+        record_attribution(tx, row['person_id'], req.first_touch, req.heard_about)
+
         # Phase W map fix: Q_FINISH_ONBOARDING builds the person from the
         # onboardee but never set person.country (ISO2), so every newly-
         # onboarded user had country = '' and was filtered out of the map

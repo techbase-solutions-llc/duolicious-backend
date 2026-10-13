@@ -505,6 +505,11 @@ class PostFinishOnboarding(BaseModel):
     Optional: omitted (or invalid/unknown/stale) is a silent no-op there,
     so every existing client that doesn't send it keeps working."""
     spotlight_ref: Optional[str] = Field(default=None, max_length=32)
+    # Where the member came from (finding 42). Typed Any on purpose: the
+    # values are visitor-controlled, and service.person.attribution drops
+    # what it does not accept instead of failing onboarding over it.
+    first_touch: Optional[Any] = None
+    heard_about: Optional[Any] = None
 
 
 class MarriageChecklistAnswer(BaseModel):
