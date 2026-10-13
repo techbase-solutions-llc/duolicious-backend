@@ -198,4 +198,7 @@ I need: yes, or your changes. Until then these 3 changes stay out of the release
 | Chat messages (41) | Yes | Live (web 01d57d7). |
 | Instagram links | New rule, 13 Oct | Instagram posts carry no link (API 38811fa); the 3 queued Instagram posts were cleaned. |
 
-Still open: flagged message text in Moderation (18), the note to the warm leads (48) and the checklist and guides plan (53, 54).
+| Flagged messages (18) | Show only the flagged word or phrase | Live (API 3be4fb7): Moderation returns the listed words a message matched, never the message. |
+| Note to the warm leads (48) | Yes | `emails/send_warm_leads_note.py` (49cd014). 31 leads, not about 50. Proof sent to the owner on 13 Oct; the send waits for his confirmation and a Reply-To he reads. |
+
+Still open: the checklist and guides plan (53, 54).
