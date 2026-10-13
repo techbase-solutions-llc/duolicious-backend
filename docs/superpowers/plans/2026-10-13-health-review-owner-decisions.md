@@ -1,0 +1,140 @@
+Linear: TEC-1838
+
+# Owner decisions from the 13 Oct health review
+
+Each item is something only you can decide or do. Each carries a recommendation, what it costs and what I need from you. Findings are numbered as in `docs/audits/2026-10-13-ahavah-health-review-findings.json`.
+
+## Decide before 16 December
+
+### Premium expiry and Stripe (67, 71)
+
+Every member holds free Premium. 14 lose it on 16 December, 13 in January, 11 in February and 12 in March. Stripe is still in test mode, so after expiry nobody can pay to get it back. From then on, the likes-waiting email we are building would send members to a list they cannot open.
+
+We suggest you choose one of these before the end of November:
+
+- **Take Stripe live.** This needs live keys, live prices and a live webhook, plus a check of every entitlement. Allow a day of work after you create the live products. Once Premium can lapse and be bought, the referral reward (30 days per friend) starts to mean something.
+- **Extend everyone's Premium to a single date,** for example 30 June 2027, and decide about live payments later. This takes about an hour. The referral reward then stays symbolic until that date.
+
+I need: your choice, and if Stripe goes live, the live keys set on the droplet by you.
+
+## Decide now
+
+### US women as this quarter's focus (47)
+
+19 of the 27 people who joined since August are men, and the typical man has about 2 women in a sensible age band who were active this month. Every woman who joins adds possible matches for 37 men. We suggest aiming the referral asks, the assembly outreach, any ad set and the social copy at US women for the next 90 days. The message "across borders" stays.
+
+I need: yes or no.
+
+### Meta Pixel (F07) and ads (46)
+
+Ads have spent nothing in 30 days. The Pixel was removed on 9 September as a privacy decision (F07), so Meta cannot see sign-ups. We suggest no spend until source capture is live (Wave 2 of this plan). After that there are two options:
+
+- Restore a single consented sign-up signal on public pages only.
+- Run without the Pixel and judge ads by our own source counts.
+
+Retry the Meta dating advertiser permission before any spend. If ads restart, we suggest $5 to $10 a day, US women 25 to 44, one ad set, with fresh artwork from Claude Design. As an estimate, not a measurement: 15 to 40 members a month for $150 to $300.
+
+I need: the F07 decision, the permission retry (only you can submit it) and a monthly budget.
+
+### Bot protection at sign-up (43)
+
+In the last 30 days, 151 sign-up codes were requested by addresses that never entered them. 61 of those came from 3 IP addresses, mostly between 15 September and 3 October. Codes sent to strangers bring spam complaints, and those hurt delivery of real codes. Turnstile is built into the code and switched off because no keys exist. Wave 1 prepares the page rules it needs.
+
+I need: create a Turnstile widget in your Cloudflare account for ahavah.app (managed mode). Then send me the two keys through the droplet and Vercel environment settings, not in chat, or tell me where they are and I will set them.
+
+### Flagged message text in Moderation (18)
+
+Overview tells admins that message content is never read. Moderation > Messages would show the text of auto-flagged rude messages; there are 0 today, so nothing has ever been shown. We suggest showing flagged text to admins, because a moderator cannot judge a report blind, and changing the Overview line to say only flagged messages are visible to moderators.
+
+I need: yes, or the opposite (hide flagged text and keep the promise as it is).
+
+### Spotlight guardrails (87)
+
+We recommend against all of these:
+
+- Opting members in by default, or a pre-ticked box in onboarding.
+- A reminder that keeps coming back, like the push banner.
+- Tokens or Premium in return for opting in.
+- Approving a card automatically when it lapses.
+- Posting any photo without approval of that card.
+- Stock or staged faces.
+- Captions such as "available".
+- Rating polls.
+
+One honest invitation per channel is enough, plus a clear way out.
+
+I need: agreement, so later growth work respects them.
+
+### Boost and Spotlight naming (89)
+
+Two referral emails and the boost card call a Boost "a 30-minute spotlight on Discover". We suggest "a 30-minute boost on Discover", so that Spotlight only ever means the opt-in feature.
+
+I need: yes or no. The emails change as part of the referral rewrite you will proof; the card wording changes through Claude Design.
+
+## Your hands, with drafts
+
+### A personal note to the warm leads (48)
+
+About 50 people joined the waitlist or beta and never created an account. All are still subscribed, and they have had several scripted emails. We suggest one short plain note from you, asking what stopped them. As an assumption, 2 to 5 of them join, and the answers are useful in themselves.
+
+Draft (yours to change; I send it through Resend only after you approve the final text):
+
+> Subject: A quick question from Ehud
+>
+> Shalom {first name},
+>
+> You put your name down for Ahavah earlier this year. The app has been open for a few months now, and {N} believers have joined, most of them in the United States.
+>
+> I noticed you never made a profile, and I would like to know why. Was it the timing, something on the sign-up screens, or did Ahavah not look like what you were hoping for? A one-line reply is plenty, and I read every one.
+>
+> If you would like to look again, it is at ahavah.app.
+>
+> Ehud
+
+### Notes to Spotlight candidates (85)
+
+27 members could be featured today. 14 of them were online in the last 30 days, 4 of them women, and none of the women has opted in. Person 27 opted in, was sent 2 cards and both expired unanswered. We suggest a personal note from you to the 14, women included, with an easy no, and featuring each person no more than once a quarter. Send it after the copy fix that says "your main profile photo" is live.
+
+Draft:
+
+> Subject: Would you help us introduce Ahavah?
+>
+> Shalom {first name},
+>
+> We are starting to introduce a few members on Ahavah’s Facebook and Instagram, so believers who have not heard of us can see real people here. Each post is one photo of you, your first name, age and country, and nothing else.
+>
+> Nothing is posted unless you approve that exact card, and you can say no to any card or switch it off at any time. If you would rather not, that is completely fine and changes nothing for you.
+>
+> If you are willing, turn on Spotlight in Settings, under Privacy, and we will send you a card to look at first.
+>
+> Ehud
+
+### Roundups waiting for approval (84, 50)
+
+Four roundup posts have waited since 5 and 12 October. W41 overstates sign-ups by one; Wave 1 fixes the count and rebuilds that card. We suggest:
+
+- Cancel W40: its slot has passed.
+- Approve W41 once it is rebuilt.
+- From then on, approve a month of posts in one sitting. The queue will email you when a post enters review.
+
+I need: the approvals in Growth.
+
+### Assembly and teacher outreach (49)
+
+There is no system for this; it is founder work. We suggest 3 to 4 hours a week:
+
+- Email 20 US congregations a week, starting in states where members already live. Use a one-page note for assembly leaders; I can draft it when you want it.
+- Offer Torah-observant teachers and podcasters a conversation about preparing for marriage, with the marriage checklist as the reason to talk.
+- Register for spring 2027 feast gatherings and Sukkot 2027 by March.
+
+I need: a go, and which of the three to start with.
+
+### Marriage checklist and guides (53, 54)
+
+The checklist has been emailed once since July, and the site has 3 guides. We suggest:
+
+- Make the checklist the thing offered to leaders and teachers.
+- Make it the call to action on one social post a month.
+- Add one guide a month tied to the biblical calendar, for example preparing for Passover and Unleavened Bread as a single person.
+
+I need: a go. Each guide comes to you for voice before it is published.
