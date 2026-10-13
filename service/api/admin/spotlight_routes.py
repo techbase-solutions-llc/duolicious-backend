@@ -465,8 +465,9 @@ _Q_INVITES_PENDING_ROWS = f"""
 # is gone, and both already run `withdraw_member` on the way out; if a member
 # activates or opts in again, the welcome route can create a fresh candidate
 # (its duplicate guard ignores cancelled rows). `pending_deletion` is the
-# member asking for the whole account to go.
-TERMINAL_INVITE_REASONS = ('not_activated', 'not_opted_in', 'pending_deletion')
+# member asking for the whole account to go. `staff` never clears: an
+# admin-role account is never featured (finding 88).
+TERMINAL_INVITE_REASONS = ('not_activated', 'staff', 'not_opted_in', 'pending_deletion')
 
 
 def _cancel_invite_pending_request(tx, request_key: str, error: str) -> None:

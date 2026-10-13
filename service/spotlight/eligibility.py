@@ -1,13 +1,22 @@
-"""Spotlight eligibility (spec 3.2): one SQL statement, first failing reason wins."""
+"""Spotlight eligibility (spec 3.2): one SQL statement, first failing reason wins.
+
+Staff accounts are never featured (health review, 13 Oct 2026, finding 88):
+the only member card ever published was a welcome for an admin-role
+account. `staff` is the member predicate of service/admin/queries/members.py
+read the other way round, so every caller (the candidate list, the
+suggestions, card creation, the publish-time check and the roundup) leaves
+them out with no rule of its own."""
 from __future__ import annotations
 from typing import Optional
+from service.admin.queries.members import member_sql
 from service.config import USER_IMAGES_BASE_URL
 
-REASONS = ('not_activated', 'not_opted_in', 'not_verified', 'under_18', 'reported',
+REASONS = ('not_activated', 'staff', 'not_opted_in', 'not_verified', 'under_18', 'reported',
            'pending_deletion', 'featured_recently', 'no_photo', 'photo_missing')
 
-_Q = """
+_Q = f"""
     SELECT p.activated,
+           NOT ({member_sql('p')}) AS staff,
            p.spotlight_opt_in,
            (p.ahavah_verification_tier IS NOT NULL AND p.ahavah_verification_tier::text <> 'none') AS verified,
            (p.date_of_birth IS NOT NULL AND p.date_of_birth <= (NOW() - interval '18 years')::date) AS adult,
@@ -41,6 +50,7 @@ def eligibility(tx, person_id: int, photo_uuid: Optional[str] = None, *,
         photo_failed = not r['has_photo']
     checks = [
         ('not_activated', not r['activated']),
+        ('staff', r['staff']),
         ('not_opted_in', not r['spotlight_opt_in']),
         ('not_verified', not r['verified']),
         ('under_18', not r['adult']),
