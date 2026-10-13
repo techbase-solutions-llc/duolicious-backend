@@ -33,6 +33,7 @@ from duohash import sha512
 from antiabuse.antispam.signupemail import normalize_email
 from service.person.sql import Q_INSERT_DUO_SESSION
 from service.spotlight.withdrawal import withdraw_member
+from service.referrals import Q_FORGET_CLICK_INVITER, Q_PURGE_REFERRALS_OF
 
 
 # ----- helpers -------------------------------------------------------------
@@ -287,6 +288,14 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         # the row -- the removal task's own person_id/request_key columns
         # are what survives to tell the admin worker who it was for.
         withdraw_member(tx, int(row['id']), 'admin_delete')
+        # Nothing cascades from person to the referral tables (migration
+        # 0037), so the address is cleared here, as the deletion cron does
+        # (service/cron/pendingdeletion). Until 13 Oct 2026 this route left
+        # it in both.
+        if row['email']:
+            emails = [row['email']]
+            tx.execute(Q_PURGE_REFERRALS_OF, dict(emails=emails))
+            tx.execute(Q_FORGET_CLICK_INVITER, dict(emails=emails))
         del_row = tx.execute(_Q_HARD_DELETE, dict(uuid=uuid)).fetchone()
         record_audit(
             tx, s, 'hard_delete',

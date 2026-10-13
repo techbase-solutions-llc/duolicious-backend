@@ -15,6 +15,8 @@ both directions explicitly or a deleted member's email lingers in
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import secrets
 
 from database import api_tx
 from service.cron.pendingdeletion import hard_delete_expired_once
@@ -128,3 +130,62 @@ def test_sign_in_after_delete_cancels_the_purge(make_person):
                            dict(p=still_leaving['id'])).fetchone()
         assert gone is None, \
             'reaper must still purge members who never signed in after requesting deletion'
+
+
+def _admin_headers(make_person) -> dict:
+    """An admin with a real session. Copied from tests/test_spotlight_withdrawal.py."""
+    admin = make_person(name='DeleteAdmin')
+    tok = secrets.token_hex(32)
+    with api_tx() as tx:
+        email = tx.execute(
+            "UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s RETURNING email",
+            dict(i=admin['id'])).fetchone()['email']
+        tx.execute(
+            """INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
+               VALUES (%(h)s, %(e)s, %(p)s, TRUE, '123456')""",
+            dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=email, p=admin['id']))
+    return {'Authorization': f'Bearer {tok}'}
+
+
+def test_admin_hard_delete_purges_referrals_and_click_addresses(make_person, client):
+    """The admin's DELETE /admin/users/:uuid deletes the person at once and
+    used to leave their address in `referral` (both directions) and, since
+    13 Oct 2026, on the clicks of their own invite link. The deletion cron
+    above clears both; the admin route now does the same."""
+    headers = _admin_headers(make_person)
+    p = make_person(name='AdminDeleted', gender='Woman')
+    with api_tx() as tx:
+        row = tx.execute('SELECT uuid::text AS u, email FROM person WHERE id = %(p)s',
+                         dict(p=p['id'])).fetchone()
+        uuid, email = row['u'], row['email']
+        tx.execute("DELETE FROM referral WHERE invitee_email = 'admin-ghost-invitee@example.org' "
+                   "OR inviter_email = 'admin-ghost-inviter@example.org'")
+        tx.execute(
+            "INSERT INTO referral (inviter_email, invitee_email) VALUES "
+            "(%(e)s, 'admin-ghost-invitee@example.org'), "
+            "('admin-ghost-inviter@example.org', %(e)s)", dict(e=email))
+        tx.execute("DELETE FROM referral_link_click WHERE code = 'ADMDELT'")
+        tx.execute(
+            "INSERT INTO referral_link_click (code, inviter_email, well_formed) "
+            "VALUES ('ADMDELT', %(e)s, TRUE)", dict(e=email))
+
+    try:
+        r = client.delete(f'/admin/users/{uuid}',
+                          json={'confirm_email': email, 'reason': 'test'}, headers=headers)
+        assert r.status_code == 200
+
+        with api_tx() as tx:
+            ref = tx.execute(
+                'SELECT count(*) AS n FROM referral WHERE '
+                'inviter_email = %(e)s OR invitee_email = %(e)s',
+                dict(e=email)).fetchone()['n']
+            assert ref == 0, 'referral rows survived the admin hard delete'
+            clicks = tx.execute(
+                "SELECT inviter_email FROM referral_link_click WHERE code = 'ADMDELT'"
+            ).fetchall()
+            assert [c['inviter_email'] for c in clicks] == [None],                 "a deleted member's address survived on their link's clicks"
+    finally:
+        with api_tx() as tx:
+            tx.execute("DELETE FROM referral_link_click WHERE code = 'ADMDELT'")
+            tx.execute("DELETE FROM referral WHERE invitee_email = 'admin-ghost-invitee@example.org' "
+                       "OR inviter_email = 'admin-ghost-inviter@example.org'")

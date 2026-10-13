@@ -100,6 +100,25 @@ def inviter_email_for_code(tx, code: str) -> Optional[str]:
     return row["email"] if row else None
 
 
+# What a hard delete does to the referral tables. Neither has a key back to
+# person since migration 0037 (any member can invite), so nothing cascades:
+# the leaver's address is purged from `referral` in both directions (it would
+# also block a re-signup through UNIQUE(invitee_email)) and blanked on the
+# clicks of their link, which stay counted. Both hard deletes, the deletion
+# cron and the admin's DELETE /admin/users/<uuid>, run these in the
+# transaction that deletes the person, so the two cannot drift apart again.
+Q_PURGE_REFERRALS_OF = """
+    DELETE FROM referral
+     WHERE inviter_email = ANY(%(emails)s)
+        OR invitee_email = ANY(%(emails)s)
+"""
+
+Q_FORGET_CLICK_INVITER = """
+    UPDATE referral_link_click SET inviter_email = NULL
+     WHERE inviter_email = ANY(%(emails)s)
+"""
+
+
 _Q_GET_PERSON_CODE = """
     SELECT referral_code FROM person WHERE id = %(person_id)s
 """

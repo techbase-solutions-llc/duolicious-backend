@@ -16,6 +16,7 @@ cancel-deletion endpoint can land later.
 from database.asyncdatabase import api_tx
 from database import api_tx as _sync_api_tx
 from service.cron.cronutil import env_int, print_stacktrace, MAX_RANDOM_START_DELAY
+from service.referrals import Q_FORGET_CLICK_INVITER, Q_PURGE_REFERRALS_OF
 from service.spotlight.withdrawal import withdraw_member
 import asyncio
 import random
@@ -148,25 +149,13 @@ async def hard_delete_expired_once():
             # F12 (0037 regression): referral emails have no FK anymore;
             # purge both directions so deleted members' addresses do not
             # persist and UNIQUE(invitee_email) cannot block re-signup.
+            # The admin's hard delete runs the same two statements.
             if emails:
-                await tx.execute(
-                    """
-                    DELETE FROM referral
-                     WHERE inviter_email = ANY(%(emails)s)
-                        OR invitee_email = ANY(%(emails)s)
-                    """,
-                    dict(emails=emails),
-                )
+                await tx.execute(Q_PURGE_REFERRALS_OF, dict(emails=emails))
                 # Health review, 13 Oct 2026: a click on a member's own
                 # invite link now records the member as its inviter. The
                 # click stays counted; the address goes with the account.
-                await tx.execute(
-                    """
-                    UPDATE referral_link_click SET inviter_email = NULL
-                     WHERE inviter_email = ANY(%(emails)s)
-                    """,
-                    dict(emails=emails),
-                )
+                await tx.execute(Q_FORGET_CLICK_INVITER, dict(emails=emails))
 
             await tx.execute(
                 "DELETE FROM person WHERE id = ANY(%(ids)s)",
