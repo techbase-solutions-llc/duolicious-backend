@@ -146,6 +146,11 @@ Each wave is one workflow: one implementer per repo lane (API, web, admin), neve
 - [ ] Referral click logger resolves member codes (`person.referral_code`) as well as beta codes (`service/api/referral_click_route.py:45-47`); `scripts/backfill_referral_click_inviter.py` fills `inviter_email` for past rows (controller runs it after deploy).
 - [ ] Roundup counts exclude admins; the W41 roundup row's caption is regenerated through the existing regenerate path (approval stays with the owner).
 
+Added 13 Oct after the Wave 1 review, before the code. "Same fix as 7" under-scoped findings 25 and 73, and the member rule stopped short of the emails:
+- [ ] Cohorts per-inviter table rebuilt on code holders (findings 7, 25, 73): `person.referral_code` and `beta_signup.referral_code`, grouped by the holder's address, listed when the intro was sent (`beta_signup` or `email_send_log` campaign `referral`) or the link has clicks or sign-ups. Clicks are counted on the code, well-formed and without bots; Total clicks and Distinct codes leave bots out too, as Overview does. Same output columns, so the admin table is unchanged. The Beta tab's "Intro emails sent" stays the beta cohort's figure, because it sits beside cohort size and never emailed.
+- [ ] The member rule applies to every count members read (findings 2 and 4): E2's new members and member total, and the newcomer counts E3 and the push reactivation script share. These are corrections, not new copy. Whether staff accounts (the owner's account 18 among them) keep receiving E1, E2 and E3 is the recipient half and goes to the owner (W9); E6 and the referral intro already leave staff out.
+- [ ] The admin hard delete removes the address from `referral_link_click` and `referral`, as the deletion cron does.
+
 **Web lane (W2, W3, W7; findings 35, 36, 39, 55, 56, 66, 77; plus the capture half of 42):**
 - [ ] Deck pages past 10 (`src/lib/use-discover-deck.ts:205-219`): follow `next_cursor` (or the API's `n`/`o` paging) before declaring the deck empty. Test with a fake API returning two pages.
 - [ ] A tap past the last or only photo loops to the first photo and never records a decision (`src/app/discover/page.tsx:418-424`).
@@ -193,7 +198,7 @@ Each wave is one workflow: one implementer per repo lane (API, web, admin), neve
 
 ## Owner decisions (W9)
 
-Written to `docs/superpowers/plans/2026-10-13-health-review-owner-decisions.md` with a recommendation and a draft where one helps: Premium expiry and Stripe live (67); F07 Pixel policy and ads (46); Turnstile keys (43); women-first outreach and assemblies (47, 49); a note to the ~50 warm leads (48); social cadence and roundup approvals (50, 84); checklist lead magnet (53); search content (54); referral reward (71); Spotlight personal asks and guardrails (85, 87); Boost versus Spotlight naming (89); message text in Moderation versus the "never read" promise (18).
+Written to `docs/superpowers/plans/2026-10-13-health-review-owner-decisions.md` with a recommendation and a draft where one helps: Premium expiry and Stripe live (67); F07 Pixel policy and ads (46); Turnstile keys (43); women-first outreach and assemblies (47, 49); a note to the ~50 warm leads (48); social cadence and roundup approvals (50, 84); checklist lead magnet (53); search content (54); referral reward (71); Spotlight personal asks and guardrails (85, 87); Boost versus Spotlight naming (89); message text in Moderation versus the "never read" promise (18); whether staff accounts keep receiving E1, E2 and E3 (2, 4).
 
 ## Later wave
 
