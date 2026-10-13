@@ -166,29 +166,35 @@ Added 13 Oct after the Wave 1 review, before the code. "Same fix as 7" under-sco
 
 **Briefs lane (W8):** four briefs written to `ahavah-web/docs/design-briefs/2026-10-13-*.md` (member: Discover and matching; member: referral and Spotlight; member: photos, sign-up and landing; admin: acting on the community) covering findings 3, 9, 10, 14, 17, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 33, 34, 37, 39, 42, 44, 45, 51, 52, 69, 70, 72, 81, 83, 84, 86, 91, 93. Mobile first (390, then 768, then 1440), bento rule for dashboards, every state (happy, loading, empty, error). The controller pushes them with DesignSync and gives the owner the one-liners.
 
-### Wave 2: who the deck shows, and the photo gate
+### Wave 2: likes that get answered, who the deck shows, and the photo gate
 
-**API lane (W2, W6, W7 API half; findings 33, 34, 36, 40, 41, 42, 77, 91, 92, 94, 95, 97, 98, 99):**
-- [ ] Deck order: seen in the last 30 days first, then the rest (owner decided 1 Oct that away members stay visible).
-- [ ] Default age band: when the client sends no age filter, search uses `search_preference_age` (fail open as the other filters do).
-- [ ] Pass window 30 days (`is_deck_suppressed`, migration).
-- [ ] First-message filters never block a hello inside a match.
-- [ ] Missing referral codes minted for the 4 members; a person row is never left without one.
-- [ ] `lead_source` written from the captured first touch at onboarding.
-- [ ] Views list (`person/sql/__init__.py:3628-3643`) returns approved photos only.
-- [ ] Server requires an approved-or-pending photo to finish onboarding.
-- [ ] Members with no approved photo leave decks and the map.
-- [ ] `photo.face_confirmed_at` (migration) set when a moderator approves a no-face photo; the face rule re-runs when the main photo changes.
-- [ ] Photo gate: `can_view_photos(viewer)` SQL function; the queries that return other members' photos return none unless it is true, the profile is the viewer's own, or the pair has a match or a message. Behind `AHAVAH_PHOTO_GATE_ENABLED` (off) until the W8 prompt screen ships. Admin metric for gated members.
+Reordered 13 Oct 2026 after the messaging check: chat works (33 messages ever, chat server and dashboard agree, last on 2 Oct) and 6 of 7 matches produced messages, so the bottleneck is matching. The levers that let a like be seen and answered move here from Wave 3. Two API agents run one after the other (shared test database); the web lane runs beside them.
 
-**Web lane:** the capture call wired to the API half; nothing visual.
+**API lane A, likes and the deck (findings 32, 33, 34, 40, 41, 42, 58, 62, 63, 77, plus the admin hard-delete privacy gap):**
+- [ ] Enabling push turns like alerts on unless the member chose otherwise, and current subscribers with no saved choice get them on (58). Like notifications open  (32).
+- [ ] A hello inside a match is never blocked by the 7 day uniqueness check or the intro rate limit (41); the API's failure reasons stay accurate for unmatched cases.
+- [ ] Campaign unsubscribes get their own scope; match, message and like emails are transactional and stay on (62).
+- [ ] Like, match and message emails go through the outbox and the send log (63).
+- [ ] Deck order: seen in the last 30 days first, then the rest (33; away members stay visible, owner decision 1 Oct).
+- [ ] Default age band: with no client age filter, search uses , clamped to the slider's range, failing open (34).
+- [ ] Pass window 30 days (40, migration).
+- [ ] Missing referral codes minted for the 4 members; a new person row always gets one (77).
+- [ ]  and an optional  written from the captured first touch at onboarding (42).
+- [ ] The admin hard delete stages the member's photos and audio for removal as the deletion cron does, and clears their inbox and waitlist rows (found in the Wave 1 review; a privacy defect).
+
+**API lane B, photos (findings 91, 92, 93 data half, 94, 95, 97, 98, 99):**
+- [ ] Views list returns approved photos only (92).
+- [ ]  carries each own photo's moderation state, and  carries  and , the fields the photos brief designs against (93 data half).
+- [ ] Server requires an approved-or-pending photo to finish onboarding (94).
+- [ ] Members with no approved photo leave decks and the map (95).
+- [ ]  (migration) set when a moderator approves a no-face photo; the face rule re-runs when the main photo changes (97, 98).
+- [ ] Photo gate: ; the queries that return other members' photos return none unless it is true, the profile is the viewer's own, or the pair has a match or a message. Behind  (off) until the W8 prompt screen ships. Admin metric for gated members (91, 99).
+
+**Web lane (findings 32, 41, 42):**  opens Liked you; the first touch and  are sent with onboarding once the API accepts them; the chat failure messages for the remaining unmatched cases say what happened (ux-writing). Nothing visual.
 
 ### Wave 3: messages that bring people back (built, held for proof)
 
-**API lane (W3, W4, W5; findings 32, 38, 57, 58, 60, 61, 62, 63, 64, 65, 68, 74, 75, 76, 78, 80, 88, 90):**
-- [ ] Enabling push sets like alerts on unless the member chose otherwise; backfill for current subscribers with no preference row (Now).
-- [ ] Campaign unsubscribe scope separate from transactional match, message and like emails (Now).
-- [ ] Like, match and message emails go through the outbox and the send log (Now).
+**API lane (W3, W4, W5; findings 38, 57, 60, 61, 64, 65, 68, 74, 75, 76, 78, 80, 88, 90; 32, 58, 62 and 63 moved to Wave 2):**
 - [ ] Spotlight: admin roles out of eligibility; why offers stopped after 22 Sep found and fixed; E1 links tracked (Now).
 - [ ] Referral email links tracked (Now).
 - [ ] Held, each behind its own switch, off: likes-waiting weekly email (count only, with the new-fit line), match and message reminders, profile-view email, one-photo nudge, E2 personal line and weekly invite link, referral body and share text for members, friend-joined email, E1 resend with fresh tokens to the 34, the next card offer to person 27.
