@@ -88,6 +88,18 @@ _Q_INVITER_FROM_CODE = """
     LIMIT 1
 """
 
+def inviter_email_for_code(tx, code: str) -> Optional[str]:
+    """The address a referral code belongs to, by the one rule sign-up
+    attribution uses (`_Q_INVITER_FROM_CODE`): a member's own code first,
+    then a beta-era code. None when nobody holds it.
+
+    The click logger used to look in beta_signup only, so every click on a
+    member's own link was stored with no inviter (health review, 13 Oct
+    2026: 87 of 128 clicks)."""
+    row = tx.execute(_Q_INVITER_FROM_CODE, dict(code=code)).fetchone()
+    return row["email"] if row else None
+
+
 _Q_GET_PERSON_CODE = """
     SELECT referral_code FROM person WHERE id = %(person_id)s
 """

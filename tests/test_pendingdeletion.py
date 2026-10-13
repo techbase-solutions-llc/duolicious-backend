@@ -43,6 +43,13 @@ def test_hard_delete_stages_media_and_purges_referrals(make_person):
             "INSERT INTO referral (inviter_email, invitee_email) VALUES "
             "(%(e)s, 'ghost-invitee@example.org'), "
             "('ghost-inviter@example.org', %(e)s)", dict(e=email))
+        # A click on the leaver's own invite link. Since 13 Oct 2026 the
+        # click logger records a member as the inviter, so the address
+        # lands here too.
+        tx.execute("DELETE FROM referral_link_click WHERE code = 'DELTEST'")
+        tx.execute(
+            "INSERT INTO referral_link_click (code, inviter_email, well_formed) "
+            "VALUES ('DELTEST', %(e)s, TRUE)", dict(e=email))
         tx.execute(
             "UPDATE person SET activated = FALSE, "
             "deletion_requested_at = NOW() - INTERVAL '8 days', "
@@ -71,6 +78,12 @@ def test_hard_delete_stages_media_and_purges_referrals(make_person):
                 dict(e=email)).fetchone()['n']
             assert ref == 0, 'referral rows survived hard delete (F12)'
 
+            # The click stays counted; the leaver's address goes.
+            clicks = tx.execute(
+                "SELECT inviter_email FROM referral_link_click WHERE code = 'DELTEST'"
+            ).fetchall()
+            assert [c['inviter_email'] for c in clicks] == [None],                 "a deleted member's address survived on their link's clicks"
+
             gone = tx.execute('SELECT 1 FROM person WHERE id = %(p)s',
                                dict(p=p['id'])).fetchone()
             assert gone is None
@@ -78,6 +91,7 @@ def test_hard_delete_stages_media_and_purges_referrals(make_person):
         with api_tx() as tx:
             tx.execute("DELETE FROM undeleted_photo WHERE uuid = 'del-test-photo-uuid-1'")
             tx.execute("DELETE FROM undeleted_audio WHERE uuid = 'del-test-audio-uuid-1'")
+            tx.execute("DELETE FROM referral_link_click WHERE code = 'DELTEST'")
             tx.execute("DELETE FROM referral WHERE invitee_email = 'ghost-invitee@example.org' "
                        "OR inviter_email = 'ghost-inviter@example.org'")
 

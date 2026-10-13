@@ -157,6 +157,16 @@ async def hard_delete_expired_once():
                     """,
                     dict(emails=emails),
                 )
+                # Health review, 13 Oct 2026: a click on a member's own
+                # invite link now records the member as its inviter. The
+                # click stays counted; the address goes with the account.
+                await tx.execute(
+                    """
+                    UPDATE referral_link_click SET inviter_email = NULL
+                     WHERE inviter_email = ANY(%(emails)s)
+                    """,
+                    dict(emails=emails),
+                )
 
             await tx.execute(
                 "DELETE FROM person WHERE id = ANY(%(ids)s)",

@@ -10,6 +10,7 @@ from __future__ import annotations
 import duotypes as t
 
 from service.api.decorators import post, validate, limiter, _is_private_ip
+from service.referrals import inviter_email_for_code
 from database import api_tx
 
 
@@ -42,10 +43,6 @@ def _classify_ua(ua: str) -> str:
     return "desktop"
 
 
-_Q_LOOKUP_INVITER = """
-    SELECT email FROM beta_signup WHERE referral_code = %(code)s
-"""
-
 _Q_INSERT_CLICK = """
     INSERT INTO referral_link_click
         (code, inviter_email, well_formed, user_agent_class, user_agent)
@@ -62,11 +59,9 @@ def post_referral_click(req: t.PostReferralClick):
     uac = _classify_ua(ua)
     try:
         with api_tx() as tx:
-            inviter = None
-            if req.well_formed:
-                row = tx.execute(_Q_LOOKUP_INVITER, dict(code=code)).fetchone()
-                if row:
-                    inviter = row["email"]
+            # A member's own code or a beta-era one, by the same rule
+            # sign-up attribution uses.
+            inviter = inviter_email_for_code(tx, code) if req.well_formed else None
             tx.execute(
                 _Q_INSERT_CLICK,
                 dict(
