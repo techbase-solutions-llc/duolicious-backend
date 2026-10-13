@@ -58,7 +58,7 @@ from service.admin.queries.economy import (
 )
 
 from service.admin.queries.moderation import (
-    Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES,
+    Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES, Q_PHOTO_GATE_KPIS,
 )
 
 from service.admin.queries.system import (

@@ -15,6 +15,7 @@ ranking once `bumpy-design-tokens` and the new `swipe` table land.
 import psycopg
 import duotypes as t
 from database import api_tx
+from service.photo_gate import gate_params
 from typing import Tuple
 from service.search.sql import (
     Q_CACHED_SEARCH,
@@ -114,6 +115,7 @@ def _uncached_search_results(
         age_min=age_min,
         age_max=age_max,
         local_radius_m=LOCAL_RADIUS_M,
+        **gate_params(),
     )
 
     try:
@@ -144,7 +146,8 @@ def _cached_search_results(tx, searcher_person_id: int, no: Tuple[int, int]):
     params = dict(
         searcher_person_id=searcher_person_id,
         n=n,
-        o=o
+        o=o,
+        **gate_params(),
     )
 
     return tx.execute(Q_CACHED_SEARCH, params).fetchall()
@@ -277,7 +280,8 @@ def get_map_markers(s: t.SessionInfo):
         ]
         rows = tx.execute(
             Q_MAP_MARKERS,
-            dict(searcher_person_id=s.person_id, gender_preference=genders),
+            dict(searcher_person_id=s.person_id, gender_preference=genders,
+                 **gate_params()),
         ).fetchall()
 
     return {'markers': [dict(r) for r in rows]}

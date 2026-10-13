@@ -9,7 +9,10 @@ from flask import request, abort
 
 from service.api.decorators import aget, apost
 from service.admin import require_admin, record_audit
-from service.admin.queries import Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES
+from service.admin.queries import (
+    Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES, Q_PHOTO_GATE_KPIS,
+)
+from service.photo_gate import photo_gate_enabled
 from emails.photo_removed import send_photo_removed
 from database import api_tx
 
@@ -21,7 +24,11 @@ def get_moderation_photos(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         rows = [dict(r) for r in tx.execute(Q_PHOTOS_LIST, dict(state=state)).fetchall()]
         kpis = tx.execute(Q_PHOTOS_KPIS).fetchone() or {}
-    return {'rows': rows, 'kpis': dict(kpis)}
+        gate = dict(tx.execute(Q_PHOTO_GATE_KPIS).fetchone() or {})
+    # The photo gate (findings 91, 99): whether it is on, and how many
+    # members it holds or would hold.
+    gate['enabled'] = photo_gate_enabled()
+    return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate}
 
 
 @apost('/admin/moderation/photos/<photo_uuid>/approve')

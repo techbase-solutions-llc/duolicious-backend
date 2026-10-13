@@ -61,7 +61,8 @@ def _skip(tx, subject: int, obj: int, reported: bool) -> None:
 
 
 def _views(tx, person_id: int) -> tuple[set[str], set[str]]:
-    j = tx.execute(Q_VISITORS, dict(person_id=person_id)).fetchone()['j']
+    j = tx.execute(Q_VISITORS, dict(person_id=person_id,
+                                   photo_gate=False)).fetchone()['j']
     return (
         {r['person_uuid'] for r in j['visited_you']},
         {r['person_uuid'] for r in j['you_visited']},
@@ -367,7 +368,8 @@ def test_match_exempts_hidden_member_from_privacy_gates(make_person):
         _match(tx, me['id'], hidden['id'])
 
         row = tx.execute(Q_SELECT_PROSPECT_PROFILE, dict(
-            person_id=me['id'], prospect_uuid=hidden['uuid'])).fetchone()
+            person_id=me['id'], prospect_uuid=hidden['uuid'],
+            photo_gate=False)).fetchone()
 
         assert row and row.get('j'), 'matched hidden member must be fetchable'
         assert row['j'].get('name'), 'profile collapsed to the limited stub'
@@ -387,7 +389,8 @@ def test_match_exempts_hidden_member_from_conversation_prospect_gate(make_person
         _match(tx, me['id'], hidden['id'])
 
         row = tx.execute(Q_SELECT_CONVERSATION_PROSPECT, dict(
-            person_id=me['id'], prospect_uuid=hidden['uuid'])).fetchone()
+            person_id=me['id'], prospect_uuid=hidden['uuid'],
+            photo_gate=False)).fetchone()
 
         assert row and row.get('j'), 'matched hidden member chat header 404d'
         assert row['j'].get('is_available'), 'conversation prospect not available'

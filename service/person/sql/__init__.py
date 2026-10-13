@@ -1058,24 +1058,32 @@ WITH prospect AS (
     JOIN prospect
     ON   prospect.id = photo.person_id
     WHERE photo.moderation_status = 'approved'
+      -- Photo gate (finding 91, service/photo_gate.py).
+      AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
 ), photo_extra_exts AS (
     SELECT COALESCE(json_agg(photo.extra_exts ORDER BY position), '[]'::json) AS j
     FROM photo
     JOIN prospect
     ON   prospect.id = photo.person_id
     WHERE photo.moderation_status = 'approved'
+      -- Photo gate (finding 91, service/photo_gate.py).
+      AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
 ), photo_blurhashes AS (
     SELECT COALESCE(json_agg(photo.blurhash ORDER BY position), '[]'::json) AS j
     FROM photo
     JOIN prospect
     ON   prospect.id = photo.person_id
     WHERE photo.moderation_status = 'approved'
+      -- Photo gate (finding 91, service/photo_gate.py).
+      AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
 ), photo_verifications AS (
     SELECT COALESCE(json_agg(photo.verified ORDER BY position), '[]'::json) AS j
     FROM photo
     JOIN prospect
     ON   prospect.id = photo.person_id
     WHERE photo.moderation_status = 'approved'
+      -- Photo gate (finding 91, service/photo_gate.py).
+      AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
 ), audio_bio_uuid AS (
     SELECT audio.uuid AS j
     FROM   audio
@@ -1313,6 +1321,8 @@ SELECT json_build_object(
             SELECT ph.uuid FROM photo ph
             WHERE ph.person_id = (SELECT id FROM prospect)
               AND ph.moderation_status = 'approved'
+              -- Photo gate (finding 91, service/photo_gate.py).
+              AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, ph.person_id))
             ORDER BY ph.position
             LIMIT 1
         ) t
@@ -1422,6 +1432,9 @@ WITH prospect AS (
     -- Approved photos only (finding 92), as every other surface.
     WHERE
         photo.moderation_status = 'approved'
+    AND
+        -- Photo gate (finding 91, service/photo_gate.py).
+        (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
     ORDER BY
         photo.position
     LIMIT 1
@@ -3651,6 +3664,9 @@ WITH checker AS (
             -- unchecked photo was the picture beside a member's name in
             -- someone else's Views list.
             photo.moderation_status = 'approved'
+        AND
+            -- Photo gate (finding 91, service/photo_gate.py).
+            (NOT %(photo_gate)s::boolean OR photos_visible_to(%(person_id)s, prospect.id))
         ORDER BY
             photo.position
         LIMIT 1

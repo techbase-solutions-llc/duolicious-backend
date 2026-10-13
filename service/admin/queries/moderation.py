@@ -46,6 +46,29 @@ Q_PHOTOS_KPIS = f"""
       JOIN person p ON p.id = ph.person_id
 """
 
+# The photo gate (findings 91 and 99): how many members can_view_photos()
+# (migration 0062) holds, whether or not the switch is on, so the owner can
+# see the effect before turning it on. Activated members only. A gated
+# member keeps photos with matches and conversations, so the third count
+# says how many of them that exemption reaches.
+Q_PHOTO_GATE_KPIS = f"""
+    SELECT
+        COUNT(*) AS gated_members,
+        COUNT(*) FILTER (
+            WHERE p.last_online_time > NOW() - INTERVAL '30 days'
+        ) AS gated_seen_30_days,
+        COUNT(*) FILTER (
+            WHERE EXISTS (SELECT 1 FROM ahavah_match am
+                           WHERE p.id IN (am.user_a_id, am.user_b_id))
+               OR EXISTS (SELECT 1 FROM messaged ms
+                           WHERE p.id IN (ms.subject_person_id, ms.object_person_id))
+        ) AS gated_with_match_or_conversation
+      FROM person p
+     WHERE {_MEMBER_P}
+       AND p.activated
+       AND NOT can_view_photos(p.id)
+"""
+
 # rude_message schema (init-api.sql:1675):
 #   person_id INT, created_at TIMESTAMP, message TEXT
 # This is the *sender's* flagged outgoing message — no recipient is stored.

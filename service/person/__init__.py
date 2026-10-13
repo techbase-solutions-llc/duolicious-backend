@@ -16,6 +16,7 @@ from service import metapixel
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
+from service.photo_gate import gate_params
 from commonsql import *
 from service.person.template import otp_template
 from service.referrals import (
@@ -1063,6 +1064,7 @@ def get_prospect_profile(s: Optional[t.SessionInfo], prospect_uuid):
     params = dict(
         person_id=s.person_id if s is not None else None,
         prospect_uuid=prospect_uuid,
+        **gate_params(),
     )
 
     with api_tx('READ COMMITTED') as tx:
@@ -1130,6 +1132,7 @@ def get_conversation_prospect(s: t.SessionInfo, prospect_uuid: str):
     params = dict(
         person_id=s.person_id,
         prospect_uuid=prospect_uuid,
+        **gate_params(),
     )
 
     with api_tx('READ COMMITTED') as tx:
@@ -3156,7 +3159,7 @@ def post_revenuecat(req: t.PostRevenuecat):
 
 def get_visitors(s: t.SessionInfo):
     with api_tx('READ COMMITTED') as tx:
-        tx.execute(Q_VISITORS, dict(person_id=s.person_id))
+        tx.execute(Q_VISITORS, dict(person_id=s.person_id, **gate_params()))
         return tx.fetchone()['j']
 
 def post_mark_visitors_checked(

@@ -24,6 +24,7 @@ DECK_PARAMS = dict(
     educations=[], health_tags=[],
     age_min=None, age_max=None,
     local_radius_m=160_000,
+    photo_gate=False,
 )
 
 
@@ -54,7 +55,8 @@ def test_verification_required_hidden_from_deck_and_map(make_person):
         )
         assert bot['uuid'] not in _deck_uuids(tx, me['id'], [2])
         marks = tx.execute(Q_MAP_MARKERS, dict(
-            searcher_person_id=me['id'], gender_preference=[])).fetchall()
+            searcher_person_id=me['id'], gender_preference=[],
+            photo_gate=False)).fetchall()
         assert all(m['uuid'] != bot['uuid'] for m in marks)
 
 

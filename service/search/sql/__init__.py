@@ -360,6 +360,8 @@ SELECT
             FROM photo ph
             WHERE ph.person_id = p.id
               AND ph.moderation_status = 'approved'
+              -- Photo gate (finding 91, service/photo_gate.py).
+              AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(searcher_person_id)s, p.id))
         ),
         '[]'::json
     )::jsonb AS photo_uuids,
@@ -371,6 +373,7 @@ SELECT
         FROM photo ph
         WHERE ph.person_id = p.id
           AND ph.moderation_status = 'approved'
+          AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(searcher_person_id)s, p.id))
         ORDER BY ph.position
         LIMIT 1
     ) AS profile_photo_uuid,
@@ -442,6 +445,8 @@ Q_MAP_MARKERS = """
             SELECT ph.uuid FROM photo ph
             WHERE ph.person_id = p.id
               AND ph.moderation_status = 'approved'
+              -- Photo gate (finding 91, service/photo_gate.py).
+              AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(searcher_person_id)s, p.id))
             ORDER BY ph.position
             LIMIT 1
         ) AS photo_uuid

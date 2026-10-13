@@ -17,6 +17,7 @@ tables (see migrations/0006_match_loop.sql).
 from datetime import timedelta
 from typing import Optional, Tuple
 from database import api_tx
+from service.photo_gate import gate_params
 import duotypes as t
 
 
@@ -215,6 +216,8 @@ SELECT
             FROM photo ph
             WHERE ph.person_id = liker.id
               AND ph.moderation_status = 'approved'
+              -- Photo gate (finding 91, service/photo_gate.py).
+              AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(me_id)s, liker.id))
         ),
         '[]'::json
     )::jsonb AS liker_photo_uuids,
@@ -268,6 +271,8 @@ SELECT
             FROM photo ph
             WHERE ph.person_id = peer.id
               AND ph.moderation_status = 'approved'
+              -- Photo gate (finding 91, service/photo_gate.py).
+              AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(me_id)s, peer.id))
         ),
         '[]'::json
     )::jsonb AS peer_photo_uuids,
@@ -329,7 +334,8 @@ def get_outgoing_likes(s: t.SessionInfo):
         return "Not signed in", 401
 
     with api_tx() as tx:
-        rows = tx.execute(Q_LIST_OUTGOING_LIKES, dict(me_id=s.person_id)).fetchall()
+        rows = tx.execute(Q_LIST_OUTGOING_LIKES,
+                          dict(me_id=s.person_id, **gate_params())).fetchall()
 
     likes = [
         {
@@ -591,7 +597,8 @@ def get_incoming_likes(s: t.SessionInfo):
     is_premium = has_entitlement(s.person_id, 'premium')
 
     with api_tx() as tx:
-        rows = tx.execute(Q_LIST_INCOMING_LIKES, dict(me_id=s.person_id)).fetchall()
+        rows = tx.execute(Q_LIST_INCOMING_LIKES,
+                          dict(me_id=s.person_id, **gate_params())).fetchall()
         # Phase 4: revealed_likers keys on the viewer's UUID, not int id.
         # Skip the second query entirely for premium users (they see all).
         revealed_uuids: set[str] = set()
