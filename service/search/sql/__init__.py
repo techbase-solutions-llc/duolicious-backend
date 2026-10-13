@@ -55,8 +55,9 @@ DELETE FROM search_cache WHERE searcher_person_id = %(searcher_person_id)s
 #   - filters: country (if user set preferred_countries), language overlap
 #     (if user set preferred_languages), gender preference, activated
 #   - excludes: self, blocked (skipped table)
-#   - sorted by: boosted, seen in the last 30 days (finding 33), local,
-#     verification_level DESC, last_online_time DESC
+#   - sorted by: boosted, inside the saved age band (finding 34), seen in
+#     the last 30 days (finding 33), local, verification_level DESC,
+#     last_online_time DESC
 #   - paginated via n / o
 #
 # When `preferred_countries` is empty, country filter is skipped entirely
@@ -105,6 +106,18 @@ prospect_pool AS (
         -- 33): the first tier of the deck, see the ORDER BY below. A NULL
         -- time reads as away.
         COALESCE(p.last_online_time > NOW() - INTERVAL '30 days', FALSE) AS seen_recently,
+        -- Inside the searcher's saved age band (finding 34): a RANKING
+        -- SIGNAL, never a filter. As a filter it emptied the deck for 9 of
+        -- 40 active members. band_min/band_max are NULL when the client
+        -- sent its own age bound (that one filters, below) or the member
+        -- has no usable band; an open bound matches every age, so with no
+        -- band everyone is in band and the key has no effect.
+        (
+            (%(band_min)s::INT IS NULL
+             OR EXTRACT(YEAR FROM AGE(p.date_of_birth))::INT >= %(band_min)s::INT)
+            AND (%(band_max)s::INT IS NULL
+             OR EXTRACT(YEAR FROM AGE(p.date_of_birth))::INT <= %(band_max)s::INT)
+        ) IS TRUE AS in_band,
         (ab.person_id IS NOT NULL) AS is_boosted,
         -- "Local only" is a RANKING SIGNAL, not a filter (2026-07-20):
         -- when the searcher's intent includes local-only, prospects
@@ -331,12 +344,15 @@ SELECT
     %(searcher_person_id)s,
     -- is_local (local-only signal, 2026-07-20) ranks nearby prospects
     -- first for local-minded searchers; boosts stay on top (paid).
+    -- in_band (finding 34): members inside the searcher's saved age band
+    -- come before those outside it, after boosts and before everything
+    -- else, so the band shapes the deck without emptying it.
     -- seen_recently (finding 33): members seen in the last 30 days come
     -- before everyone away longer, whatever their verification, so a like
     -- goes first to someone who will see it. Away members are not removed
     -- (owner decision, 1 Oct 2026), only placed after. Q_CACHED_SEARCH
     -- reads this position, so every later page keeps the same order.
-    (ROW_NUMBER() OVER (ORDER BY p.is_boosted DESC, p.seen_recently DESC, p.is_local DESC, p.verification_level_id DESC, p.last_online_time DESC, p.id) - 1)::SMALLINT,
+    (ROW_NUMBER() OVER (ORDER BY p.is_boosted DESC, p.in_band DESC, p.seen_recently DESC, p.is_local DESC, p.verification_level_id DESC, p.last_online_time DESC, p.id) - 1)::SMALLINT,
     p.id,
     p.uuid_raw,
     NULL,

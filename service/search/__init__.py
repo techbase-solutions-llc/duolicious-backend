@@ -52,16 +52,18 @@ SELECT min_age, max_age FROM search_preference_age WHERE person_id = %(person_id
 
 
 def saved_age_band(tx, person_id: int) -> Tuple[int | None, int | None]:
-    """The age band the deck uses when the client sends no age filter
-    (health review, 13 Oct 2026, finding 34).
+    """The age band that ranks the deck when the client sends no age
+    filter (health review, 13 Oct 2026, finding 34).
 
     `search_preference_age` is computed for every member at sign-up (own
     age plus or minus 2 and a fifth of the years past 18, see
     Q_FINISH_ONBOARDING) but search never read it, so the deck opened on
-    everyone from 18 to 80 and most decisions were passes outside it. Each
-    bound is clamped to the slider's range; an open (NULL) bound stays
-    open. Fails open like every other filter: no row, or a band whose
-    bounds cross, returns (None, None) and the member sees everyone."""
+    everyone from 18 to 80 and most decisions were passes outside it.
+    Members inside the band sort first; nobody is removed for age (as a
+    filter it emptied the deck for 9 of 40 active members). Each bound is
+    clamped to the slider's range; an open (NULL) bound stays open. No
+    row, or a band whose bounds cross, returns (None, None): no ranking
+    effect."""
     row = tx.execute(_Q_SAVED_AGE_BAND, dict(person_id=person_id)).fetchone()
     if row is None:
         return None, None
@@ -92,6 +94,8 @@ def _uncached_search_results(
     health_tags: list[str] | None = None,
     age_min: int | None = None,
     age_max: int | None = None,
+    band_min: int | None = None,
+    band_max: int | None = None,
 ):
     n, o = no
 
@@ -114,6 +118,9 @@ def _uncached_search_results(
         health_tags=health_tags or [],
         age_min=age_min,
         age_max=age_max,
+        # The saved band ranks; it never filters (finding 34).
+        band_min=band_min,
+        band_max=band_max,
         local_radius_m=LOCAL_RADIUS_M,
         **gate_params(),
     )
@@ -220,10 +227,12 @@ def get_search(
 
         if search_type == 'uncached-search':
             # No age filter from the client, at either end: the member's
-            # saved band (finding 34). A bound the client sends is its own
+            # saved band ranks the deck, in-band members first, and removes
+            # nobody (finding 34). A bound the client sends is a hard
             # filter and the band is not mixed into it.
+            band_min, band_max = None, None
             if age_min is None and age_max is None:
-                age_min, age_max = saved_age_band(tx, s.person_id)
+                band_min, band_max = saved_age_band(tx, s.person_id)
 
             return _uncached_search_results(
                 tx=tx,
@@ -242,6 +251,8 @@ def get_search(
                 health_tags=health_tags,
                 age_min=age_min,
                 age_max=age_max,
+                band_min=band_min,
+                band_max=band_max,
             )
 
         elif search_type == 'cached-search':
