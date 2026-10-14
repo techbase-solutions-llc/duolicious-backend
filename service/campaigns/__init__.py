@@ -24,7 +24,17 @@ ALLOWED_EXTERNAL_HOSTS = ('www.facebook.com', 'www.instagram.com')
 # they are queued `exempt`, so the cap never holds one back, and the cap
 # below never counts one, so a busy week of matches cannot hold back E2.
 TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
-_TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS)
+
+# The mail held for the owner's proof in Wave 3 (service/campaigns/held.py).
+# Each keeps its own cadence where it is queued, and is queued `exempt`. It
+# neither counts toward nor is held back by E2 and the admin-run campaigns'
+# caps: E2 goes to every member every Monday, so anything else on a 7 day
+# cap meets it and is skipped (30 referral intros were, from 1 Oct). The
+# weekly nudges among them keep a gap between themselves instead (held.py).
+SELF_CAPPED_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
+                         'match_reminder', 'message_reminder', 'friend_joined')
+
+_TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS + SELF_CAPPED_CAMPAIGNS)
 
 # The two send rules, each written once and correlated to `person_ref` (a
 # bind or a column), so `can_send` and `count_sendable` cannot drift apart.

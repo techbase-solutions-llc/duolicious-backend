@@ -16,6 +16,7 @@ from service.cron.spotlightcleanup import spotlight_cleanup_forever
 from service.cron.emailoutbox import email_outbox_forever
 from service.cron.communityweekly import community_weekly_forever
 from service.cron.referralintro import referral_intro_forever
+from service.cron.returnmail import return_mail_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
@@ -105,6 +106,12 @@ async def main():
         # send log and a per-week outbox id, so repeats and cap skips are
         # safe. Daily. Off with DUO_CRON_REFERRAL_INTRO_ENABLED=0.
         referral_intro_forever(),
+
+        # The mail held for the owner's proof (health review, Wave 3): likes
+        # waiting, reminders, profile views, the one-photo nudge. Every job
+        # is behind its own switch, all off by default
+        # (service/campaigns/switches.py). Hourly.
+        return_mail_forever(),
 
         check_connections_forever(),
 

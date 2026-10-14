@@ -116,6 +116,21 @@ services:
       # Photo gate (health review finding 91, service/photo_gate.py). Off until
       # the W8 prompt that tells a gated member why ships. 1 turns it on.
       AHAVAH_PHOTO_GATE_ENABLED: ${AHAVAH_PHOTO_GATE_ENABLED:-0}
+      # Mail held for the owner's proof (health review Wave 3,
+      # service/campaigns/switches.py). Each is off until he confirms its
+      # proof; 1 turns one on. Set on both api and cron: the cron sends the
+      # scheduled ones, the api builds E2 for the Send button, queues the
+      # friend-joined email at sign-up and the Spotlight card email.
+      AHAVAH_LIKES_WAITING_ENABLED: ${AHAVAH_LIKES_WAITING_ENABLED:-0}
+      AHAVAH_MATCH_REMINDER_ENABLED: ${AHAVAH_MATCH_REMINDER_ENABLED:-0}
+      AHAVAH_MESSAGE_REMINDER_ENABLED: ${AHAVAH_MESSAGE_REMINDER_ENABLED:-0}
+      AHAVAH_PROFILE_VIEW_EMAIL_ENABLED: ${AHAVAH_PROFILE_VIEW_EMAIL_ENABLED:-0}
+      AHAVAH_ONE_PHOTO_NUDGE_ENABLED: ${AHAVAH_ONE_PHOTO_NUDGE_ENABLED:-0}
+      AHAVAH_E2_PERSONAL_ENABLED: ${AHAVAH_E2_PERSONAL_ENABLED:-0}
+      AHAVAH_REFERRAL_MEMBER_BODY_ENABLED: ${AHAVAH_REFERRAL_MEMBER_BODY_ENABLED:-0}
+      AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
+      AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
+      AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
       # Meta Conversions API (service/metapixel.py) — no-op when blank.
       AHAVAH_META_PIXEL_ID: ${AHAVAH_META_PIXEL_ID:-}
       AHAVAH_META_CAPI_ACCESS_TOKEN: ${AHAVAH_META_CAPI_ACCESS_TOKEN:-}
@@ -258,6 +273,21 @@ services:
       DUO_CRON_COMMUNITY_WEEKLY_POLL_SECONDS: ${DUO_CRON_COMMUNITY_WEEKLY_POLL_SECONDS:-3600}
       DUO_CRON_REFERRAL_INTRO_ENABLED: ${DUO_CRON_REFERRAL_INTRO_ENABLED:-1}
       DUO_CRON_REFERRAL_INTRO_POLL_SECONDS: ${DUO_CRON_REFERRAL_INTRO_POLL_SECONDS:-86400}
+      # Mail held for the owner's proof (health review Wave 3,
+      # service/campaigns/switches.py). Each is off until he confirms its
+      # proof; 1 turns one on. Set on both api and cron: the cron sends the
+      # scheduled ones, the api builds E2 for the Send button, queues the
+      # friend-joined email at sign-up and the Spotlight card email.
+      AHAVAH_LIKES_WAITING_ENABLED: ${AHAVAH_LIKES_WAITING_ENABLED:-0}
+      AHAVAH_MATCH_REMINDER_ENABLED: ${AHAVAH_MATCH_REMINDER_ENABLED:-0}
+      AHAVAH_MESSAGE_REMINDER_ENABLED: ${AHAVAH_MESSAGE_REMINDER_ENABLED:-0}
+      AHAVAH_PROFILE_VIEW_EMAIL_ENABLED: ${AHAVAH_PROFILE_VIEW_EMAIL_ENABLED:-0}
+      AHAVAH_ONE_PHOTO_NUDGE_ENABLED: ${AHAVAH_ONE_PHOTO_NUDGE_ENABLED:-0}
+      AHAVAH_E2_PERSONAL_ENABLED: ${AHAVAH_E2_PERSONAL_ENABLED:-0}
+      AHAVAH_REFERRAL_MEMBER_BODY_ENABLED: ${AHAVAH_REFERRAL_MEMBER_BODY_ENABLED:-0}
+      AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
+      AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
+      AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
       DUO_CRON_MAX_RANDOM_START_DELAY: ${DUO_CRON_MAX_RANDOM_START_DELAY:-15}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DUO_VERIFICATION_IMAGE_BASE_URL: ${DUO_VERIFICATION_IMAGE_BASE_URL}
