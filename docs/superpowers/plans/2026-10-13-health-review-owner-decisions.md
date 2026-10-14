@@ -202,3 +202,18 @@ I need: yes, or your changes. Until then these 3 changes stay out of the release
 | Note to the warm leads (48) | Yes | `emails/send_warm_leads_note.py` (49cd014). 31 leads, not about 50. Branded proof approved by the owner; sent 13 Oct to all 31, replies to support@ahavah.app. |
 
 Still open: the checklist and guides plan (53, 54).
+
+## Wave 3 (14 Oct)
+
+The owner saw the proofs of every held email and push and said: "Do what makes the most sense, you can leave out the screenshot line."
+
+| Item | Decision | What happens |
+|---|---|---|
+| The 10 held emails and pushes | On | All 10 switches set in `.env.production` on 14 Oct (backup at `/root/.env.production.bak-2026-10-14`). The first hourly run queued 2 match reminders, 1 message reminder and 2 profile view emails. |
+| Weekly likes email | A campaign | Goes to every member with new likes unless they left campaigns (API ddea265). The per-like switch defaults off and cannot tell a choice from a default. |
+| Spotlight resend (E1) to the 33 who never had it | On, Monday | One-off timer on the droplet, `ahavah-e1-resend-2026-10-19`, Mon 19 Oct 15:00 UTC, after the weekly email; log at `/root/e1-resend-2026-10-19.log`. |
+| Spotlight wording | Live | App (web 2fc8eac) and emails (`AHAVAH_SPOTLIGHT_COPY_ENABLED`) together. |
+| Referral intro | Resumed | With the members' body ("a 30-minute boost on Discover", no "beta"); exempt from the weekly email's cap. |
+| Reminders naming the match | No | Reminders name nobody, out of discretion. |
+| Person 27 | No third card now | Two cards lapsed unanswered; the guardrails rule out repeat asks. The owner's personal note to Spotlight candidates is the next ask. |
+| Screenshot line on the confirm page | Left out | |
