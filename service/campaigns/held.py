@@ -24,6 +24,7 @@ on Friday or Saturday, so nothing lands on the Sabbath.
 """
 from __future__ import annotations
 
+import traceback
 from datetime import datetime
 from typing import Optional
 
@@ -110,18 +111,39 @@ def queue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
 # is never nested), and a push for a decision that then rolled back would be
 # a push nobody recorded. The returnmail cron runs these after each job
 # commits, and drops them when a job fails.
+#
+# Each runs on its own (review of Wave 3, 14 Oct 2026): one that raises is
+# printed and its `on_failure` runs, and the rest still go. Until then one
+# push raising lost every push after it in that job, each already logged
+# in push_send_log and so never tried again, and the tick reported an error
+# for a job whose transaction had committed.
 _AFTER_COMMIT: list = []
 
 
-def after_commit(fn) -> None:
-    _AFTER_COMMIT.append(fn)
+def after_commit(fn, on_failure=None) -> None:
+    """`on_failure` runs, in no transaction, when `fn` raises: the reminders
+    use it to take back the push_send_log row, so the push is tried again
+    next tick rather than counted as sent."""
+    _AFTER_COMMIT.append((fn, on_failure))
 
 
-def run_after_commit() -> None:
+def run_after_commit() -> int:
+    """Run every pending callback. Returns how many raised; never raises."""
     pending = list(_AFTER_COMMIT)
     _AFTER_COMMIT.clear()
-    for fn in pending:
-        fn()
+    failed = 0
+    for fn, on_failure in pending:
+        try:
+            fn()
+        except Exception:
+            failed += 1
+            print(traceback.format_exc())
+            if on_failure is not None:
+                try:
+                    on_failure()
+                except Exception:
+                    print(traceback.format_exc())
+    return failed
 
 
 def discard_after_commit() -> None:

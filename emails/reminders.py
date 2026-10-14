@@ -159,6 +159,17 @@ def _log_push(tx, campaign: str, cid: str, person_id: int) -> bool:
         dict(p=person_id, c=campaign, cid=cid)).fetchone() is not None
 
 
+def _unlog_push(campaign: str, cid: str, person_id: int) -> None:
+    """Take back the log row of a push that failed after the job committed,
+    so the next tick tries it again. Runs in its own transaction (it is
+    called from held.run_after_commit, outside the job's)."""
+    from database import api_tx
+    with api_tx() as tx:
+        tx.execute(
+            "DELETE FROM push_send_log WHERE person_id = %(p)s AND campaign = %(c)s AND campaign_id = %(cid)s",
+            dict(p=person_id, c=campaign, cid=cid))
+
+
 def _footer(unsub: str) -> str:
     return held.footer("You're getting this because of your Ahavah notification settings.",
                        unsub, 'Turn off notification emails')
@@ -213,9 +224,11 @@ def _deliver(tx, *, campaign: str, cid: str, row, push: dict, subject: str, html
     pid = row['person_id']
     if row['push_on'] and row['has_push'] and PUSH_READY():
         if _log_push(tx, campaign, cid, pid):
-            # After the commit, never inside it (held.after_commit).
+            # After the commit, never inside it (held.after_commit). A push
+            # that fails gives its log row back, to be tried next tick.
             held.after_commit(lambda: _push(pid, push['title'], push['body'],
-                                            push['url'], push['kind']))
+                                            push['url'], push['kind']),
+                              on_failure=lambda: _unlog_push(campaign, cid, pid))
             return True
         return False
     if not row['email_on']:

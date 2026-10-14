@@ -50,12 +50,18 @@ def tick(now: datetime | None = None) -> dict:
                 n = job(tx, now)
                 if n:
                     audit_send(tx, 'cron', name, dict(queued=n, dry_run=False))
-            out[name] = n
-            held.run_after_commit()
         except Exception:
             held.discard_after_commit()
             print(traceback.format_exc())
             out[name] = 'error'
+            continue
+        out[name] = n
+        # After the commit, each push on its own: a push that fails is
+        # printed and tried again next tick, and never turns a committed
+        # job into an error.
+        failed = held.run_after_commit()
+        if failed:
+            print(f'return_mail: {name}: {failed} push(es) failed, to be tried again next tick')
     if any(v for v in out.values()):
         print(f'return_mail: {out}')
     return out

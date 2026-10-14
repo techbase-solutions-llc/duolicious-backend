@@ -268,3 +268,40 @@ def test_never_to_staff(make_person, on, pushed):
         assert _outbox(reader['id'], 'message_reminder') == [] and _pushes(reader['id'], 'message_reminder') == []
     finally:
         _cleanup_inbox(reader)
+
+
+def test_a_push_that_fails_loses_no_other_push_and_is_tried_again(make_person, on, pushed, monkeypatch):
+    """One push raising used to stop the rest of the job's pushes, all of
+    them already logged in push_send_log and so never retried, and the tick
+    reported an error though its transaction had committed."""
+    import service.cron.returnmail as cron
+    monkeypatch.setattr(cron, 'JOBS', [('match_reminder', rm.queue_match_reminders)])
+    sides = []
+    for i in range(3):
+        a, b = _person(make_person, f'PushFail{i}'), _person(make_person, f'PushFailB{i}', 'Man')
+        _match(a, b, 4)
+        with api_tx() as tx:
+            tx.execute("""INSERT INTO push_subscription (person_id, endpoint, p256dh, auth)
+                          VALUES (%(p)s, %(e)s, 'k', 'a')""", dict(p=a['id'], e=f'https://push.test/{a["id"]}'))
+        sides.append(a)
+    broken = sides[1]['id']
+
+    def flaky(person_id, title, body, url, kind):
+        if person_id == broken:
+            raise RuntimeError('push service down')
+        pushed.append(dict(person_id=person_id, kind=kind))
+    monkeypatch.setattr(rm, '_push', flaky)
+
+    out = cron.tick(TUESDAY)
+    assert out['match_reminder'] != 'error', 'the tick reported an error for a job that committed'
+    assert sorted(x['person_id'] for x in pushed if x['person_id'] in {s['id'] for s in sides}) == sorted(
+        [sides[0]['id'], sides[2]['id']])
+    assert _pushes(broken, 'match_reminder') == [], 'a failed push was recorded as sent'
+    assert len(_pushes(sides[0]['id'], 'match_reminder')) == 1 and len(_pushes(sides[2]['id'], 'match_reminder')) == 1
+
+    monkeypatch.setattr(rm, '_push', lambda person_id, title, body, url, kind: pushed.append(
+        dict(person_id=person_id, kind=kind)))
+    pushed.clear()
+    cron.tick(TUESDAY)
+    assert [x['person_id'] for x in pushed if x['person_id'] in {s['id'] for s in sides}] == [broken]
+    assert len(_pushes(broken, 'match_reminder')) == 1
