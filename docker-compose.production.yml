@@ -137,6 +137,10 @@ services:
       # Cloudflare Turnstile secret — zero-config rollout: no-op when blank,
       # active when set. Honeypot is always on regardless.
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      # Sign-up page stamp (service/signupguard). Off: a new address with
+      # no stamp still gets a code. Turn on once the web that sends the
+      # stamp is live; forged and too-fast stamps are refused either way.
+      AHAVAH_SIGNUP_STAMP_REQUIRED: ${AHAVAH_SIGNUP_STAMP_REQUIRED:-false}
       # Optional integrations (no-op when empty)
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       SENTRY_DSN: ${SENTRY_DSN}

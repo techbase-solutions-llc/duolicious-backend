@@ -196,6 +196,18 @@ def post_request_otp(req: t.PostRequestOtp):
     ):
         return person.post_request_otp(req)
 
+# The signed page stamp the sign-up page asks for when it loads and sends
+# back with /request-otp (TEC-1848; service/signupguard). `stamp` is null
+# when no signing secret is configured, and the check is then off too.
+@get('/signup-stamp')
+def get_signup_stamp():
+    from service import signupguard
+    return (
+        dict(stamp=signupguard.issue_stamp()),
+        200,
+        {'Cache-Control': 'no-store'},
+    )
+
 @apost(
     '/resend-otp',
     limiter=shared_otp_limit,

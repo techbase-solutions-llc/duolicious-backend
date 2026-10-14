@@ -404,6 +404,7 @@ def post_request_otp(req: t.PostRequestOtp):
             email=req.email,
             normalized_email=norm,
             ip=request.remote_addr,
+            stamp=req.signup_stamp,
         )
         if refusal:
             signupguard.record_refusal(

@@ -17,14 +17,38 @@ that were issued, which is what Admin > System reads.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import ipaddress
 import os
+import re
 import secrets
 import time
 import traceback
 from typing import Optional, Union
 
 from database import api_tx
+
+
+# The page stamp (item 4). The sign-up page asks GET /signup-stamp for one
+# when it loads and sends it back with /request-otp. A new address sent
+# under STAMP_MIN_AGE_SECONDS after its stamp, or with a forged stamp, or
+# with one older than STAMP_MAX_AGE_SECONDS, is refused.
+#
+# A MISSING stamp is refused only when AHAVAH_SIGNUP_STAMP_REQUIRED is on.
+# The API deploys before the web that sends the stamp, so it stays off
+# until the new web is live; a forged or too-fast stamp is refused either
+# way. Existing accounts never reach this check.
+#
+# Signed with a key derived from SESSION_TOKEN_SECRET, the HMAC secret the
+# unsubscribe and spotlight links already use. If it is unset, no stamp is
+# issued and none is checked (fails open), with a log line.
+STAMP_MIN_AGE_SECONDS = 2.0
+STAMP_MAX_AGE_SECONDS = 86400.0
+STAMP_REQUIRED: bool = os.environ.get(
+    'AHAVAH_SIGNUP_STAMP_REQUIRED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+_STAMP_LABEL = b'ahavah-signup-stamp-v1'
+_STAMP_SHAPE = re.compile(r'^([0-9]{1,16})\.([0-9a-f]{64})$')
+_warned_no_secret = False
 
 
 # New-address limits (item 1). Fixed windows on the UTC clock hour and UTC
@@ -59,6 +83,54 @@ def _redis():
 
 def _now() -> float:
     return time.time()
+
+
+def _stamp_key() -> Optional[bytes]:
+    global _warned_no_secret
+    secret = os.environ.get('SESSION_TOKEN_SECRET', '')
+    if not secret:
+        if not _warned_no_secret:
+            print('signupguard: SESSION_TOKEN_SECRET is unset, so sign-up '
+                  'stamps are neither issued nor checked')
+            _warned_no_secret = True
+        return None
+    # A key of its own, so a stamp can never be read as any other signed
+    # value made with the same secret.
+    return hmac.new(secret.encode(), _STAMP_LABEL, hashlib.sha256).digest()
+
+
+def _sign(key: bytes, issued_ms: str) -> str:
+    return hmac.new(key, issued_ms.encode(), hashlib.sha256).hexdigest()
+
+
+def issue_stamp() -> Optional[str]:
+    """`<milliseconds since the epoch>.<HMAC-SHA256 hex>`, or None when no
+    secret is configured."""
+    key = _stamp_key()
+    if key is None:
+        return None
+    issued_ms = str(int(_now() * 1000))
+    return f'{issued_ms}.{_sign(key, issued_ms)}'
+
+
+def _stamp_refusal(stamp: Optional[str]) -> Optional[str]:
+    key = _stamp_key()
+    if key is None:
+        return None
+    if not stamp:
+        return 'stamp_missing' if STAMP_REQUIRED else None
+    match = _STAMP_SHAPE.match(stamp)
+    if match is None:
+        return 'stamp_forged'
+    issued_ms, signature = match.groups()
+    if not hmac.compare_digest(signature.encode(), _sign(key, issued_ms).encode()):
+        return 'stamp_forged'
+    age = _now() - int(issued_ms) / 1000
+    if age < STAMP_MIN_AGE_SECONDS:
+        return 'stamp_too_fast'
+    if age > STAMP_MAX_AGE_SECONDS:
+        return 'stamp_expired'
+    return None
 
 
 _Address = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
@@ -161,12 +233,15 @@ def _distinct_address_refusal(ip: Optional[str],
 
 
 def new_address_refusal(*, email: str, normalized_email: str,
-                        ip: Optional[str]) -> Optional[str]:
+                        ip: Optional[str],
+                        stamp: Optional[str] = None) -> Optional[str]:
     """Why a code for an address with no account should not be sent, or None
     to send it. The caller answers a refusal with `decoy()` and records it.
-    Never called for an existing account."""
+    Never called for an existing account. The stamp goes first: it costs
+    nothing and a request it refuses uses up no limit."""
     return (
-        _limit_refusal(ip)
+        _stamp_refusal(stamp)
+        or _limit_refusal(ip)
         or _distinct_address_refusal(ip, normalized_email)
     )
 

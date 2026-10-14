@@ -271,6 +271,10 @@ class PostRequestOtp(BaseModel):
     # TURNSTILE_SECRET_KEY is configured; otherwise ignored (zero-config
     # rollout — flip the env var to activate without code changes).
     turnstile_token: Optional[str] = Field(default=None, max_length=4096)
+    # The signed page stamp from GET /signup-stamp (TEC-1848). Checked only
+    # for an address with no account; see service/signupguard. Any shape is
+    # accepted here so a bad one is refused quietly, never with a 400.
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
     # Referral code from /i/<code> landing route, surfaced in
     # localStorage and forwarded by the FE on every public POST that
     # might create a new account. Crockford base32, 7 chars, optional.
