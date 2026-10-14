@@ -103,15 +103,15 @@ def likes_waiting_weekly_html(likes: int, new_fits: int, cta_url: str, unsubscri
 
 {held.para("A like becomes a conversation when you answer it.", bottom=24)}
 
-{button("See who likes you", cta_url)}
+{button("Open your likes", cta_url)}
 
 <div style="height:20px;line-height:20px;">&nbsp;</div>
 
-{callout("Only you can see your likes. Nobody is told when you look.")}
+{callout("Only you can see your likes.")}
 """
     return render(
         title=subject_for(likes),
-        preheader="See who, and decide for yourself.",
+        preheader="Open Ahavah to see your likes.",
         body_html=body,
         footer_html=held.footer("You're receiving this because members liked your profile.", unsubscribe_url),
     )

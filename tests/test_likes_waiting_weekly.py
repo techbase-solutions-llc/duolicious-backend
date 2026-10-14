@@ -217,3 +217,15 @@ def test_a_member_with_like_emails_off_gets_none(make_person, on):
     _run()
     assert _rows(off['id']) == []
     assert _rows(unset['id']) == [], 'the switch defaults off, and the settings page shows it off'
+
+
+def test_the_copy_is_true_for_every_member():
+    """Free members see blurred cards, so nothing promises to show who; and
+    opening a liker's profile records a view, so nothing says nobody is
+    told."""
+    html = lw.likes_waiting_weekly_html(2, 0, 'https://ahavah.app/x', 'https://ahavah.app/u/x')
+    assert 'Open your likes' in html
+    assert 'Open Ahavah to see your likes.' in html
+    assert 'Only you can see your likes.' in html
+    for gone in ('See who likes you', 'See who, and decide for yourself.', 'Nobody is told when you look.'):
+        assert gone not in html

@@ -57,7 +57,8 @@ def test_likes_waiting_lead_the_email(make_person, on):
     assert subject == 'This week on Ahavah: 2 likes are waiting for you'
     assert '2 people have liked you and are waiting for an answer.' in html
     assert 'E2Liker' not in html
-    assert 'See who likes you' in html
+    assert 'Open your likes' in html
+    assert 'See who likes you' not in html, 'free members see blurred cards, not who'
     assert _links(p['id']) == sorted([f'{WEB_BASE_URL}/matches?tab=likes', f"{WEB_BASE_URL}/share/E2P{p['id']}"])
 
 

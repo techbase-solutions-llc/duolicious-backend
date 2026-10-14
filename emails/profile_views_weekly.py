@@ -82,15 +82,13 @@ def profile_views_html(views: int, cta_url: str, unsubscribe_url: str) -> str:
 
 <div style="height:18px;line-height:18px;">&nbsp;</div>
 
-{held.para(lede)}
-
-{held.para("Views shows who they are, so you can take a look back.", bottom=24)}
+{held.para(lede, bottom=24)}
 
 {button("See your views", cta_url)}
 
 <div style="height:20px;line-height:20px;">&nbsp;</div>
 
-{callout("You asked for this weekly count. Turn it off any time in Settings, Notifications.")}
+{callout("You get this because profile view emails are on in your settings. Turn them off any time in Settings, Notifications.")}
 """
     return render(title=subject_for(views), preheader="Your weekly count of profile views.",
                   body_html=body,

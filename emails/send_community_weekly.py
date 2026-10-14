@@ -159,7 +159,7 @@ def personal_parts(likes: int, unread: int, fits: int) -> dict:
                             'This week on Ahavah: {n} likes are waiting for you'),
             line=_plural(likes, '1 person has liked you and is waiting for an answer.',
                          '{n} people have liked you and are waiting for an answer.'),
-            cta_label='See who likes you', target=f"{WEB_BASE_URL}/matches?tab=likes")
+            cta_label='Open your likes', target=f"{WEB_BASE_URL}/matches?tab=likes")
     if unread:
         return dict(subject=SUBJECT,
                     line=_plural(unread, 'You have an unread message from 1 person.',

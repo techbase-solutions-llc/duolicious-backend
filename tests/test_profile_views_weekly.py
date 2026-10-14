@@ -111,3 +111,13 @@ def test_the_preview_writes_nothing():
     with api_tx('read committed') as tx:
         assert tx.execute("SELECT count(*) AS n FROM campaign_link").fetchone()['n'] == before
     assert subject == '3 people viewed your profile this week'
+
+
+def test_the_copy_is_true_for_every_member():
+    """The member turned on profile view emails, not a weekly count; and
+    Views is Premium-locked for free members, so nothing promises who."""
+    html = pv.profile_views_html(3, 'https://ahavah.app/x', 'https://ahavah.app/u/x')
+    assert ('You get this because profile view emails are on in your settings. '
+            'Turn them off any time in Settings, Notifications.') in html
+    assert 'You asked for this weekly count' not in html
+    assert 'Views shows who they are' not in html
