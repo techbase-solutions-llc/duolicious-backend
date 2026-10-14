@@ -49,7 +49,7 @@ def test_each_email_carries_a_fresh_token_and_the_new_copy(make_person, monkeypa
                             dict(p=p['id'])).fetchone()['n']
         kinds = [r['kind'] for r in tx.execute("SELECT kind FROM campaign_link WHERE subject_person_id = %(p)s",
                                                dict(p=p['id'])).fetchall()]
-    assert nonces == 1 and kinds == ['e1', 'e1']
+    assert nonces == 1 and kinds == ['e1'], 'the settings link is counted; the confirm link goes direct'
 
 
 def test_a_real_send_is_refused_while_the_switch_is_off(make_person, monkeypatch):

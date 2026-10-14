@@ -39,19 +39,19 @@ def build(row: dict, *, new_copy: bool | None = None) -> tuple[str, str]:
     # that is never stored (health review, 13 Oct 2026; until then a dry
     # run wrote one spotlight_token_nonce row per recipient).
     #
-    # Both links go through /s/ campaign links of kind 'e1', with the reader
-    # as the link's subject (finding 90): a view of the confirm page used to
-    # leave no trace, so nobody could tell whether the copy or the reach was
-    # the problem. The click is counted on the way through; the consent
-    # record is still written only by the confirm POST.
+    # The settings link goes through a /s/ campaign link of kind 'e1', with
+    # the reader as the link's subject (finding 90), so its clicks are
+    # counted. The confirm link goes straight to the confirm page: a /s/
+    # link stores its target in campaign_link.target_url in plain text, and
+    # this target carries a live single-use confirm token, which nothing may
+    # store (review of Wave 3, 14 Oct 2026). The consent record is written
+    # only by the confirm POST.
     dry = row.get('dry_run', False)
     with api_tx() as tx:
         confirm_url = spotlight_confirm_url(tx, row['email'], dry_run=dry)
         if confirm_url is not None:
-            subject_id = row['person_id'] or None
-            confirm_url = make_campaign_link(tx, 'e1', confirm_url, subject_id, dry_run=dry)
             settings_url = make_campaign_link(tx, 'e1', f"{WEB_BASE_URL}/settings/privacy",
-                                              subject_id, dry_run=dry)
+                                              row['person_id'] or None, dry_run=dry)
     if confirm_url is None:
         # No activated person matches this email (deactivated, deleted, or
         # a bad row) -- there is nothing to mint a token against. Raising

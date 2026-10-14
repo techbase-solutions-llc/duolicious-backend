@@ -4,9 +4,10 @@
 E1 reached 24 people on 20 Sep; 34 members have joined or been missed
 since. Each email mints a fresh single-use token (the 20 Sep tokens stop
 working about 20 Oct), carries the copy that matches the web lane's
-Spotlight strings ("your main profile photo"), and counts its links through
-/s/ like E1 (finding 90). Campaign `e1`, so the Growth tab counts it with
-E1; unsubscribe scope `campaigns`.
+Spotlight strings ("your main profile photo"), and counts its settings link
+through /s/ like E1 (finding 90); the confirm link, which carries the token,
+goes direct. Campaign `e1`, so the Growth tab counts it with E1; unsubscribe
+scope `campaigns`.
 
 Who: activated members, staff test accounts left out, who have no `e1` row
 in the send log, have not already opted in, and have not left campaigns.
@@ -68,7 +69,7 @@ def recipient_count() -> int:
 
 def build_for(row: dict) -> tuple[str, str]:
     """E1's own builder with the new copy: a fresh token per member (none
-    on a dry run) and counted links."""
+    on a dry run) and a counted settings link."""
     return _build_e1(row, new_copy=True)
 
 
