@@ -81,7 +81,7 @@ def _body(code: str) -> str:
   family, the friends you would trust with someone's heart.
 </p>
 
-{callout("When someone you bring finishes their profile at launch, we credit your account with 5 tokens. That is one Boost: a 30-minute spotlight on Discover, ready for the moment you want to be seen.")}
+{callout("When someone you bring finishes their profile at launch, we credit your account with 5 tokens. That is one Boost: a 30-minute boost on Discover, ready for the moment you want to be seen.")}
 
 {button("Share with your community &rarr;", share_url, variant="lime", full=True)}
 

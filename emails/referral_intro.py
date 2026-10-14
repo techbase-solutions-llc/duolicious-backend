@@ -47,7 +47,7 @@ def _body(code: str, share_href: str | None = None, link_href: str | None = None
   through it, your name is on the door for them.
 </p>
 
-{callout("When that friend finishes their profile at launch, we credit your account with 5 tokens. That is one Boost: a 30-minute spotlight on Discover. Hold it for the right moment.")}
+{callout("When that friend finishes their profile at launch, we credit your account with 5 tokens. That is one Boost: a 30-minute boost on Discover. Hold it for the right moment.")}
 
 {button("Share your link &rarr;", share_url, variant="lime", full=True)}
 

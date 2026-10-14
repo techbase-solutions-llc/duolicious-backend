@@ -7,6 +7,7 @@ from html import escape as html_escape
 
 from emails.base import render, button, chip, title_image, callout, INK_SOFT, MUTED, SANS
 from service.campaigns import outbox
+from service.campaigns.switches import enabled
 from service.config import EMAIL_DOMAIN, WEB_BASE_URL
 from service.spotlight.approval import CARD_TOKEN_TTL_SECONDS, card_url
 from service.unsubscribe import make_url as unsub_url
@@ -31,7 +32,28 @@ _Q_KIND = """
 """
 
 
-def card_ready_html(first_name: str, kind_label: str, card_url: str, expires_days: int, unsubscribe_url: str) -> str:
+# The live copy says the member can choose the photo; the card uses their
+# main profile photo (health review, 13 Oct 2026, findings 79 and 82, the
+# web lane's Spotlight strings). E4 is live, so the new copy is held behind
+# AHAVAH_SPOTLIGHT_COPY_ENABLED and the old copy goes until it is on.
+_OLD_LEDE = ("Nothing is posted until you say so. Once your card preview is ready, "
+             "you can review it, choose the photo you prefer, and approve or skip.")
+_NEW_LEDE = ("Your card shows your main profile photo, first name, age and country, "
+             "and nothing else. Nothing is posted until you approve that exact card. "
+             "You can say no to this card, or turn Spotlight off any time in Settings, Privacy.")
+_OLD_PREHEADER = "Review your card, choose your photo, and approve or skip."
+_NEW_PREHEADER = "Review your card, then approve it or say no."
+
+
+def preheader() -> str:
+    return _NEW_PREHEADER if enabled('spotlight_copy') else _OLD_PREHEADER
+
+
+def card_ready_html(first_name: str, kind_label: str, card_url: str, expires_days: int, unsubscribe_url: str,
+                    *, new_copy: bool | None = None) -> str:
+    """`new_copy` None follows AHAVAH_SPOTLIGHT_COPY_ENABLED."""
+    if new_copy is None:
+        new_copy = enabled('spotlight_copy')
     name = html_escape(first_name, quote=True)
     label = html_escape(kind_label, quote=True)
     body = f"""
@@ -40,9 +62,7 @@ def card_ready_html(first_name: str, kind_label: str, card_url: str, expires_day
 {title_image("title-card-ready.png", "title-card-ready-wht.png", "Your Spotlight card is ready.", 486)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
-  {name}, we would like to feature you as {label}. Nothing is posted until
-  you say so. Once your card preview is ready, you can review it, choose
-  the photo you prefer, and approve or skip.
+  {name}, we would like to feature you as {label}. {_NEW_LEDE if new_copy else _OLD_LEDE}
 </p>
 
 {button("Review my card", card_url)}
@@ -62,7 +82,7 @@ You're receiving this because you opted in to Community Spotlight.
 """
     return render(
         title=SUBJECT,
-        preheader="Review your card, choose your photo, and approve or skip.",
+        preheader=_NEW_PREHEADER if new_copy else _OLD_PREHEADER,
         body_html=body,
         footer_html=footer,
     )
