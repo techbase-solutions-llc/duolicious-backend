@@ -3,7 +3,8 @@ import pytest
 from datetime import datetime, timezone
 
 from database import api_tx
-from emails.referral_intro import referral_intro_html
+from emails.referral_intro import MEMBER_SUBJECT, referral_intro_html
+from service.campaigns import can_send
 from service.cron.referralintro import campaign_id, queue_due
 
 NOW = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -98,3 +99,21 @@ def test_the_member_variant_has_the_member_footer():
     assert '/u/' in html or 'Unsubscribe' in html
     beta = referral_intro_html('m@ahavah-test.invalid', 'CODE1')
     assert 'opted into the Ahavah beta' in beta
+
+
+def test_an_e2_send_the_same_week_does_not_stop_it(make_person, outbox_drain):
+    """E2 goes to every member every Monday, so under the 7 day cap the
+    intro met it and was skipped every week (30 skipped from 1 Oct). The
+    send log keeps it to once per member; the cap no longer holds it back,
+    and it no longer holds back the next E2 either."""
+    p = _member(make_person, 'AfterE2')
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO email_send_log (person_id, campaign, campaign_id, sent_at)
+                      VALUES (%(p)s, 'e2', 'e2-test-week', NOW() - interval '1 day')""", dict(p=p['id']))
+    _run()
+    sent = outbox_drain(p['id'])
+    assert [s['subject'] for s in sent] == [MEMBER_SUBJECT]
+    assert [r['state'] for r in _rows(p['id'])] == ['accepted']
+    with api_tx() as tx:
+        tx.execute("DELETE FROM email_send_log WHERE person_id = %(p)s AND campaign = 'e2'", dict(p=p['id']))
+        assert can_send(tx, p['id'], 'e2', 'e2-next-week', cap_days=6) is True

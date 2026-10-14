@@ -13,9 +13,14 @@ dedupes on (campaign, campaign_id, person_id), and the id carries the ISO
 week, so:
 
   * a second tick in the same week queues nothing extra,
-  * a message the drain SKIPPED under the 7 day frequency cap (the member
-    got another email this week) is tried again next week under a new id,
+  * a message the drain SKIPPED is tried again next week under a new id,
   * once the drain ACCEPTS one, the send log row stops every future tick.
+
+The send log already keeps the intro to once per member, so it is queued
+`exempt` and listed in SELF_CAPPED_CAMPAIGNS, as the held Wave 3 mail is
+(review of Wave 3, 14 Oct 2026). Under the 7 day cross-campaign cap it met
+E2, which goes to every member every Monday, and was skipped as capped
+week after week: the 30 skipped from 1 Oct.
 
 Until 13 Oct 2026 the template was the beta cohort's body with the member
 footer, which told members they had opted into a beta (health review,
@@ -91,9 +96,10 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
 
     The keyword arguments exist for a deliberate one-off run from the
     command line (scripts/schedule_referral_intro.py): `not_before` holds the
-    rows for a chosen slot, `cap_days` is the frequency window the drain
-    re-checks at that slot, and `id_suffix` replaces the ISO week in the id
+    rows for a chosen slot and `id_suffix` replaces the ISO week in the id
     so the run cannot collide with the cron's own row for the week.
+    `cap_days` still rides in the payload, but the rows are exempt, so the
+    drain no longer applies it.
 
     A tick that queues anything leaves one audit row in the same
     transaction, under `actor` ('cron', or 'cli' from the script). Each
@@ -127,7 +133,7 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
                                      share_href=share_href, link_href=link_href),
             from_addr=FROM_ADDR, unsub_scope=UNSUB_SCOPE,
             list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
-            cap_days=cap_days, not_before=not_before)
+            exempt=True, cap_days=cap_days, not_before=not_before)
         if row_id is not None:
             queued += 1
     if queued:

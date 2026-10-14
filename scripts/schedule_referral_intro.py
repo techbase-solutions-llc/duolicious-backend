@@ -7,8 +7,10 @@ Owner decision 1 Oct 2026: the 25 intros the cron queued and the drain held
 under the 7 day cap (those members had email 1 or 2 the same day) go out two
 days later rather than waiting for next week's tick. The rows are queued now
 with next_attempt_at at the slot, under an id that names the slot, so the
-cron's own weekly row never collides with them. `--cap-days` is the window
-the drain re-checks AT THE SLOT: 1 means "nothing else in the last day".
+cron's own weekly row never collides with them. `--cap-days` was the window
+the drain re-checked AT THE SLOT; since 14 Oct 2026 the intro is queued
+exempt from the cross-campaign cap (service/cron/referralintro), so it rides
+in the payload but holds nothing back.
 
 Members already accepted are excluded by the send log, as always. A run
 that queues anything leaves an audit row (actor 'cli').

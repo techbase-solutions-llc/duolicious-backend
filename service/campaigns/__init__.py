@@ -25,14 +25,17 @@ ALLOWED_EXTERNAL_HOSTS = ('www.facebook.com', 'www.instagram.com')
 # below never counts one, so a busy week of matches cannot hold back E2.
 TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
 
-# The mail held for the owner's proof in Wave 3 (service/campaigns/held.py).
-# Each keeps its own cadence where it is queued, and is queued `exempt`. It
-# neither counts toward nor is held back by E2 and the admin-run campaigns'
-# caps: E2 goes to every member every Monday, so anything else on a 7 day
-# cap meets it and is skipped (30 referral intros were, from 1 Oct). The
-# weekly nudges among them keep a gap between themselves instead (held.py).
+# The mail held for the owner's proof in Wave 3 (service/campaigns/held.py),
+# and the referral intro. Each keeps its own cadence where it is queued, and
+# is queued `exempt`. It neither counts toward nor is held back by E2 and the
+# admin-run campaigns' caps: E2 goes to every member every Monday, so
+# anything else on a 7 day cap meets it and is skipped (30 referral intros
+# were, from 1 Oct). The weekly nudges among them keep a gap between
+# themselves instead (held.py); the referral intro's send log keeps it to
+# once per member (service/cron/referralintro).
 SELF_CAPPED_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
-                         'match_reminder', 'message_reminder', 'friend_joined')
+                         'match_reminder', 'message_reminder', 'friend_joined',
+                         'referral')
 
 _TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS + SELF_CAPPED_CAMPAIGNS)
 
