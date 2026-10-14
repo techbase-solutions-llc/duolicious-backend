@@ -58,7 +58,7 @@ def test_likes_waiting_lead_the_email(make_person, on):
     assert '2 people have liked you and are waiting for an answer.' in html
     assert 'E2Liker' not in html
     assert 'See who likes you' in html
-    assert _links(p['id']) == sorted([f'{WEB_BASE_URL}/matches?tab=likes', f"{WEB_BASE_URL}/i/E2P{p['id']}"])
+    assert _links(p['id']) == sorted([f'{WEB_BASE_URL}/matches?tab=likes', f"{WEB_BASE_URL}/share/E2P{p['id']}"])
 
 
 def test_with_nothing_personal_the_invite_link_still_comes_every_week(make_person, on):
@@ -70,7 +70,7 @@ def test_with_nothing_personal_the_invite_link_still_comes_every_week(make_perso
     assert subject == SUBJECT
     assert 'Open Discover' in html
     assert 'Share your invite link' in html
-    assert _links(p['id']) == sorted([f'{WEB_BASE_URL}/discover', f"{WEB_BASE_URL}/i/E2P{p['id']}"])
+    assert _links(p['id']) == sorted([f'{WEB_BASE_URL}/discover', f"{WEB_BASE_URL}/share/E2P{p['id']}"])
     assert 'Your invite link is in your profile' not in html
 
 
@@ -105,3 +105,13 @@ def test_the_personal_preview_writes_nothing():
         assert tx.execute("SELECT count(*) AS n FROM campaign_link").fetchone()['n'] == before
     assert subject == 'This week on Ahavah: 2 likes are waiting for you'
     assert 'Share your invite link' in html
+
+
+def test_the_invite_button_opens_the_share_page_not_the_members_own_invite():
+    """/i/<code> sets the reader's own referral cookie, sends them to sign-up
+    and counts a click against their own code; /share/<code> is the page the
+    referral email's button opens. The proof's button is built the same way."""
+    assert e2.invite_target('ABC') == f'{WEB_BASE_URL}/share/ABC'
+    _subject, html = e2.preview_personal('owner@ahavah-test.invalid')
+    assert f'href="{WEB_BASE_URL}/share/YOURCODE"' in html
+    assert '/i/' not in html and f'{WEB_BASE_URL}/invite"' not in html

@@ -142,6 +142,14 @@ def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many.format(n=n)
 
 
+def invite_target(code: str) -> str:
+    """Where the invite button leads: the share page, as the referral email's
+    button does. Never /i/<code>, which is the friend's way in: opened by
+    the member it sets their own referral cookie, sends them to sign-up and
+    counts a click against their own code (review of Wave 3, 14 Oct 2026)."""
+    return f"{WEB_BASE_URL}/share/{code}"
+
+
 def personal_parts(likes: int, unread: int, fits: int) -> dict:
     """The one strongest reason, in this order: likes waiting, unread
     messages, newcomers who fit. Returns subject, line, cta_label, target."""
@@ -173,7 +181,7 @@ def _build_personal(row: dict) -> tuple[str, str]:
         fits = count_newcomers_since(tx, pid, datetime.now(timezone.utc) - timedelta(days=7))
         parts = personal_parts(int(r['likes']), int(r['unread']), int(fits))
         cta = make_campaign_link(tx, 'e2', parts['target'], pid, dry_run=dry)
-        invite = (make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/i/{r['referral_code']}", pid, dry_run=dry)
+        invite = (make_campaign_link(tx, 'e2', invite_target(r['referral_code']), pid, dry_run=dry)
                   if r['referral_code'] else None)
     return parts['subject'], community_weekly_html(
         week['new_members'], week['total'], week['spotlight'], cta,
@@ -194,13 +202,13 @@ def build_for(row: dict) -> tuple[str, str]:
 
 def preview_personal(to: str) -> tuple[str, str]:
     """The proof of the personal E2: 2 likes waiting, sample newcomers, the
-    invite button pointing at /invite. Reads nothing per member and stores
-    nothing."""
+    invite button built by `invite_target` from a sample code, as the real
+    send builds it. Reads nothing per member and stores nothing."""
     parts = personal_parts(2, 0, 0)
     return parts['subject'], community_weekly_html(
         [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
         parts['target'], _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
-        personal_line=parts['line'], invite_url=f"{WEB_BASE_URL}/invite", cta_label=parts['cta_label'])
+        personal_line=parts['line'], invite_url=invite_target('YOURCODE'), cta_label=parts['cta_label'])
 
 def preview_row(to: str) -> dict:
     return dict(person_id=0, email=to, name='Preview', week=_week_context())
