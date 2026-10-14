@@ -27,6 +27,12 @@ _Q_RECIPIENTS = f"""
 """
 
 def build_for(row: dict) -> tuple[str, str]:
+    return build(row)
+
+
+def build(row: dict, *, new_copy: bool | None = None) -> tuple[str, str]:
+    """`new_copy` None follows AHAVAH_SPOTLIGHT_COPY_ENABLED; the resend
+    (emails/send_spotlight_resend.py) passes True."""
     # Mints a real single-use nonce (service.spotlight.nonce.issue_nonce)
     # against the recipient's current consent epoch. Not on a dry run: the
     # runner marks the row, and the token then carries a placeholder nonce
@@ -56,7 +62,8 @@ def build_for(row: dict) -> tuple[str, str]:
     return SUBJECT, spotlight_announcement_html(
         confirm_url,
         settings_url,
-        _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
+        _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
+        new_copy=new_copy)
 
 _Q_RECIPIENT_COUNT = f"""
     SELECT count(*) AS n FROM person p
