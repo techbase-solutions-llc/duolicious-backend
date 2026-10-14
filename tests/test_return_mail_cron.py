@@ -38,9 +38,11 @@ def test_one_failing_job_does_not_stop_the_others(monkeypatch):
     assert out['good'] == 1 and out['bad'] == 'error'
 
 
-def test_the_likes_waiting_job_is_registered():
+def test_the_held_jobs_are_registered():
     import service.cron.returnmail as rm
-    assert 'likes_waiting' in [name for name, _ in rm.JOBS]
+    names = [name for name, _ in rm.JOBS]
+    for job in ('likes_waiting', 'match_reminder', 'message_reminder'):
+        assert job in names
 
 
 def test_the_compose_file_passes_every_switch_to_the_cron_and_defaults_off():

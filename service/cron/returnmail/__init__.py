@@ -19,7 +19,8 @@ import traceback
 from datetime import datetime, timezone
 
 from database import api_tx
-from emails import likes_waiting_weekly
+from emails import likes_waiting_weekly, reminders
+from service.campaigns import held
 from service.campaigns.runner import audit_send
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
@@ -29,6 +30,8 @@ RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
 # never takes another's queued rows down with it.
 JOBS = [
     ('likes_waiting', likes_waiting_weekly.queue_due),
+    ('match_reminder', reminders.queue_match_reminders),
+    ('message_reminder', reminders.queue_message_reminders),
 ]
 
 print(f'Hello from cron module: {__name__}')
@@ -46,7 +49,9 @@ def tick(now: datetime | None = None) -> dict:
                 if n:
                     audit_send(tx, 'cron', name, dict(queued=n, dry_run=False))
             out[name] = n
+            held.run_after_commit()
         except Exception:
+            held.discard_after_commit()
             print(traceback.format_exc())
             out[name] = 'error'
     if any(v for v in out.values()):

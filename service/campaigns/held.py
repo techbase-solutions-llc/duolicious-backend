@@ -104,6 +104,30 @@ def queue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
         exempt=True)
 
 
+# Work that must wait until the job's transaction has committed: a push.
+# service.notifications.send_to_user_safe re-reads the member's preferences
+# in a transaction of its own, which must never open inside the job's (api_tx
+# is never nested), and a push for a decision that then rolled back would be
+# a push nobody recorded. The returnmail cron runs these after each job
+# commits, and drops them when a job fails.
+_AFTER_COMMIT: list = []
+
+
+def after_commit(fn) -> None:
+    _AFTER_COMMIT.append(fn)
+
+
+def run_after_commit() -> None:
+    pending = list(_AFTER_COMMIT)
+    _AFTER_COMMIT.clear()
+    for fn in pending:
+        fn()
+
+
+def discard_after_commit() -> None:
+    _AFTER_COMMIT.clear()
+
+
 def already_queued(tx, campaign: str, campaign_id: str, person_id: int) -> bool:
     """True when this exact message is already in the outbox, so a repeat
     tick mints no links for a message the outbox would refuse anyway."""
