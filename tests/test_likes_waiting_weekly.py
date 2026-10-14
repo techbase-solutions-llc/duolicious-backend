@@ -209,14 +209,29 @@ def test_not_again_until_someone_new_likes_them(make_person, on):
     assert rows[0]['subject'] == '2 people like you on Ahavah', 'the count still covers every like waiting'
 
 
-def test_a_member_with_like_emails_off_gets_none(make_person, on):
+def test_the_weekly_count_follows_the_campaigns_unsubscribe_not_the_per_like_switch(make_person, on):
+    """Owner, 14 Oct 2026: the weekly count is a campaign. The per-like email
+    switch defaults off and since Wave 2 a push subscribe writes a row with it
+    off, so it cannot tell a choice from a default; the campaigns unsubscribe
+    can, and it already counts a member with every email channel off."""
     off = _person(make_person, 'LikeMailOff', email_likes=False)
     _like(make_person(name='OffMailLiker', gender='Man'), off)
     unset = _person(make_person, 'LikeMailUnset', email_likes=None)
     _like(make_person(name='UnsetMailLiker', gender='Man'), unset)
+    left = _person(make_person, 'LeftCampaigns', email_likes=None)
+    _like(make_person(name='LeftLiker', gender='Man'), left)
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO notification_preference (person_id, email_likes, email_matches, email_messages,
+                                                           email_verification, email_profile_views)
+                      VALUES (%(p)s, FALSE, FALSE, FALSE, FALSE, FALSE)
+                      ON CONFLICT (person_id) DO UPDATE
+                      SET email_likes = FALSE, email_matches = FALSE, email_messages = FALSE,
+                          email_verification = FALSE, email_profile_views = FALSE""",
+                   dict(p=left['id']))
     _run()
-    assert _rows(off['id']) == []
-    assert _rows(unset['id']) == [], 'the switch defaults off, and the settings page shows it off'
+    assert len(_rows(off['id'])) == 1
+    assert len(_rows(unset['id'])) == 1
+    assert _rows(left['id']) == [], 'every email channel off counts as leaving campaigns'
 
 
 def test_the_copy_is_true_for_every_member():

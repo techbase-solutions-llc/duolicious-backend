@@ -45,9 +45,11 @@ TARGET = f"{WEB_BASE_URL}/matches?tab=likes"
 # visit and their last likes-waiting email, so a member who stays away is
 # told again only when someone new likes them, not every week about the same
 # likes (review of Wave 3, 14 Oct 2026: 10 of the 16 due that day had been
-# away 60 days or more). And only with the Likes email switch on in their
-# notification settings: it defaults off (migration 0029), as the settings
-# page shows it.
+# away 60 days or more). It is a campaign (owner, 14 Oct 2026), so it
+# follows the campaigns unsubscribe, which also counts a member with every
+# email channel off. It does not read the per-like email switch: that
+# defaults off (migration 0029) and a push subscribe writes a row with it
+# off, so it cannot tell a member's choice from a default.
 _Q_DUE = f"""
     WITH waiting AS (
         SELECT l.liked_id AS pid, count(*) AS n, max(l.created_at) AS newest
@@ -71,8 +73,6 @@ _Q_DUE = f"""
        AND w.newest > GREATEST(p.last_online_time,
                                (SELECT max(l.sent_at) FROM email_send_log l
                                  WHERE l.person_id = p.id AND l.campaign = '{CAMPAIGN}'))
-       AND COALESCE((SELECT np.email_likes FROM notification_preference np
-                      WHERE np.person_id = p.id), FALSE)
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
        AND NOT {held.nudged_recently_sql('p.id')}
