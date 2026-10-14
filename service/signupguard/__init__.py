@@ -16,6 +16,7 @@ that were issued, which is what Admin > System reads.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import secrets
@@ -31,6 +32,9 @@ from database import api_tx
 NEW_PER_CLIENT_HOUR = 5
 NEW_PER_CLIENT_DAY = 10
 NEW_PER_NETWORK_DAY = 20
+
+# Distinct new addresses one network may ask codes for in a UTC day (item 2).
+NEW_ADDRESSES_PER_NETWORK_DAY = 5
 
 _REDIS_HOST = os.environ.get('DUO_REDIS_HOST', 'redis')
 _REDIS_PORT = int(os.environ.get('DUO_REDIS_PORT', 6379))
@@ -126,12 +130,45 @@ def _limit_refusal(ip: Optional[str]) -> Optional[str]:
     return None
 
 
+def _distinct_address_refusal(ip: Optional[str],
+                              normalized_email: str) -> Optional[str]:
+    """Hold one network to NEW_ADDRESSES_PER_NETWORK_DAY different new
+    addresses a day. An address already among them may ask again; a refused
+    one is not kept, so it takes no place. The set holds a hash of each
+    address, never the address. Fails open, like the limits."""
+    if _limits_exempt(ip):
+        return None
+    network = network_of(ip)
+    if network is None:
+        return None
+    day = int(_now() // 86400)
+    key = f'signupguard:addresses:{network}:d{day}'
+    member = hashlib.sha256(normalized_email.encode()).hexdigest()[:32]
+    try:
+        r = _redis()
+        pipe = r.pipeline()
+        pipe.sadd(key, member)
+        pipe.scard(key)
+        pipe.expire(key, 86400 + 60)
+        added, size, _ = pipe.execute()
+        if int(added) and int(size) > NEW_ADDRESSES_PER_NETWORK_DAY:
+            r.srem(key, member)
+            return 'network_addresses'
+    except Exception:
+        print('signupguard: Redis unreachable, distinct-address rule not applied:')
+        print(traceback.format_exc())
+    return None
+
+
 def new_address_refusal(*, email: str, normalized_email: str,
                         ip: Optional[str]) -> Optional[str]:
     """Why a code for an address with no account should not be sent, or None
     to send it. The caller answers a refusal with `decoy()` and records it.
     Never called for an existing account."""
-    return _limit_refusal(ip)
+    return (
+        _limit_refusal(ip)
+        or _distinct_address_refusal(ip, normalized_email)
+    )
 
 
 _Q_HAS_ACCOUNT = """
