@@ -1,7 +1,9 @@
 """Likes waiting, weekly (health review, 13 Oct 2026, findings 57 and 64).
 
 A member who has been away 3 days or more, and who has at least 1 like that
-arrived after they were last online, is told how many likes are waiting.
+arrived after they were last online and after their last one of these
+emails, is told how many likes are waiting. Only members with the Likes
+email switch on in their notification settings (email_likes, default off).
 Never who: no name, no photo, nothing about the likers, and the likers are
 told nothing. When members who fit what they are looking for (their gender
 and age preferences) have joined since their last visit, one line says how
@@ -37,6 +39,14 @@ TARGET = f"{WEB_BASE_URL}/matches?tab=likes"
 # Unanswered likes by the rules of the Liked you tab
 # (service/decisions Q_LIST_INCOMING_LIKES): not liked back, no block either
 # way, the liker still activated, no match between them.
+#
+# Due only when the newest of them is newer than both the member's last
+# visit and their last likes-waiting email, so a member who stays away is
+# told again only when someone new likes them, not every week about the same
+# likes (review of Wave 3, 14 Oct 2026: 10 of the 16 due that day had been
+# away 60 days or more). And only with the Likes email switch on in their
+# notification settings: it defaults off (migration 0029), as the settings
+# page shows it.
 _Q_DUE = f"""
     WITH waiting AS (
         SELECT l.liked_id AS pid, count(*) AS n, max(l.created_at) AS newest
@@ -56,7 +66,11 @@ _Q_DUE = f"""
      WHERE p.activated AND p.deletion_requested_at IS NULL
        AND lower(p.email) <> ALL(%(ex)s)
        AND p.last_online_time < NOW() - make_interval(days => {OFFLINE_DAYS})
-       AND w.newest > p.last_online_time
+       AND w.newest > GREATEST(p.last_online_time,
+                               (SELECT max(l.sent_at) FROM email_send_log l
+                                 WHERE l.person_id = p.id AND l.campaign = '{CAMPAIGN}'))
+       AND COALESCE((SELECT np.email_likes FROM notification_preference np
+                      WHERE np.person_id = p.id), FALSE)
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
        AND NOT {held.nudged_recently_sql('p.id')}

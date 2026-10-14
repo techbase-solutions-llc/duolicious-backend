@@ -13,7 +13,9 @@ THURSDAY = datetime(2026, 10, 15, 13, tzinfo=timezone.utc)   # ISO 2026 week 42
 WEDNESDAY = datetime(2026, 10, 14, 13, tzinfo=timezone.utc)
 
 
-def _person(make_person, name, gender='Woman', offline_days=5):
+def _person(make_person, name, gender='Woman', offline_days=5, email_likes=True):
+    """`email_likes` None leaves the member with no preference row, which
+    reads as the column's default (off)."""
     p = make_person(name=name, gender=gender)
     with api_tx() as tx:
         tx.execute(
@@ -21,7 +23,20 @@ def _person(make_person, name, gender='Woman', offline_days=5):
                       last_online_time = NOW() - make_interval(days => %(d)s)
                 WHERE id = %(i)s""",
             dict(i=p['id'], e=f"{name.lower()}-{p['id']}@ahavah-test.invalid", d=offline_days))
+        if email_likes is not None:
+            tx.execute("""INSERT INTO notification_preference (person_id, email_likes)
+                          VALUES (%(p)s, %(v)s)
+                          ON CONFLICT (person_id) DO UPDATE SET email_likes = %(v)s""",
+                       dict(p=p['id'], v=email_likes))
     return p
+
+
+def _sent_before(person, days_ago):
+    """A likes-waiting email the drain accepted `days_ago` days ago."""
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO email_send_log (person_id, campaign, campaign_id, sent_at)
+                      VALUES (%(p)s, 'likes_waiting', %(c)s, NOW() - make_interval(days => %(d)s))""",
+                   dict(p=person['id'], c=f"likes_waiting-old-{days_ago}", d=days_ago))
 
 
 def _like(liker, liked, hours_ago=24):
@@ -177,3 +192,28 @@ def test_the_preview_writes_nothing():
         after = tx.execute("SELECT count(*) AS n FROM campaign_link").fetchone()['n']
     assert after == before
     assert subject == '2 people like you on Ahavah' and 'who fit what you are looking for' in html
+
+
+def test_not_again_until_someone_new_likes_them(make_person, on):
+    """A member who stays away is not told about the same likes every week:
+    10 of the 16 due on 14 Oct had been away 60 days or more."""
+    her = _person(make_person, 'LongAway', offline_days=70)
+    _like(make_person(name='OldLiker', gender='Man'), her, hours_ago=24 * 30)
+    _sent_before(her, 7)
+    _run()
+    assert _rows(her['id']) == []
+    _like(make_person(name='NewLiker', gender='Man'), her, hours_ago=2)
+    _run()
+    rows = _rows(her['id'])
+    assert len(rows) == 1
+    assert rows[0]['subject'] == '2 people like you on Ahavah', 'the count still covers every like waiting'
+
+
+def test_a_member_with_like_emails_off_gets_none(make_person, on):
+    off = _person(make_person, 'LikeMailOff', email_likes=False)
+    _like(make_person(name='OffMailLiker', gender='Man'), off)
+    unset = _person(make_person, 'LikeMailUnset', email_likes=None)
+    _like(make_person(name='UnsetMailLiker', gender='Man'), unset)
+    _run()
+    assert _rows(off['id']) == []
+    assert _rows(unset['id']) == [], 'the switch defaults off, and the settings page shows it off'
