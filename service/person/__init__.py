@@ -934,7 +934,12 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # Both calls are idempotent; harmless when the user has no
         # referral relationships in either direction.
         new_uuid = str(row['person_uuid'])
-        credit_pending_for_invitee(tx, s.email)
+        inviter_uuid = credit_pending_for_invitee(tx, s.email)
+        # The inviter hears that their friend joined (finding 75). Held
+        # behind AHAVAH_FRIEND_JOINED_ENABLED, and behind a savepoint, so it
+        # can never undo this sign-up.
+        from emails.friend_joined import queue_for_inviter
+        queue_for_inviter(tx, inviter_uuid, row['person_id'])
         credit_pending_for_inviter(tx, s.email, new_uuid)
 
         # Personal referral code (migration 0037): every member can
