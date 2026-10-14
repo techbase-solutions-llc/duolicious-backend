@@ -41,7 +41,7 @@ def test_one_failing_job_does_not_stop_the_others(monkeypatch):
 def test_the_held_jobs_are_registered():
     import service.cron.returnmail as rm
     names = [name for name, _ in rm.JOBS]
-    for job in ('likes_waiting', 'match_reminder', 'message_reminder', 'profile_views'):
+    for job in ('likes_waiting', 'match_reminder', 'message_reminder', 'profile_views', 'one_photo'):
         assert job in names
 
 

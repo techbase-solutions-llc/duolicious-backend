@@ -19,7 +19,7 @@ import traceback
 from datetime import datetime, timezone
 
 from database import api_tx
-from emails import likes_waiting_weekly, profile_views_weekly, reminders
+from emails import likes_waiting_weekly, one_photo_nudge, profile_views_weekly, reminders
 from service.campaigns import held
 from service.campaigns.runner import audit_send
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
@@ -33,6 +33,7 @@ JOBS = [
     ('match_reminder', reminders.queue_match_reminders),
     ('message_reminder', reminders.queue_message_reminders),
     ('profile_views', profile_views_weekly.queue_due),
+    ('one_photo', one_photo_nudge.queue_due),
 ]
 
 print(f'Hello from cron module: {__name__}')
