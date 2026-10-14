@@ -1915,9 +1915,10 @@ def get_growth_spotlight_suggest(s: t.SessionInfo):
         last = tx.execute(_Q_LAST_FEATURED_GENDER).fetchone()
         rows = tx.execute(_Q_SUGGEST, dict(recent=last['gender'] if last else None)).fetchall()
         # Finding 78: each suggestion says what became of the member's last
-        # card (a lapse used to be invisible here), and a member whose card
-        # is still open is left out, since a second offer would be refused.
-        offers = last_offers(tx, [r['id'] for r in rows])
+        # member-of-the-week card (a lapse used to be invisible here), and a
+        # member whose card of that kind is still open is left out, since a
+        # second offer would be refused. An open welcome does not count.
+        offers = last_offers(tx, [r['id'] for r in rows], 'member_of_week')
         for r in rows:
             if not suggestable(offers.get(r['id'])):
                 continue

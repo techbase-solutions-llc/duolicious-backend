@@ -103,11 +103,11 @@ def test_last_offer_reads_open_then_lapsed(make_person):
     rk = _offer(p['id'])
     try:
         with api_tx('read committed') as tx:
-            assert last_offers(tx, [p['id']])[p['id']]['outcome'] == 'open'
+            assert last_offers(tx, [p['id']], 'member_of_week')[p['id']]['outcome'] == 'open'
         with api_tx() as tx:
             expire_lapsed(tx)
         with api_tx('read committed') as tx:
-            last = last_offers(tx, [p['id']])[p['id']]
+            last = last_offers(tx, [p['id']], 'member_of_week')[p['id']]
         assert last['outcome'] == 'lapsed' and last['kind'] == 'member_of_week'
         assert last['at'] is not None
     finally:
@@ -118,7 +118,7 @@ def test_a_member_never_offered_has_no_last_offer(make_person):
     from service.spotlight.offers import last_offers
     p = _eligible(make_person, 'NeverOffered')
     with api_tx('read committed') as tx:
-        assert last_offers(tx, [p['id']]) == {}
+        assert last_offers(tx, [p['id']], 'member_of_week') == {}
 
 
 def test_the_expiry_route_reports_and_audits_who_lapsed(client, make_person, settings_on):
@@ -156,3 +156,51 @@ def test_suggestions_skip_a_member_whose_card_is_still_open():
     from service.spotlight.offers import suggestable
     assert suggestable(None) and suggestable(dict(outcome='lapsed'))
     assert not suggestable(dict(outcome='open'))
+
+
+def test_the_last_offer_is_per_card_type(make_person):
+    """A member may hold a welcome and a member of the week at once (the
+    already_offered guard is per type), so an open welcome must not hide
+    them from the member-of-the-week suggestions."""
+    from service.spotlight.offers import expire_lapsed, last_offers, suggestable
+    p = _eligible(make_person, 'PerType')
+    _offer(p['id'])
+    try:
+        with api_tx() as tx:
+            expire_lapsed(tx)
+        with api_tx() as tx:
+            create_candidate(tx, kind='welcome', subject_person_id=p['id'],
+                             caption='Welcome', created_by='test')
+        with api_tx('read committed') as tx:
+            week = last_offers(tx, [p['id']], 'member_of_week')[p['id']]
+            welcome = last_offers(tx, [p['id']], 'welcome')[p['id']]
+        assert week['kind'] == 'member_of_week' and week['outcome'] == 'lapsed'
+        assert welcome['kind'] == 'welcome' and welcome['outcome'] == 'open'
+        assert suggestable(week)
+    finally:
+        _cleanup(p['id'])
+
+
+def test_the_last_offer_reads_every_platform_row_of_the_card(make_person):
+    """One card is a row per platform. Published on one platform and failed
+    on the other is a published card, whichever row changed last."""
+    from service.spotlight.offers import last_offers
+    p = _eligible(make_person, 'PerPlatform')
+    rk = _offer(p['id'], days_ago=1)
+    try:
+        with api_tx() as tx:
+            tx.execute("""UPDATE publishing_queue SET status = 'published', updated_at = NOW() - interval '2 hours'
+                           WHERE request_key = %(rk)s AND platform = 'facebook'""", dict(rk=rk))
+            tx.execute("""UPDATE publishing_queue SET status = 'failed', error = 'render_failed', updated_at = NOW()
+                           WHERE request_key = %(rk)s AND platform = 'instagram'""", dict(rk=rk))
+        with api_tx('read committed') as tx:
+            assert last_offers(tx, [p['id']], 'member_of_week')[p['id']]['outcome'] == 'published'
+        with api_tx() as tx:
+            tx.execute("""UPDATE publishing_queue SET status = 'awaiting_render', error = NULL
+                           WHERE request_key = %(rk)s AND platform = 'facebook'""", dict(rk=rk))
+            tx.execute("""UPDATE publishing_queue SET status = 'cancelled', error = 'approval_expired'
+                           WHERE request_key = %(rk)s AND platform = 'instagram'""", dict(rk=rk))
+        with api_tx('read committed') as tx:
+            assert last_offers(tx, [p['id']], 'member_of_week')[p['id']]['outcome'] == 'open',                 'a card still open on one platform is open, as the already_offered guard reads it'
+    finally:
+        _cleanup(p['id'])

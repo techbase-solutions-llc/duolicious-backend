@@ -14,8 +14,9 @@ again, and nobody did.
 This module is the record that was missing. `expire_lapsed` names each
 card that lapses (once per card, not once per platform row) so the route
 can report and audit it; `last_offers` says what happened to each member's
-most recent card, so the suggestion list can show it and leave out a member
-whose card is still waiting. Whether to offer again stays a person's call:
+most recent card of one kind, read across its platform rows, so the
+suggestion list can show it and leave out a member whose card of that kind
+is still waiting. Whether to offer again stays a person's call:
 nothing here offers a card.
 
 Every function runs inside the caller's api_tx; none opens one.
@@ -37,12 +38,28 @@ _Q_EXPIRE = """
     RETURNING request_key, subject_person_id, kind
 """
 
-_Q_LAST = """
+# One row per member: their card of the one kind asked for, read across all
+# of its platform rows (one card is a row per platform, and the rows can
+# differ: published on one, failed on the other). A card still open on any
+# platform comes first, as the already_offered guard in
+# queue.create_candidate reads it; otherwise the newest card.
+_OPEN_SQL = ', '.join(f"'{s}'" for s in OPEN_STATUSES)
+_Q_LAST = f"""
+    WITH cards AS (
+        SELECT subject_person_id, request_key,
+               min(created_at) AS created_at, max(updated_at) AS updated_at,
+               bool_or(status IN ({_OPEN_SQL})) AS is_open,
+               bool_or(status = 'published') AS published,
+               bool_or(error = 'approval_expired') AS lapsed,
+               bool_or(error = 'member_skipped') AS skipped
+          FROM publishing_queue
+         WHERE subject_person_id = ANY(%(ids)s) AND kind = %(kind)s
+         GROUP BY subject_person_id, request_key
+    )
     SELECT DISTINCT ON (subject_person_id)
-           subject_person_id, kind, request_key, status, error, updated_at
-      FROM publishing_queue
-     WHERE subject_person_id = ANY(%(ids)s) AND kind IN ('welcome', 'member_of_week')
-     ORDER BY subject_person_id, created_at DESC, updated_at DESC
+           subject_person_id, is_open, published, lapsed, skipped, updated_at
+      FROM cards
+     ORDER BY subject_person_id, is_open DESC, created_at DESC, request_key
 """
 
 # Distinct cards, not platform rows: one card is two rows.
@@ -69,28 +86,32 @@ def expire_lapsed(tx, days: int = 7) -> tuple[list[dict], int]:
     return out, len(rows)
 
 
-def _outcome(status: str, error: Optional[str]) -> str:
-    if status in OPEN_STATUSES:
+def _outcome(card) -> str:
+    if card['is_open']:
         return 'open'
-    if status == 'published':
+    if card['published']:
         return 'published'
-    if error == 'approval_expired':
+    if card['lapsed']:
         return 'lapsed'
-    if error == 'member_skipped':
+    if card['skipped']:
         return 'skipped'
     return 'cancelled'
 
 
-def last_offers(tx, person_ids: list[int]) -> dict[int, dict]:
-    """Each member's most recent card offer: kind, outcome (open, published,
-    lapsed, skipped or cancelled) and when it last changed. A member never
-    offered a card is absent."""
+def last_offers(tx, person_ids: list[int], kind: str) -> dict[int, dict]:
+    """Each member's last card of `kind` (one of OFFER_KINDS): kind, outcome
+    (open, published, lapsed, skipped or cancelled) and when it last
+    changed. Per kind because the already_offered guard is per kind: a
+    member may hold a welcome and a member of the week at once. A member
+    never offered a card of that kind is absent."""
+    if kind not in OFFER_KINDS:
+        raise ValueError(f'not an offer kind: {kind}')
     if not person_ids:
         return {}
     out = {}
-    for r in tx.execute(_Q_LAST, dict(ids=list(person_ids))).fetchall():
+    for r in tx.execute(_Q_LAST, dict(ids=list(person_ids), kind=kind)).fetchall():
         out[r['subject_person_id']] = dict(
-            kind=r['kind'], outcome=_outcome(r['status'], r['error']),
+            kind=kind, outcome=_outcome(r),
             at=r['updated_at'].isoformat() if r['updated_at'] else None)
     return out
 
