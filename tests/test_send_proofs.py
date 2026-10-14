@@ -84,3 +84,25 @@ def test_the_proofs_use_the_held_copy():
     assert 'main profile photo' in by_name['e4_card_ready']['html']
     assert 'a 30-minute boost on Discover' in by_name['referral_member']['html']
     assert 'Share your invite link' in by_name['e2_personal']['html']
+
+
+def test_no_proof_carries_a_live_unsubscribe_or_turn_off_link(capture):
+    """The proofs go to the owner's own address: a real /u/<token> link
+    ("Unsubscribe", "Turn off notification emails", "Stop the weekly email")
+    would change his own settings if he clicked it. Each is an inert
+    placeholder, and the copy around it is the real email's."""
+    from service.config import WEB_BASE_URL
+    from service.unsubscribe import _SCOPES, make_token
+    assert sp.PROOF_LINK_DISABLED == 'https://ahavah.app/proof-link-disabled'
+    tokens = [make_token(scope, sp.PROOF_TO) for scope in _SCOPES]
+    for e in sp.plan()[0]:
+        html = e['html']
+        assert f'{WEB_BASE_URL.rstrip("/")}/u/' not in html, f"{e['name']} carries a live unsubscribe link"
+        assert not [t for t in tokens if t in html], f"{e['name']} carries the owner's unsubscribe token"
+        assert f'href="{sp.PROOF_LINK_DISABLED}"' in html, f"{e['name']} lost its unsubscribe link"
+    by_name = {e['name']: e['html'] for e in sp.plan()[0]}
+    assert 'Turn off notification emails' in by_name['match_reminder']
+    assert 'Stop the weekly email' in by_name['e2_personal']
+    smtp, _pushes, _subs = capture
+    sp.main(['--send'])
+    assert all(not s.get('list_unsubscribe') for s in smtp.sent)

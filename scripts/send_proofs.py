@@ -23,15 +23,34 @@ What it does and does not do:
     directly, so not even that subscription's failure counter is touched.
   * No switch is read or changed: a proof goes out whichever way a switch is
     set, and turning one on stays a separate, deliberate act.
+  * Every unsubscribe and "turn off" link points at PROOF_LINK_DISABLED. The
+    proofs go to the owner's own address, so a real /u/<token> link would
+    change his own settings if he clicked it. The words around each link
+    are the real email's.
 """
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import Optional
 
 PROOF_TO = 'harrigan.tennyson@gmail.com'
 PUSH_PERSON_ID = 18
+PROOF_LINK_DISABLED = 'https://ahavah.app/proof-link-disabled'
+
+
+def _inert(name: str, html: str) -> str:
+    """The proof with each /u/<token> link replaced by PROOF_LINK_DISABLED.
+    Refuses a proof that still carries one of the owner's unsubscribe
+    tokens, whatever link it sits in."""
+    from service.config import WEB_BASE_URL
+    from service.unsubscribe import _SCOPES, make_token
+    base = re.escape(WEB_BASE_URL.rstrip('/'))
+    out = re.sub(base + r'/u/[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
+    if any(make_token(scope, PROOF_TO) in out for scope in _SCOPES):
+        raise RuntimeError(f'the {name} proof still carries a live unsubscribe link')
+    return out
 
 
 def _emails() -> list[dict]:
@@ -64,8 +83,8 @@ def _emails() -> list[dict]:
     out = []
     for name, label, build, from_addr in builders:
         subject, html = build(PROOF_TO)
-        out.append(dict(name=name, label=label, subject=f"[PROOF] {subject}", html=html,
-                        from_addr=from_addr))
+        out.append(dict(name=name, label=label, subject=f"[PROOF] {subject}",
+                        html=_inert(name, html), from_addr=from_addr))
     return out
 
 
