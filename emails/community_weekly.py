@@ -49,9 +49,12 @@ def _spotlight_block(sp: dict) -> str:
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">{first_name}, {age} <span style="color:{MUTED};">in {country}</span></p>
 """
 
-def _newcomers_block(rows: list[dict]) -> str:
+def _newcomers_block(rows: list[dict], invite_below: bool = False) -> str:
     if not rows:
-        return f'<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">No new members this week. Know someone who belongs here? Your invite link is in your profile.</p>'
+        # With the member's own invite link further down (finding 76) the
+        # pointer to the profile would only repeat it.
+        tail = '' if invite_below else ' Know someone who belongs here? Your invite link is in your profile.'
+        return f'<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">No new members this week.{tail}</p>'
     items = "".join(f'<li style="margin:0 0 6px;">{_esc(r["first_name"])}' + (f' <span style="color:{MUTED};">in {_esc_country(r["country"])}</span>' if r.get('country') else '') + '</li>' for r in rows)
     return f'<p class="e-text" style="margin:0 0 8px;font-family:{SANS};font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:{MUTED};font-weight:700;">New this week</p><ul style="margin:0 0 20px;padding-left:20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">{items}</ul>'
 
@@ -76,21 +79,48 @@ def _safe_spotlight_block(spotlight: Optional[dict]) -> str:
         return ''
 
 
-def community_weekly_html(new_members: list[dict], total_members: int, spotlight: Optional[dict], cta_url: str, unsubscribe_url: str) -> str:
+def _personal_block(line: Optional[str]) -> str:
+    """The reader's own reason to come back (finding 60). Built by
+    send_community_weekly from counts only, never member text."""
+    if not line:
+        return ''
+    return f'<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:18px;line-height:1.5;color:{INK_SOFT};font-weight:700;">{line}</p>'
+
+
+def _invite_block(invite_url: Optional[str]) -> str:
+    """The member's own invite link, every week (finding 76)."""
+    if not invite_url:
+        return ''
+    return f"""
+<div style="height:24px;line-height:24px;">&nbsp;</div>
+<p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">Know a Torah-observant single who belongs here? Send them your own invite link.</p>
+{button("Share your invite link", invite_url, variant="dark")}
+"""
+
+
+def community_weekly_html(new_members: list[dict], total_members: int, spotlight: Optional[dict], cta_url: str, unsubscribe_url: str,
+                          *, personal_line: Optional[str] = None, invite_url: Optional[str] = None,
+                          cta_label: str = "Open Discover") -> str:
+    """`personal_line`, `invite_url` and `cta_label` are the held personal
+    parts (AHAVAH_E2_PERSONAL_ENABLED); left out, the email is as it was."""
     body = f"""
 {chip("Community")}
 
 {title_image("title-community.png", "title-community-wht.png", "This week on Ahavah.", 460)}
 
+{_personal_block(personal_line)}
+
 {_safe_spotlight_block(spotlight)}
 
-{_newcomers_block(new_members)}
+{_newcomers_block(new_members, invite_below=bool(invite_url))}
 
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   The community is now <strong>{total_members} members</strong> across borders.
 </p>
 
-{button("Open Discover", cta_url)}
+{button(cta_label, cta_url)}
+
+{_invite_block(invite_url)}
 
 <div style="height:20px;line-height:20px;">&nbsp;</div>
 

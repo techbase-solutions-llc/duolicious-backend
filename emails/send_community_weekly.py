@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.community_weekly import community_weekly_html, SUBJECT, FROM_ADDR
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns.runner import audit_send, run_campaign
+from service.campaigns.switches import enabled
 from service.campaigns.weekid import week_campaign_id
 from service.admin.queries.members import member_sql
 from service.config import WEB_BASE_URL
-from service.growth.queries import _excluded
+from service.growth.queries import _excluded, count_newcomers_since
 from service.unsubscribe import make_url as _unsub_url
 
 UNSUB_SCOPE = 'community'
@@ -113,13 +114,93 @@ def recipient_count() -> int:
     with api_tx('read committed') as tx:
         return int(tx.execute(_Q_RECIPIENT_COUNT, dict(ex=_excluded(), sup=suppressed_sql_pattern())).fetchone()['n'])
 
+# The reader's own counts for the personal line (findings 60 and 76), held
+# behind AHAVAH_E2_PERSONAL_ENABLED. Counts only: likes waiting by the rules
+# of the Liked you tab (service/decisions Q_LIST_INCOMING_LIKES), unread
+# conversations by the inbox's counters (never the messages), and the
+# member's invite code.
+_Q_PERSONAL = """
+    SELECT
+      (SELECT count(*) FROM liked l
+         JOIN person liker ON liker.id = l.liker_id AND liker.activated
+        WHERE l.liked_id = p.id
+          AND NOT EXISTS (SELECT 1 FROM liked rev WHERE rev.liker_id = p.id AND rev.liked_id = l.liker_id)
+          AND NOT is_blocked_pair(p.id, l.liker_id)
+          AND NOT EXISTS (SELECT 1 FROM ahavah_match m
+                           WHERE m.user_a_id = LEAST(p.id, l.liker_id)
+                             AND m.user_b_id = GREATEST(p.id, l.liker_id))) AS likes,
+      (SELECT count(*) FROM inbox i
+         JOIN person s ON s.uuid = uuid_or_null(split_part(i.remote_bare_jid, '@', 1))
+        WHERE i.luser = p.uuid::text AND i.unread_count > 0
+          AND s.activated AND NOT is_blocked_pair(p.id, s.id)) AS unread,
+      p.referral_code
+      FROM person p WHERE p.id = %(pid)s
+"""
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many.format(n=n)
+
+
+def personal_parts(likes: int, unread: int, fits: int) -> dict:
+    """The one strongest reason, in this order: likes waiting, unread
+    messages, newcomers who fit. Returns subject, line, cta_label, target."""
+    if likes:
+        return dict(
+            subject=_plural(likes, 'This week on Ahavah: 1 like is waiting for you',
+                            'This week on Ahavah: {n} likes are waiting for you'),
+            line=_plural(likes, '1 person has liked you and is waiting for an answer.',
+                         '{n} people have liked you and are waiting for an answer.'),
+            cta_label='See who likes you', target=f"{WEB_BASE_URL}/matches?tab=likes")
+    if unread:
+        return dict(subject=SUBJECT,
+                    line=_plural(unread, 'You have an unread message from 1 person.',
+                                 'You have unread messages from {n} people.'),
+                    cta_label='Read your messages', target=f"{WEB_BASE_URL}/inbox")
+    line = None
+    if fits:
+        line = _plural(fits, '1 new person who fits what you are looking for joined this week.',
+                       '{n} new people who fit what you are looking for joined this week.')
+    return dict(subject=SUBJECT, line=line, cta_label='Open Discover', target=f"{WEB_BASE_URL}/discover")
+
+
+def _build_personal(row: dict) -> tuple[str, str]:
+    week = row['week']
+    dry = row.get('dry_run', False)
+    pid = row['person_id']
+    with api_tx() as tx:
+        r = tx.execute(_Q_PERSONAL, dict(pid=pid)).fetchone()
+        fits = count_newcomers_since(tx, pid, datetime.now(timezone.utc) - timedelta(days=7))
+        parts = personal_parts(int(r['likes']), int(r['unread']), int(fits))
+        cta = make_campaign_link(tx, 'e2', parts['target'], pid, dry_run=dry)
+        invite = (make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/i/{r['referral_code']}", pid, dry_run=dry)
+                  if r['referral_code'] else None)
+    return parts['subject'], community_weekly_html(
+        week['new_members'], week['total'], week['spotlight'], cta,
+        _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
+        personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'])
+
+
 def build_for(row: dict) -> tuple[str, str]:
     week = row['week']
+    if enabled('e2_personal') and row.get('person_id'):
+        return _build_personal(row)
     with api_tx() as tx:
         cta = make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/discover", row['person_id'] or None,
                                  dry_run=row.get('dry_run', False))
     return SUBJECT, community_weekly_html(week['new_members'], week['total'], week['spotlight'], cta,
                                           _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
+
+
+def preview_personal(to: str) -> tuple[str, str]:
+    """The proof of the personal E2: 2 likes waiting, sample newcomers, the
+    invite button pointing at /invite. Reads nothing per member and stores
+    nothing."""
+    parts = personal_parts(2, 0, 0)
+    return parts['subject'], community_weekly_html(
+        [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
+        parts['target'], _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
+        personal_line=parts['line'], invite_url=f"{WEB_BASE_URL}/invite", cta_label=parts['cta_label'])
 
 def preview_row(to: str) -> dict:
     return dict(person_id=0, email=to, name='Preview', week=_week_context())
