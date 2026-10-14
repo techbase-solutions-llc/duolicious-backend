@@ -572,6 +572,18 @@ def signup_env(client, monkeypatch):
     def advance(seconds: float) -> None:
         clock['t'] += seconds
 
+    # DNS never leaves the test. `signup_env.dns[domain]` is what a lookup
+    # answers: True (takes mail, the default), False (cannot) or None (DNS
+    # did not answer). `signup_env.dns_calls` lists the lookups made.
+    dns: dict = {}
+    dns_calls: list[str] = []
+
+    def resolve(domain: str):
+        dns_calls.append(domain)
+        return dns.get(domain, True)
+
+    monkeypatch.setattr(guard, '_resolve_mail_domain', resolve)
+
     started = datetime.now(timezone.utc)
 
     def refusals() -> list[str]:
@@ -583,11 +595,11 @@ def signup_env(client, monkeypatch):
         return [r['refused'] for r in rows]
     emails: list[str] = []
 
-    def new_email() -> str:
+    def new_email(domain: str = 'gmail.com') -> str:
         # gmail.com is on the good-domain list, so a new address there gets
         # past the existing disposable-domain check. No dots or plus signs,
         # so normalisation leaves it as written.
-        address = f'sg{uuid4().hex[:20]}@gmail.com'
+        address = f'sg{uuid4().hex[:20]}@{domain}'
         emails.append(address)
         return address
 
@@ -607,7 +619,8 @@ def signup_env(client, monkeypatch):
 
     yield SimpleNamespace(sent=sent, request=request, issued=issued,
                           new_email=new_email, advance=advance,
-                          refusals=refusals, redis=redis)
+                          refusals=refusals, redis=redis,
+                          dns=dns, dns_calls=dns_calls)
 
     with api_tx() as tx:
         tx.execute('DELETE FROM otp_request WHERE requested_at >= %(t)s',

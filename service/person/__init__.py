@@ -391,20 +391,28 @@ def post_request_otp(req: t.PostRequestOtp):
     if _ip_blocked(req.email):
         return 'IP address blocked', 460
 
+    new_address = not signupguard.has_account(norm)
+
+    # The disposable-domain check answers 400 as before, with one change: a
+    # NEW address on the bad-domain list is refused quietly below instead,
+    # so the answer reveals nothing (TEC-1848, item 5). An unlisted domain,
+    # and any existing account, get today's answer.
+    listed_bad = False
     if not check_and_update_bad_domains(req.email):
-        return 'Disposable email', 400
+        listed_bad = new_address and signupguard.on_bad_domain_list(req.email)
+        if not listed_bad:
+            return 'Disposable email', 400
 
     # Free bot protection for addresses with no account (TEC-1848). An
     # existing account, admins included, never reaches these rules, so a
     # member signs in exactly as before. A refusal is answered as a send is
     # and nothing is mailed.
-    new_address = not signupguard.has_account(norm)
     if new_address:
         refusal = signupguard.new_address_refusal(
-            email=req.email,
             normalized_email=norm,
             ip=request.remote_addr,
             stamp=req.signup_stamp,
+            listed_bad=listed_bad,
         )
         if refusal:
             signupguard.record_refusal(

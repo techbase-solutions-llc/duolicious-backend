@@ -60,6 +60,15 @@ NEW_PER_NETWORK_DAY = 20
 # Distinct new addresses one network may ask codes for in a UTC day (item 2).
 NEW_ADDRESSES_PER_NETWORK_DAY = 5
 
+# Undeliverable domains (item 5). A DNS answer is kept for a day; a lookup
+# that does not answer in time lets the code through and is not kept.
+MAIL_DOMAIN_CACHE_SECONDS = 86400
+DNS_LIFETIME_SECONDS = 2.0
+# Never mailed (service.person._send_otp returns early), so never looked up:
+# in real DNS example.com has a null MX, and the local and test sign-ups
+# that use it would otherwise lose their 000000 code.
+_NEVER_MAILED = frozenset({'example.com'})
+
 _REDIS_HOST = os.environ.get('DUO_REDIS_HOST', 'redis')
 _REDIS_PORT = int(os.environ.get('DUO_REDIS_PORT', 6379))
 _redis_client = None
@@ -232,17 +241,94 @@ def _distinct_address_refusal(ip: Optional[str],
     return None
 
 
-def new_address_refusal(*, email: str, normalized_email: str,
+_Q_ON_BAD_DOMAIN_LIST = """
+    SELECT 1 FROM bad_email_domain WHERE domain = %(domain)s LIMIT 1
+"""
+
+
+def on_bad_domain_list(email: str) -> bool:
+    """True when the address's domain is in bad_email_domain (loaded from
+    email-domains-bad.sql). The domain is read as the existing disposable
+    check reads it: everything after the last @, lower-cased."""
+    domain = (email or '').strip().rpartition('@')[2].lower()
+    with api_tx('read committed') as tx:
+        row = tx.execute(_Q_ON_BAD_DOMAIN_LIST, dict(domain=domain)).fetchone()
+    return row is not None
+
+
+def _resolve_mail_domain(domain: str) -> Optional[bool]:
+    """True when the domain can take mail: it has an MX record, or no MX and
+    an A or AAAA record to fall back on (RFC 5321). False when it cannot: no
+    such domain, a null MX (RFC 7505, the single exchange "."), or no
+    record at all. None when DNS did not answer (time-out, server failure),
+    which the caller treats as deliverable."""
+    import dns.resolver
+
+    resolver = dns.resolver.Resolver()
+    resolver.lifetime = DNS_LIFETIME_SECONDS
+    try:
+        answer = resolver.resolve(domain, 'MX')
+        exchanges = [str(record.exchange).rstrip('.') for record in answer]
+        return any(exchanges)
+    except dns.resolver.NXDOMAIN:
+        return False
+    except dns.resolver.NoAnswer:
+        pass
+    except Exception:
+        return None
+    for rdtype in ('A', 'AAAA'):
+        try:
+            resolver.resolve(domain, rdtype)
+            return True
+        except dns.resolver.NXDOMAIN:
+            return False
+        except dns.resolver.NoAnswer:
+            continue
+        except Exception:
+            return None
+    return False
+
+
+def _domain_refusal(normalized_email: str) -> Optional[str]:
+    domain = normalized_email.rpartition('@')[2]
+    if not domain or domain in _NEVER_MAILED:
+        return None
+    key = f'signupguard:mx:{domain}'
+    try:
+        cached = _redis().get(key)
+    except Exception:
+        cached = None
+    if cached is not None:
+        return None if cached == '1' else 'no_mx'
+    takes_mail = _resolve_mail_domain(domain)
+    if takes_mail is None:
+        print(f'signupguard: DNS did not answer for {domain}, sending the code')
+        return None
+    try:
+        _redis().set(key, '1' if takes_mail else '0', ex=MAIL_DOMAIN_CACHE_SECONDS)
+    except Exception:
+        pass
+    return None if takes_mail else 'no_mx'
+
+
+def new_address_refusal(*, normalized_email: str,
                         ip: Optional[str],
-                        stamp: Optional[str] = None) -> Optional[str]:
+                        stamp: Optional[str] = None,
+                        listed_bad: bool = False) -> Optional[str]:
     """Why a code for an address with no account should not be sent, or None
     to send it. The caller answers a refusal with `decoy()` and records it.
-    Never called for an existing account. The stamp goes first: it costs
-    nothing and a request it refuses uses up no limit."""
+    Never called for an existing account.
+
+    In order: the stamp, which costs nothing, so a request it refuses uses
+    up no limit; the limits, so a source cycling through bad domains still
+    spends its allowance; then the domain, `listed_bad` meaning it is on the
+    bad-domain list, and last the DNS lookup."""
     return (
         _stamp_refusal(stamp)
         or _limit_refusal(ip)
         or _distinct_address_refusal(ip, normalized_email)
+        or ('bad_domain' if listed_bad else None)
+        or _domain_refusal(normalized_email)
     )
 
 
