@@ -132,8 +132,10 @@ def _clear_referral_rows(suffix):
                    dict(s=suffix))
 
 
-def test_a_referral_cron_tick_that_queues_is_audited(make_person):
+def test_a_referral_cron_tick_that_queues_is_audited(make_person, monkeypatch):
     from service.cron.referralintro import _tick
+    # The referral cron waits for the members' body switch (finding 68).
+    monkeypatch.setenv('AHAVAH_REFERRAL_MEMBER_BODY_ENABLED', '1')
     _due_member(make_person, 'AuditDue')
     y, w, _ = datetime.now(timezone.utc).isocalendar()
     suffix = f'{y}w{w:02d}'
@@ -154,6 +156,7 @@ def test_a_referral_cron_tick_that_queues_is_audited(make_person):
 def test_a_scheduled_referral_run_is_audited(make_person, monkeypatch):
     import importlib
     script = importlib.import_module('scripts.schedule_referral_intro')
+    monkeypatch.setenv('AHAVAH_REFERRAL_MEMBER_BODY_ENABLED', '1')
     _due_member(make_person, 'AuditSched')
     at = (datetime.now(timezone.utc) + timedelta(days=400)).replace(microsecond=0)
     suffix = 'sched' + at.strftime('%Y%m%dT%H%M')
