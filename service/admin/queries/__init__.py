@@ -63,7 +63,7 @@ from service.admin.queries.moderation import (
 
 from service.admin.queries.system import (
     Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_FEEDBACK_RECENT,
-    Q_VERIFICATION_JOBS,
+    Q_VERIFICATION_JOBS, Q_OTP_DAILY, Q_OTP_REFUSALS_30D,
 )
 
 from service.admin.queries.audit import Q_AUDIT_LIST, Q_AUDIT_COUNT

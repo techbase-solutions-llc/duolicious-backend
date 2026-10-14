@@ -1,5 +1,10 @@
 """SQL for the System tab — operational health snapshot."""
-from service.admin.queries.days import BARBADOS_TODAY, barbados_day_of_naive_utc
+from service.admin.queries.days import (
+    BARBADOS_TODAY,
+    barbados_day,
+    barbados_day_of_naive_utc,
+    barbados_days,
+)
 from service.admin.queries.members import member_sql
 
 _MEMBER = member_sql('person')
@@ -57,6 +62,54 @@ Q_OTP_24H = """
     SELECT COUNT(*) AS sent_24h
       FROM duo_session
      WHERE otp_expiry > NOW() - INTERVAL '24 hours'
+"""
+
+# Sign-in codes requested and never entered, per Barbados day for the last
+# 30 days, split into new addresses (no account when the code was asked
+# for) and existing ones (TEC-1848, item 6). The free bot protection works
+# if `new_never_entered` falls. Read from otp_request (migration 0065): one
+# row per /request-otp that issued a code, marked entered by /check-otp. A
+# resend on the same session is the same row.
+#
+# `refused` is the requests the server answered as though it had sent a
+# code and did not (honeypot, timing stamp, new-address limits,
+# undeliverable domain). They are kept off the never-entered line, which
+# would otherwise rise with every bot the rules stop.
+#
+# Today's codes may still be entered: a code lives 10 minutes, so the
+# current day's never-entered figure settles shortly after the day ends.
+Q_OTP_DAILY = f"""
+    WITH days AS ({barbados_days(30)})
+    SELECT
+        days.d AS day,
+        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND r.new_address)
+            AS new_requested,
+        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND r.new_address
+                              AND r.entered_at IS NULL)
+            AS new_never_entered,
+        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND NOT r.new_address)
+            AS existing_requested,
+        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND NOT r.new_address
+                              AND r.entered_at IS NULL)
+            AS existing_never_entered,
+        COUNT(r.id) FILTER (WHERE r.refused IS NOT NULL)
+            AS refused
+      FROM days
+      LEFT JOIN otp_request r
+        ON r.requested_at >= NOW() - INTERVAL '31 days'
+       AND {barbados_day('r.requested_at')} = days.d
+     GROUP BY days.d
+     ORDER BY days.d
+"""
+
+# Why requests were refused over the same 30 days, most frequent first.
+Q_OTP_REFUSALS_30D = """
+    SELECT refused AS reason, COUNT(*) AS count
+      FROM otp_request
+     WHERE refused IS NOT NULL
+       AND requested_at > NOW() - INTERVAL '30 days'
+     GROUP BY refused
+     ORDER BY count DESC, refused
 """
 
 # Campaign email delivery, which unlike OTP delivery IS measured: every

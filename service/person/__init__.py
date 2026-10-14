@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from service.config import API_BASE_URL, EMAIL_DOMAIN, PRODUCT_NAME, SIGNUPS_OPEN, SIGNUP_ALLOWED_DOMAINS
 from service import entitlements
 from service import metapixel
+from service import signupguard
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
@@ -364,7 +365,13 @@ def post_request_otp(req: t.PostRequestOtp):
     # the bot can't tell it was rejected.
     from service.antibot import is_honeypot_hit, verify_turnstile
     if is_honeypot_hit(req.website):
-        return dict(session_token=secrets.token_hex(64))
+        signupguard.record_refusal(
+            'honeypot',
+            new_address=not signupguard.has_account(normalize_email(req.email)),
+            email=req.email,
+            ip=request.remote_addr,
+        )
+        return signupguard.decoy()
 
     # Pre-launch gate FIRST: signups closed to the public until launch.
     # Run before firehol + disposable so closed-beta callers don't probe
@@ -386,6 +393,8 @@ def post_request_otp(req: t.PostRequestOtp):
 
     if not check_and_update_bad_domains(req.email):
         return 'Disposable email', 400
+
+    new_address = not signupguard.has_account(norm)
 
     session_token = secrets.token_hex(64)
     session_token_hash = sha512(session_token)
@@ -429,6 +438,7 @@ def post_request_otp(req: t.PostRequestOtp):
         return dict(session_token=session_token)
 
     _send_otp(req.email, otp)
+    signupguard.record_issued(session_token_hash, new_address)
 
     return dict(session_token=session_token)
 
@@ -513,6 +523,10 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
                 """,
                 dict(source=req.source, email=s.email),
             )
+
+    # Admin > System counts codes that were never entered (TEC-1848). Its
+    # own best-effort transaction, after the sign-in has committed.
+    signupguard.record_entered(s.session_token_hash)
 
     return dict(
         onboarded=row['person_id'] is not None,

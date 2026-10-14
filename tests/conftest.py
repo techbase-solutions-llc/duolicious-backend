@@ -517,3 +517,73 @@ def sign_in():
         return {'Authorization': f'Bearer {tok}'}
 
     return _sign_in
+
+
+# ---------------------------------------------------------------------------
+# Sign-in codes through the real /request-otp route (TEC-1848)
+# ---------------------------------------------------------------------------
+# `signup_env.request(email, ip=..., **body)` posts /request-otp from a
+# chosen client address. Nothing is mailed: `_send_otp` is replaced and
+# every address it would have mailed lands in `signup_env.sent`.
+# `signup_env.issued(token)` says whether a returned token is a real
+# pending session (a code exists) or the decoy a refusal hands back.
+#
+# Flask-Limiter is switched off so a test sees only the rules it is about;
+# the sign-up gate is open and the FireHOL list matches nothing. The
+# otp_request rows the test wrote are deleted afterwards.
+
+@pytest.fixture
+def signup_env(client, monkeypatch):
+    import hashlib
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from database import api_tx
+    import service.person as person
+    from service.api.decorators import limiter
+
+    class _NotListed:
+        def matches(self, _ip):
+            return False
+
+    sent: list[str] = []
+    monkeypatch.setattr(person, '_send_otp', lambda email, otp: sent.append(email))
+    monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
+    monkeypatch.setattr(person, 'firehol', _NotListed())
+    monkeypatch.setattr(limiter, 'enabled', False)
+
+    started = datetime.now(timezone.utc)
+    emails: list[str] = []
+
+    def new_email() -> str:
+        # gmail.com is on the good-domain list, so a new address there gets
+        # past the existing disposable-domain check. No dots or plus signs,
+        # so normalisation leaves it as written.
+        address = f'sg{uuid4().hex[:20]}@gmail.com'
+        emails.append(address)
+        return address
+
+    # Not 127.0.0.1: other tests in the shared database ban that address,
+    # and a banned address is answered with a decoy, as a refusal is.
+    def request(email: str, ip: str = '10.184.8.1', **body):
+        emails.append(email)
+        return client.post('/request-otp', json=dict(email=email, **body),
+                           environ_base={'REMOTE_ADDR': ip})
+
+    def issued(token: str) -> bool:
+        with api_tx('read committed') as tx:
+            row = tx.execute(
+                'SELECT 1 FROM duo_session WHERE session_token_hash = %(h)s',
+                dict(h=hashlib.sha512(token.encode()).hexdigest())).fetchone()
+        return row is not None
+
+    yield SimpleNamespace(sent=sent, request=request, issued=issued,
+                          new_email=new_email)
+
+    with api_tx() as tx:
+        tx.execute('DELETE FROM otp_request WHERE requested_at >= %(t)s',
+                   dict(t=started))
+        for email in emails:
+            tx.execute('DELETE FROM duo_session WHERE email = %(e)s', dict(e=email))
+            tx.execute('DELETE FROM onboardee WHERE email = %(e)s', dict(e=email))

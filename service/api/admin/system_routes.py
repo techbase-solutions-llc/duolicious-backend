@@ -7,7 +7,7 @@ from service.api.decorators import aget
 from service.admin import require_admin
 from service.admin.queries import (
     Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_FEEDBACK_RECENT,
-    Q_VERIFICATION_JOBS)
+    Q_VERIFICATION_JOBS, Q_OTP_DAILY, Q_OTP_REFUSALS_30D)
 from service.verificationlease import (
     VERIFICATION_LEASE_SECONDS,
     VERIFICATION_MAX_REAPS,
@@ -21,6 +21,10 @@ def get_system_health(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         health = tx.execute(Q_SYSTEM_HEALTH).fetchone() or {}
         otp = tx.execute(Q_OTP_24H).fetchone() or {}
+        # Codes requested and never entered, per day, new and existing
+        # addresses apart, and why requests were refused (TEC-1848).
+        otp_daily = tx.execute(Q_OTP_DAILY).fetchall()
+        otp_refusals = tx.execute(Q_OTP_REFUSALS_30D).fetchall()
         # Campaign email delivery. In the same transaction as the rest: the
         # api connection lock is not reentrant, so a second api_tx here
         # would deadlock the request.
@@ -40,6 +44,9 @@ def get_system_health(s: t.SessionInfo):
     return {
         'health': dict(health),
         'otp': dict(otp),
+        # Oldest day first, today last; each day an ISO date (YYYY-MM-DD).
+        'otp_daily': [dict(r, day=r['day'].isoformat()) for r in otp_daily],
+        'otp_refusals_30d': [dict(r) for r in otp_refusals],
         # isoformat() rather than letting Flask's JSON provider have the raw
         # datetime: its default is an RFC 2822 HTTP-date ("Thu, 24 Sep 2026
         # 10:56:56 GMT"), every other timestamp on the admin surface is ISO
