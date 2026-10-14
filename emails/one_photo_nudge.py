@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from emails.base import button, chip, render, suppressed_sql_pattern, title_image
+from service.admin.queries.members import member_sql
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns import held
 from service.campaigns.switches import enabled
@@ -41,6 +42,7 @@ _Q_DUE = f"""
     SELECT p.id AS person_id, p.email
       FROM person p
      WHERE p.activated AND p.deletion_requested_at IS NULL
+       AND {member_sql('p')}
        AND lower(p.email) <> ALL(%(ex)s)
        AND (SELECT count(*) FROM photo ph
              WHERE ph.person_id = p.id AND ph.moderation_status = 'approved') = 1

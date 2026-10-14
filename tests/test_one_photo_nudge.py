@@ -97,3 +97,16 @@ def test_the_preview_writes_nothing():
     with api_tx('read committed') as tx:
         assert tx.execute("SELECT count(*) AS n FROM campaign_link").fetchone()['n'] == before
     assert subject == 'Add a second photo to your Ahavah profile'
+
+
+def _make_staff(person):
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::text[] WHERE id = %(p)s", dict(p=person['id']))
+
+
+def test_never_to_staff(make_person, add_photo, on):
+    staff = _person(make_person, 'StaffOnePhoto')
+    add_photo(staff['id'])
+    _make_staff(staff)
+    _run()
+    assert _rows(staff['id']) == []

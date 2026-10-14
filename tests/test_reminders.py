@@ -247,3 +247,24 @@ def test_previews_write_nothing():
         dict(title='A message is waiting for you', body='Someone is waiting for your reply on Ahavah.',
              url='/inbox', kind='message'),
     ]
+
+
+def _make_staff(person):
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::text[] WHERE id = %(p)s", dict(p=person['id']))
+
+
+def test_never_to_staff(make_person, on, pushed):
+    staff, member = _person(make_person, 'StaffMatch'), _person(make_person, 'MemberMatch', 'Man')
+    _make_staff(staff)
+    _match(staff, member, 4)
+    reader, sender = _person(make_person, 'StaffReader', offline_days=5), _person(make_person, 'StaffSender', 'Man')
+    _make_staff(reader)
+    _unread(reader, sender, 4)
+    try:
+        _run()
+        assert _outbox(staff['id'], 'match_reminder') == [] and _pushes(staff['id'], 'match_reminder') == []
+        assert len(_outbox(member['id'], 'match_reminder')) == 1, 'the member side is still reminded'
+        assert _outbox(reader['id'], 'message_reminder') == [] and _pushes(reader['id'], 'message_reminder') == []
+    finally:
+        _cleanup_inbox(reader)

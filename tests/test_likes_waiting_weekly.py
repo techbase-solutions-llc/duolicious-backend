@@ -229,3 +229,16 @@ def test_the_copy_is_true_for_every_member():
     assert 'Only you can see your likes.' in html
     for gone in ('See who likes you', 'See who, and decide for yourself.', 'Nobody is told when you look.'):
         assert gone not in html
+
+
+def _make_staff(person):
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::text[] WHERE id = %(p)s", dict(p=person['id']))
+
+
+def test_never_to_staff(make_person, on):
+    staff = _person(make_person, 'StaffLiked')
+    _make_staff(staff)
+    _like(make_person(name='StaffLiker', gender='Man'), staff)
+    _run()
+    assert _rows(staff['id']) == []

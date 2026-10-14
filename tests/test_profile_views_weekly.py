@@ -121,3 +121,16 @@ def test_the_copy_is_true_for_every_member():
             'Turn them off any time in Settings, Notifications.') in html
     assert 'You asked for this weekly count' not in html
     assert 'Views shows who they are' not in html
+
+
+def _make_staff(person):
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::text[] WHERE id = %(p)s", dict(p=person['id']))
+
+
+def test_never_to_staff(make_person, on):
+    staff = _person(make_person, 'StaffViewed')
+    _make_staff(staff)
+    _visit(make_person(name='StaffViewer', gender='Man'), staff)
+    _run()
+    assert _rows(staff['id']) == []

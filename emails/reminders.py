@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from emails.base import button, chip, render, suppressed_sql_pattern, title_image
+from service.admin.queries.members import member_sql
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns import held
 from service.campaigns.switches import enabled
@@ -63,7 +64,10 @@ def _pref(column: str) -> str:
 
 
 def _common(alias: str = 'p') -> str:
+    """Who may be reminded: activated, not leaving, a member (never staff),
+    not one of the excluded addresses, not unsubscribed, not suppressed."""
     return f"""{alias}.activated AND {alias}.deletion_requested_at IS NULL
+       AND {member_sql(alias)}
        AND lower({alias}.email) <> ALL(%(ex)s)
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, f'{alias}.id')})
        AND NOT ({suppressed_predicate_sql(f'{alias}.email')})"""

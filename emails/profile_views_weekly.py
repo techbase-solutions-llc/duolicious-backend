@@ -61,6 +61,7 @@ _Q_DUE = f"""
       JOIN views w ON w.pid = p.id
       JOIN notification_preference np ON np.person_id = p.id AND np.email_profile_views
      WHERE p.activated AND p.deletion_requested_at IS NULL
+       AND {member_sql('p')}
        AND lower(p.email) <> ALL(%(ex)s)
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
