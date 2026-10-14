@@ -66,6 +66,63 @@ def _body(code: str, share_href: str | None = None, link_href: str | None = None
 """
 
 
+# The members' own email (health review, 13 Oct 2026, finding 68). The body
+# above is the beta cohort's: it told members who joined after the beta that
+# they had opted into it, promised credit "at launch" and left out the 30
+# days of Premium. This one says what /invite says, calls a Boost what the
+# owner chose ("a 30-minute boost on Discover", decision 89), and asks for
+# women first, as the owner decided for 90 days (decision 47). The referral
+# cron sends it only once AHAVAH_REFERRAL_MEMBER_BODY_ENABLED is on.
+MEMBER_SUBJECT = "Your invite link for Ahavah"
+MEMBER_PREHEADER = "Invite a friend, and we add 30 days of Premium and 5 tokens."
+
+# The words the web share sheet uses (ahavah-web src/lib/invite-share-copy.ts,
+# Wave 3 web lane), so the email and the app suggest the same message.
+MEMBER_SHARE_TEXT = ("I’m on Ahavah, marriage-minded matchmaking for "
+                     "Torah-observant believers. Join me with my link.")
+
+
+def _member_body(code: str, share_href: str | None = None, link_href: str | None = None) -> str:
+    share_url = share_href or f"{WEB_BASE_URL}/share/{code}"
+    plaintext_url = f"{WEB_BASE_URL}/i/{code}"
+    plaintext_href = link_href or plaintext_url
+    p = f'class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};"'
+    return f"""
+{chip("Invite a friend")}
+
+{title_image("title-referral.png?v=2", "title-referral-wht.png?v=2", "Bring someone with you.", 528)}
+
+<p {p}>
+  Shalom. Ahavah grows one trusted introduction at a time, so we are
+  asking our members first.
+</p>
+<p {p}>
+  Here is your own invite link. Send it to a Torah-observant believer
+  you know who is seeking marriage.
+</p>
+<p class="e-text" style="margin:0 0 28px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
+  Most people joining Ahavah are men, so an invite to a woman who shares
+  your faith helps the whole community most.
+</p>
+
+{callout("When someone joins through your link and finishes their profile, we add 30 days to your Premium and 5 tokens to your account. 5 tokens buy a 30-minute boost on Discover.")}
+
+{button("Share your link", share_url, variant="lime", full=True)}
+
+<p class="e-text" style="margin:14px 0 0;font-family:{SANS};font-size:14px;line-height:1.6;color:{MUTED};text-align:center;">
+  Or copy and paste this link:
+</p>
+<p class="e-text" style="margin:4px 0 0;font-family:{SANS};font-size:14px;line-height:1.6;color:{INDIGO};text-align:center;word-break:break-all;">
+  <a href="{plaintext_href}" style="color:{INDIGO};font-weight:600;text-decoration:none;">{plaintext_url}</a>
+</p>
+
+<p class="e-text" style="margin:28px 0 10px;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK_SOFT};">
+  Not sure what to say? You could send this:
+</p>
+{callout(f"{MEMBER_SHARE_TEXT} {plaintext_url}")}
+"""
+
+
 def _footer(email: str) -> str:
     unsub = _unsub_url("beta", email, WEB_BASE_URL)
     return f"""
@@ -100,12 +157,24 @@ def referral_intro_html(email: str, code: str, member: bool = False, *,
     mints for the button and the plain invite link (finding 74). The text a
     member copies by hand stays their own /i/ link; only the href is
     counted. Without them the links go straight through, as before."""
+    if member:
+        return render(
+            title=MEMBER_SUBJECT,
+            preheader=MEMBER_PREHEADER,
+            body_html=_member_body(code, share_href, link_href),
+            footer_html=_member_footer(email),
+        )
     return render(
         title=SUBJECT,
         preheader=PREHEADER,
         body_html=_body(code, share_href, link_href),
-        footer_html=_member_footer(email) if member else _footer(email),
+        footer_html=_footer(email),
     )
+
+
+def preview_member(to: str) -> tuple[str, str]:
+    """The proof of the members' body, with a sample code. Nothing stored."""
+    return MEMBER_SUBJECT, referral_intro_html(to, "YOURCODE", member=True)
 
 
 def send_referral_intro(email: str, code: str) -> None:

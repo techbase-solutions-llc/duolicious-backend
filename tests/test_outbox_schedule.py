@@ -1,9 +1,16 @@
 """A queued message can be held for a chosen slot (TEC-1613)."""
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from database import api_tx
 from service.campaigns import outbox
 from service.cron.referralintro import queue_due
+
+
+@pytest.fixture(autouse=True)
+def _member_body_on(monkeypatch):
+    """The referral cron waits for the members' body switch (finding 68)."""
+    monkeypatch.setenv('AHAVAH_REFERRAL_MEMBER_BODY_ENABLED', '1')
 
 
 def _enqueue(pid, email, not_before=None, cid='sched-test'):

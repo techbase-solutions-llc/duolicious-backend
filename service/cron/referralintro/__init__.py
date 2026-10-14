@@ -17,8 +17,11 @@ week, so:
     got another email this week) is tried again next week under a new id,
   * once the drain ACCEPTS one, the send log row stops every future tick.
 
-The template is the same one the beta cohort had, with the member footer:
-these members did not opt into a beta, they joined Ahavah.
+Until 13 Oct 2026 the template was the beta cohort's body with the member
+footer, which told members they had opted into a beta (health review,
+finding 68). Members now get their own body (emails/referral_intro.py
+`_member_body`), and nothing is queued until the owner has confirmed its
+proof and AHAVAH_REFERRAL_MEMBER_BODY_ENABLED is on.
 """
 from __future__ import annotations
 
@@ -28,10 +31,11 @@ from datetime import datetime, timezone
 
 from database import api_tx
 from emails.base import suppressed_sql_pattern
-from emails.referral_intro import FROM_ADDR, SUBJECT, referral_intro_html
+from emails.referral_intro import FROM_ADDR, MEMBER_SUBJECT, referral_intro_html
 from service.campaigns import (make_campaign_link, outbox, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.campaigns.runner import audit_send
+from service.campaigns.switches import enabled
 from service.config import WEB_BASE_URL
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 from service.growth.queries import _excluded
@@ -95,6 +99,11 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
     transaction, under `actor` ('cron', or 'cli' from the script). Each
     member's campaign id is their own, so the row names the shared suffix
     rather than one id."""
+    # The members' own body waits for the owner's proof (finding 68): until
+    # AHAVAH_REFERRAL_MEMBER_BODY_ENABLED is on, nothing is queued, so the
+    # beta body no longer reaches members who never joined a beta.
+    if not enabled('referral_member'):
+        return 0
     now = now or datetime.now(timezone.utc)
     rows = tx.execute(_Q_DUE, dict(days=REFERRAL_INTRO_AFTER_DAYS, ex=_excluded(),
                                    sup=suppressed_sql_pattern())).fetchall()
@@ -113,7 +122,7 @@ def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
         link_href = make_campaign_link(tx, 'referral', f"{WEB_BASE_URL}/i/{code}", r['id'])
         row_id = outbox.enqueue(
             tx, campaign='referral', campaign_id=cid, person_id=r['id'],
-            email=r['email'], subject=SUBJECT,
+            email=r['email'], subject=MEMBER_SUBJECT,
             html=referral_intro_html(r['email'], code, member=True,
                                      share_href=share_href, link_href=link_href),
             from_addr=FROM_ADDR, unsub_scope=UNSUB_SCOPE,

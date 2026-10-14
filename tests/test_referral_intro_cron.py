@@ -1,4 +1,5 @@
 """The referral intro runs itself a week after a member joins (TEC-1613)."""
+import pytest
 from datetime import datetime, timezone
 
 from database import api_tx
@@ -6,6 +7,12 @@ from emails.referral_intro import referral_intro_html
 from service.cron.referralintro import campaign_id, queue_due
 
 NOW = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _member_body_on(monkeypatch):
+    """The referral cron waits for the members' body switch (finding 68)."""
+    monkeypatch.setenv('AHAVAH_REFERRAL_MEMBER_BODY_ENABLED', '1')
 
 
 def _member(make_person, name, joined_days_ago=10, code='ABC123', roles=None):
