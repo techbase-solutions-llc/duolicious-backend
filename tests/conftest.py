@@ -530,7 +530,10 @@ def sign_in():
 #
 # Flask-Limiter is switched off so a test sees only the rules it is about;
 # the sign-up gate is open and the FireHOL list matches nothing. The
-# otp_request rows the test wrote are deleted afterwards.
+# new-address rules count in a private fakeredis, against a clock the test
+# moves with `signup_env.advance(seconds)`. `signup_env.refusals()` lists
+# the reasons recorded since the test began. The otp_request rows the test
+# wrote are deleted afterwards.
 
 @pytest.fixture
 def signup_env(client, monkeypatch):
@@ -539,8 +542,12 @@ def signup_env(client, monkeypatch):
     from types import SimpleNamespace
     from uuid import uuid4
 
+    import fakeredis
+
     from database import api_tx
     import service.person as person
+    import service.signupguard as guard
+    from service.api import decorators
     from service.api.decorators import limiter
 
     class _NotListed:
@@ -552,8 +559,28 @@ def signup_env(client, monkeypatch):
     monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
     monkeypatch.setattr(person, 'firehol', _NotListed())
     monkeypatch.setattr(limiter, 'enabled', False)
+    # The local test/input switch that turns IP limits off must not turn
+    # off the rules under test.
+    monkeypatch.setattr(decorators, 'disable_ip_rate_limit', lambda: False)
+
+    redis = fakeredis.FakeRedis(server=fakeredis.FakeServer(), decode_responses=True)
+    monkeypatch.setattr(guard, '_redis', lambda: redis)
+    # 03:00 UTC on 14 Oct 2026: the rest of the UTC day is ahead of it.
+    clock = {'t': 1791946800.0}
+    monkeypatch.setattr(guard, '_now', lambda: clock['t'])
+
+    def advance(seconds: float) -> None:
+        clock['t'] += seconds
 
     started = datetime.now(timezone.utc)
+
+    def refusals() -> list[str]:
+        with api_tx('read committed') as tx:
+            rows = tx.execute(
+                """SELECT refused FROM otp_request
+                    WHERE requested_at >= %(t)s AND refused IS NOT NULL
+                    ORDER BY id""", dict(t=started)).fetchall()
+        return [r['refused'] for r in rows]
     emails: list[str] = []
 
     def new_email() -> str:
@@ -579,7 +606,8 @@ def signup_env(client, monkeypatch):
         return row is not None
 
     yield SimpleNamespace(sent=sent, request=request, issued=issued,
-                          new_email=new_email)
+                          new_email=new_email, advance=advance,
+                          refusals=refusals, redis=redis)
 
     with api_tx() as tx:
         tx.execute('DELETE FROM otp_request WHERE requested_at >= %(t)s',

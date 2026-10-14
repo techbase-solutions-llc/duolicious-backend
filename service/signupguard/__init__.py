@@ -17,25 +17,121 @@ that were issued, which is what Admin > System reads.
 from __future__ import annotations
 
 import ipaddress
+import os
 import secrets
+import time
 import traceback
-from typing import Optional
+from typing import Optional, Union
 
 from database import api_tx
 
 
-def network_of(ip: Optional[str]) -> Optional[str]:
-    """The network an address belongs to for counting: the IPv4 /24 or the
-    IPv6 /64. An IPv4-mapped IPv6 address counts as its IPv4 address. None
-    for anything that does not parse."""
+# New-address limits (item 1). Fixed windows on the UTC clock hour and UTC
+# day, the strategy Flask-Limiter uses for the existing OTP limits.
+NEW_PER_CLIENT_HOUR = 5
+NEW_PER_CLIENT_DAY = 10
+NEW_PER_NETWORK_DAY = 20
+
+_REDIS_HOST = os.environ.get('DUO_REDIS_HOST', 'redis')
+_REDIS_PORT = int(os.environ.get('DUO_REDIS_PORT', 6379))
+_redis_client = None
+
+
+def _redis():
+    """The Redis the API's rate limits already live in. Short timeouts: a
+    slow Redis must not hold up a sign-in."""
+    global _redis_client
+    if _redis_client is None:
+        import redis
+        _redis_client = redis.Redis(
+            host=_REDIS_HOST,
+            port=_REDIS_PORT,
+            decode_responses=True,
+            socket_connect_timeout=0.5,
+            socket_timeout=0.5,
+        )
+    return _redis_client
+
+
+def _now() -> float:
+    return time.time()
+
+
+_Address = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+
+
+def _address(ip: Optional[str]) -> Optional[_Address]:
+    """The client address, with an IPv4-mapped IPv6 address read as its
+    IPv4 address. None for anything that does not parse."""
     try:
         addr = ipaddress.ip_address(ip or '')
     except ValueError:
         return None
     if addr.version == 6 and addr.ipv4_mapped:
-        addr = addr.ipv4_mapped
+        return addr.ipv4_mapped
+    return addr
+
+
+def network_of(ip: Optional[str]) -> Optional[str]:
+    """The network an address belongs to for counting: the IPv4 /24 or the
+    IPv6 /64. None for anything that does not parse."""
+    addr = _address(ip)
+    if addr is None:
+        return None
     prefix = 24 if addr.version == 4 else 64
     return str(ipaddress.ip_network(f'{addr}/{prefix}', strict=False))
+
+
+def _limits_exempt(ip: Optional[str]) -> bool:
+    """Private and loopback addresses are exempt, as they are from the shared
+    OTP limits in service/api/decorators.py (local runs and CI), and so is
+    everything when the test/input switch that turns IP limits off is set."""
+    from service.api import decorators
+    if decorators.disable_ip_rate_limit():
+        return True
+    addr = _address(ip)
+    return addr is not None and (addr.is_private or addr.is_loopback)
+
+
+def _limit_refusal(ip: Optional[str]) -> Optional[str]:
+    """Count one new-address request against its client address and its
+    network, and name the first limit it goes over. Fails open: if Redis
+    cannot be reached, nobody is refused for it."""
+    if _limits_exempt(ip):
+        return None
+    addr = _address(ip)
+    network = network_of(ip)
+    if addr is None or network is None:
+        return None
+    t = _now()
+    hour, day = int(t // 3600), int(t // 86400)
+    counters = (
+        (f'signupguard:client:{addr}:h{hour}', 3600, NEW_PER_CLIENT_HOUR, 'ip_hour'),
+        (f'signupguard:client:{addr}:d{day}', 86400, NEW_PER_CLIENT_DAY, 'ip_day'),
+        (f'signupguard:network:{network}:d{day}', 86400, NEW_PER_NETWORK_DAY, 'network_day'),
+    )
+    try:
+        pipe = _redis().pipeline()
+        for key, window, _, _ in counters:
+            pipe.incr(key)
+            pipe.expire(key, window + 60)
+        counts = pipe.execute()[0::2]
+    except Exception:
+        print('signupguard: Redis unreachable, new-address limits not applied:')
+        print(traceback.format_exc())
+        return None
+    for (_, _, limit, reason), count in zip(counters, counts):
+        if int(count) > limit:
+            return reason
+    return None
+
+
+def new_address_refusal(*, email: str, normalized_email: str,
+                        ip: Optional[str]) -> Optional[str]:
+    """Why a code for an address with no account should not be sent, or None
+    to send it. The caller answers a refusal with `decoy()` and records it.
+    Never called for an existing account."""
+    return _limit_refusal(ip)
 
 
 _Q_HAS_ACCOUNT = """

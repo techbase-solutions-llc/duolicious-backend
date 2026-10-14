@@ -394,7 +394,21 @@ def post_request_otp(req: t.PostRequestOtp):
     if not check_and_update_bad_domains(req.email):
         return 'Disposable email', 400
 
+    # Free bot protection for addresses with no account (TEC-1848). An
+    # existing account, admins included, never reaches these rules, so a
+    # member signs in exactly as before. A refusal is answered as a send is
+    # and nothing is mailed.
     new_address = not signupguard.has_account(norm)
+    if new_address:
+        refusal = signupguard.new_address_refusal(
+            email=req.email,
+            normalized_email=norm,
+            ip=request.remote_addr,
+        )
+        if refusal:
+            signupguard.record_refusal(
+                refusal, new_address=True, email=req.email, ip=request.remote_addr)
+            return signupguard.decoy()
 
     session_token = secrets.token_hex(64)
     session_token_hash = sha512(session_token)
