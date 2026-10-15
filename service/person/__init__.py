@@ -1682,22 +1682,35 @@ def _patch_profile_info_about(person_id: int, new_about: str):
     SELECT 1
     """
 
-    with api_tx() as tx:
-        select_params = dict(
-            person_id=person_id,
-        )
+    # Retry on serialization conflict, as the other profile fields do
+    # (2026-07-22). The web saves the bio as it is typed, and the member's
+    # presence and other profile writes touch the same row, so REPEATABLE
+    # READ aborts one of them; on 14 Oct 2026 one member's bio edits failed
+    # 31 times in 5 minutes. The whole transaction re-reads the old bio, so
+    # a replay is safe.
+    for _attempt in range(3):
+        try:
+            with api_tx() as tx:
+                select_params = dict(
+                    person_id=person_id,
+                )
 
-        tx.execute(select, select_params)
+                tx.execute(select, select_params)
 
-        old_about = tx.fetchone()['old_about']
+                old_about = tx.fetchone()['old_about']
 
-        update_params = dict(
-            person_id=person_id,
-            new_about=new_about,
-            added_text=diff_addition_with_context(old=old_about, new=new_about),
-        )
+                update_params = dict(
+                    person_id=person_id,
+                    new_about=new_about,
+                    added_text=diff_addition_with_context(old=old_about, new=new_about),
+                )
 
-        tx.execute(update, update_params)
+                tx.execute(update, update_params)
+            return
+        except psycopg.errors.SerializationFailure:
+            if _attempt == 2:
+                raise
+            time.sleep(0.05 * (_attempt + 1))
 
 def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
     if not s.person_id:
