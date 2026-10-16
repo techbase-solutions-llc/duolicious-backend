@@ -80,6 +80,30 @@ def test_an_account_gets_its_code_and_signs_in_with_every_rule_armed(
     assert armed.refusals() == ['stamp_missing']
 
 
+@pytest.mark.parametrize('admin', [False, True], ids=['member', 'admin'])
+def test_an_account_gets_every_resend_and_signs_in_with_every_rule_armed(
+        client, armed, make_person, admin):
+    """/resend-otp applies the new-address rules too (16 Oct 2026). A
+    session for an existing account never reaches them: more resends than
+    a new address may have in an hour all go out, and no counter moves."""
+    email = _account(make_person, admin=admin)
+    token = armed.request(email, ip=CLIENT).get_json()['session_token']
+    before = _counters(armed)
+    auth = {'Authorization': f'Bearer {token}'}
+
+    for _ in range(guard.NEW_PER_CLIENT_HOUR + 1):
+        r = client.post('/resend-otp', headers=auth, environ_base={'REMOTE_ADDR': CLIENT})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+    assert armed.sent == [email] * (guard.NEW_PER_CLIENT_HOUR + 2)
+    ok = client.post('/check-otp', json=dict(email=email, otp='000000'),
+                     headers=auth, environ_base={'REMOTE_ADDR': CLIENT})
+    assert ok.status_code == 200, ok.get_data(as_text=True)
+    assert _counters(armed) == before
+    assert armed.dns_calls.count('example.com') == 0
+    assert armed.refusals() == ['stamp_missing']
+
+
 def test_a_wrong_code_is_still_just_a_wrong_code(client, armed, make_person):
     email = _account(make_person)
     token = armed.request(email, ip=CLIENT).get_json()['session_token']

@@ -469,6 +469,22 @@ def post_resend_otp(s: t.SessionInfo):
     if _ip_blocked(s.email):
         return 'IP address blocked', 460
 
+    # The free bot protection's new-address rules (TEC-1848), as on
+    # /request-otp. A session for an existing account, admins included,
+    # never reaches them. A refusal is answered as a resend that went out
+    # is, keeps the code already sent and mails nothing.
+    norm = normalize_email(s.email)
+    if not signupguard.has_account(norm):
+        refusal = signupguard.resend_refusal(
+            normalized_email=norm,
+            ip=request.remote_addr,
+            listed_bad=signupguard.on_bad_domain_list(s.email),
+        )
+        if refusal:
+            signupguard.record_refusal(
+                refusal, new_address=True, email=s.email, ip=request.remote_addr)
+            return None
+
     params = dict(
         email=s.email,
         normalized_email=normalize_email(s.email),

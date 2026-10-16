@@ -323,9 +323,21 @@ def new_address_refusal(*, normalized_email: str,
     up no limit; the limits, so a source cycling through bad domains still
     spends its allowance; then the domain, `listed_bad` meaning it is on the
     bad-domain list, and last the DNS lookup."""
+    return _stamp_refusal(stamp) or resend_refusal(
+        normalized_email=normalized_email, ip=ip, listed_bad=listed_bad)
+
+
+def resend_refusal(*, normalized_email: str,
+                   ip: Optional[str],
+                   listed_bad: bool = False) -> Optional[str]:
+    """`new_address_refusal` for /resend-otp on a session whose address has
+    no account (16 Oct 2026; until then a resend met only the shared OTP
+    limits). A resend counts against the same limits as a request and is
+    held to the same domain rules. The page stamp is not asked again: it
+    belongs to the page load, which a resend does not repeat, and the
+    request that opened the session passed it."""
     return (
-        _stamp_refusal(stamp)
-        or _limit_refusal(ip)
+        _limit_refusal(ip)
         or _distinct_address_refusal(ip, normalized_email)
         or ('bad_domain' if listed_bad else None)
         or _domain_refusal(normalized_email)
