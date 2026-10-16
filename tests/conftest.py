@@ -628,3 +628,23 @@ def signup_env(client, monkeypatch):
         for email in emails:
             tx.execute('DELETE FROM duo_session WHERE email = %(e)s', dict(e=email))
             tx.execute('DELETE FROM onboardee WHERE email = %(e)s', dict(e=email))
+
+
+# ---------------------------------------------------------------------------
+# Growth foundations schema (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0066 is idempotent, so applying it here is what the deploy does.
+# A test module that reads the lead table, the prompt bank or the new
+# publishing kinds asks for it with
+#     pytestmark = pytest.mark.usefixtures('growth_schema')
+
+@pytest.fixture(scope='session')
+def growth_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = (Path(__file__).resolve().parent.parent
+            / 'migrations' / '0066_growth_foundations.sql')
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
