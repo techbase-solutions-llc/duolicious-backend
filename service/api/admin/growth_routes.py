@@ -15,6 +15,7 @@ from service.campaigns.runner import SEND_AUDIT_ACTION
 from service.campaigns.schedule import COMMUNITY_WEEKLY_ENABLED, next_send_at
 from service.campaigns.weekid import week_campaign_id
 from service.growth.queries import growth_stats
+from service.growth.sources import source_rows
 import emails.send_spotlight_announcement as e1
 import emails.send_community_weekly as e2
 import emails.send_reinvite as e3
@@ -25,6 +26,14 @@ def get_admin_growth_stats(s: t.SessionInfo):
     require_admin(s)
     with api_tx('read committed') as tx:
         return growth_stats(tx)
+
+@aget('/admin/growth/sources')
+def get_admin_growth_sources(s: t.SessionInfo):
+    """The Sources table (TEC-1845): leads, sign-ups and members who reached
+    a two-sided conversation, per source on one taxonomy."""
+    require_admin(s)
+    with api_tx('read committed') as tx:
+        return dict(sources=source_rows(tx))
 
 _CAMPAIGNS = {'e1': e1, 'e2': e2, 'e3': e3, 'e6': e6}
 
