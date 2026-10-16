@@ -139,6 +139,10 @@ services:
       # Meta Conversions API (service/metapixel.py) — no-op when blank.
       AHAVAH_META_PIXEL_ID: ${AHAVAH_META_PIXEL_ID:-}
       AHAVAH_META_CAPI_ACCESS_TOKEN: ${AHAVAH_META_CAPI_ACCESS_TOKEN:-}
+      # The sign-up measurement (service/metapixel.py) runs only when this is
+      # "enabled". Off since F07 (9 Sep 2026); back on 16 Oct 2026 by the owner,
+      # once the privacy pages said what Meta measures.
+      AHAVAH_REGISTRATION_TELEMETRY: ${AHAVAH_REGISTRATION_TELEMETRY:-}
       # Cloudflare Turnstile secret — zero-config rollout: no-op when blank,
       # active when set. Honeypot is always on regardless.
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
