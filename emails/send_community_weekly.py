@@ -12,7 +12,7 @@ from service.campaigns.switches import enabled
 from service.campaigns.weekid import week_campaign_id
 from service.admin.queries.members import member_sql
 from service.config import WEB_BASE_URL
-from service.growth.queries import _excluded, count_newcomers_since
+from service.growth.queries import _excluded, count_newcomers_since, newcomers_since
 from service.unsubscribe import make_url as _unsub_url
 
 UNSUB_SCOPE = 'community'
@@ -138,6 +138,19 @@ _Q_PERSONAL = """
 """
 
 
+def newcomers_for(tx, person_id: int, week: dict) -> list[dict]:
+    """The week's newcomers this reader is looking for, by the gender and
+    age rule `count_newcomers_since` counts with (16 Oct 2026: every reader
+    used to see everyone, so a man looking for a woman read the list of men
+    who had joined). When none fit, the week's full list, as every reader
+    saw it before: the email still says who joined and claims no match. A
+    row with no person (a preview) gets the full list too."""
+    if not person_id:
+        return week['new_members']
+    fits = newcomers_since(tx, person_id, datetime.now(timezone.utc) - timedelta(days=7), limit=None)
+    return [dict(first_name=r['first_name'], country=r['country']) for r in fits] or week['new_members']
+
+
 def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many.format(n=n)
 
@@ -183,8 +196,9 @@ def _build_personal(row: dict) -> tuple[str, str]:
         cta = make_campaign_link(tx, 'e2', parts['target'], pid, dry_run=dry)
         invite = (make_campaign_link(tx, 'e2', invite_target(r['referral_code']), pid, dry_run=dry)
                   if r['referral_code'] else None)
+        new_members = newcomers_for(tx, pid, week)
     return parts['subject'], community_weekly_html(
-        week['new_members'], week['total'], week['spotlight'], cta,
+        new_members, week['total'], week['spotlight'], cta,
         _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
         personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'])
 
@@ -196,7 +210,8 @@ def build_for(row: dict) -> tuple[str, str]:
     with api_tx() as tx:
         cta = make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/discover", row['person_id'] or None,
                                  dry_run=row.get('dry_run', False))
-    return SUBJECT, community_weekly_html(week['new_members'], week['total'], week['spotlight'], cta,
+        new_members = newcomers_for(tx, row['person_id'], week)
+    return SUBJECT, community_weekly_html(new_members, week['total'], week['spotlight'], cta,
                                           _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
 
 
