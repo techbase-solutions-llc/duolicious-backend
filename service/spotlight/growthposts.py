@@ -152,3 +152,73 @@ def cancel_event_posts(tx, slug: str) -> int:
     already published stays; taking it down is the operator's removal."""
     event_source(slug)
     return tx.execute(_Q_CANCEL_EVENT, dict(prefix=f'event:{slug}:%')).rowcount
+
+
+# The caption the owner approves with each post. Wording to be confirmed by
+# the owner (copy pass) before the cron is switched on.
+QUESTION_CAPTION = 'Question of the week: {text}'
+
+_Q_NEXT_PROMPT = """
+    SELECT b.key, b.text
+      FROM prompt_bank b
+     WHERE b.active
+     ORDER BY (SELECT max(q.created_at) FROM publishing_queue q
+                WHERE q.kind = 'prompt' AND q.payload->>'prompt_key' = b.key) ASC NULLS FIRST,
+              b.sort, b.key
+     LIMIT 1
+"""
+
+# A day "the brand calendar leaves empty" is a day with nothing scheduled
+# that is not cancelled: brand posts, member cards and roundups all count.
+_Q_DAY_TAKEN = """
+    SELECT 1 FROM publishing_queue
+     WHERE status <> 'cancelled'
+       AND scheduled_for >= %(start)s AND scheduled_for < %(end)s
+     LIMIT 1
+"""
+
+
+def week_key(day: date) -> str:
+    year, week, _ = day.isocalendar()
+    return f'{year}-W{week:02d}'
+
+
+def _free_slot_in_week(tx, monday: date, now: datetime) -> Optional[datetime]:
+    for i in range(7):
+        day = monday + timedelta(days=i)
+        start = datetime.combine(day, time(0, 0), timezone.utc)
+        if tx.execute(_Q_DAY_TAKEN, dict(start=start, end=start + timedelta(days=1))).fetchone():
+            continue
+        for hour in SLOT_HOURS:
+            slot = datetime.combine(day, time(hour, 0), timezone.utc)
+            if slot_problem(slot, now) is None:
+                return slot
+    return None
+
+
+def queue_question_of_week(tx, *, now: Optional[datetime] = None,
+                           created_by: str = 'cron') -> Optional[str]:
+    """Queue next ISO week's prompt post and return its request key, or the
+    key already queued for that week. None when the bank holds no active
+    prompt or no day of the week is free and valid. Unlike a gathering's
+    post, a slot past the known calendar is not taken: nothing makes this
+    post urgent enough to queue before the owner's calendar is read."""
+    now = now or datetime.now(timezone.utc)
+    ahead = (now + timedelta(days=7)).astimezone(timezone.utc).date()
+    monday = ahead - timedelta(days=ahead.weekday())
+    rk = f'prompt:{week_key(monday)}'
+    if tx.execute(_Q_KEY_TAKEN, dict(rk=rk)).fetchone():
+        return rk
+    prompt = tx.execute(_Q_NEXT_PROMPT).fetchone()
+    if prompt is None:
+        return None
+    slot = _free_slot_in_week(tx, monday, now)
+    if slot is None:
+        return None
+    create_candidate(tx, kind='prompt', subject_person_id=None,
+                     caption=QUESTION_CAPTION.format(text=prompt['text']),
+                     created_by=created_by, request_key=rk,
+                     target_path='/', utm_content=prompt['key'])
+    tx.execute(_Q_SET_SLOT, dict(
+        w=slot, p=json.dumps(dict(prompt_key=prompt['key'], text=prompt['text'])), rk=rk))
+    return rk

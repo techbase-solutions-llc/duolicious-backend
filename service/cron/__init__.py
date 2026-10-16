@@ -17,6 +17,7 @@ from service.cron.emailoutbox import email_outbox_forever
 from service.cron.communityweekly import community_weekly_forever
 from service.cron.referralintro import referral_intro_forever
 from service.cron.leadretention import lead_retention_forever
+from service.cron.questionofweek import question_of_week_forever
 from service.cron.returnmail import return_mail_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
@@ -111,6 +112,11 @@ async def main():
         # Leads (TEC-1845): deleted 12 months after their last visit, with
         # any mail still queued for them. Daily.
         lead_retention_forever(),
+
+        # The weekly "Question of the week" post (TEC-1845): next week's,
+        # queued once, waiting for artwork and approval. Off unless
+        # DUO_CRON_QUESTION_OF_WEEK_ENABLED=1. Daily.
+        question_of_week_forever(),
 
         # The mail held for the owner's proof (health review, Wave 3): likes
         # waiting, reminders, profile views, the one-photo nudge. Every job

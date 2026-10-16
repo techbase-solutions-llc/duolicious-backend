@@ -282,6 +282,9 @@ services:
       DUO_CRON_COMMUNITY_WEEKLY_POLL_SECONDS: ${DUO_CRON_COMMUNITY_WEEKLY_POLL_SECONDS:-3600}
       DUO_CRON_REFERRAL_INTRO_ENABLED: ${DUO_CRON_REFERRAL_INTRO_ENABLED:-1}
       DUO_CRON_REFERRAL_INTRO_POLL_SECONDS: ${DUO_CRON_REFERRAL_INTRO_POLL_SECONDS:-86400}
+      # The weekly prompt post (TEC-1845). Off until the owner confirms the
+      # caption and the prompt bank's wording.
+      DUO_CRON_QUESTION_OF_WEEK_ENABLED: ${DUO_CRON_QUESTION_OF_WEEK_ENABLED:-0}
       # Mail held for the owner's proof (health review Wave 3,
       # service/campaigns/switches.py). Each is off until he confirms its
       # proof; 1 turns one on. Set on both api and cron: the cron sends the
