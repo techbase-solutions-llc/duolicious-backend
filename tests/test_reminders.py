@@ -34,8 +34,28 @@ def _match(a, b, days_ago):
             dict(a=lo, b=hi, d=days_ago)).fetchone()['match_id'])
 
 
+def _days_ago_us(days_ago, now_sql='NOW()'):
+    """The inbox timestamp (microseconds since the epoch) of a message sent
+    `days_ago` whole days, and a minute, before `now_sql`. Floored, not
+    cast: `::bigint` rounds to the nearest second, which half the time
+    dated the message just after the day mark."""
+    return (f"(floor(EXTRACT(EPOCH FROM {now_sql} - make_interval(days => {int(days_ago)}, mins => 1)))"
+            f"::bigint * 1000000)")
+
+
+def test_the_helper_never_dates_a_message_after_its_day_mark():
+    """A message dated even a fraction of a second after the 3-day mark is
+    2 days old to the reminder's floor(), and was the 1-in-4 flake of
+    test_an_unread_message_three_days_old_is_reminded_once."""
+    now = "'2026-10-13 13:00:00.9+00'::timestamptz"
+    with api_tx('read committed') as tx:
+        row = tx.execute(f"""SELECT {_days_ago_us(3, now)} AS ts,
+                                    EXTRACT(EPOCH FROM {now} - interval '3 days') * 1000000 AS mark""").fetchone()
+    assert row['ts'] <= row['mark']
+
+
 def _unread(reader, sender, days_ago, unread=1):
-    ts = f"(EXTRACT(EPOCH FROM NOW() - make_interval(days => {int(days_ago)}))::bigint * 1000000)"
+    ts = _days_ago_us(days_ago)
     with api_tx() as tx:
         tx.execute(
             f"""INSERT INTO inbox (luser, remote_bare_jid, msg_id, box, content, timestamp, unread_count)
