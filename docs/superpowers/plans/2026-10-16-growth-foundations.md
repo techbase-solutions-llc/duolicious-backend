@@ -4709,7 +4709,7 @@ Expected: three issue ids, each in the Ahavah Admin project.
 
 - [ ] **Step 2: Record the ids in item 8**
 
-In item 8 of "Spec conflicts and decisions needing the owner", replace the sentence `Task 15 creates one Ahavah Admin issue for each and writes their ids here.` with the three ids in the order above, for example `Issues: renderer <id 1>, calendar run <id 2>, queue display and Sources table <id 3>.`, using the ids Step 1 returned.
+In item 8 of "Spec conflicts and decisions needing the owner", replace the sentence `Issues: renderer TEC-1894, calendar run TEC-1895, queue display and Sources table TEC-1896.` with the three ids in the order above, for example `Issues: renderer <id 1>, calendar run <id 2>, queue display and Sources table <id 3>.`, using the ids Step 1 returned.
 
 - [ ] **Step 3: Commit**
 
@@ -4730,7 +4730,7 @@ git -c user.email=admin@techbaseltd.com commit -m "docs(growth): the admin follo
 5. **Question of the week caption.** `Question of the week: {text}` is a placeholder for the owner's approval; the cron stays off until he confirms it and the prompt bank's wording.
 6. **Privacy wording.** Task 14's paragraph waits for the owner and publishes with the couple tools, in the same release that turns on `AHAVAH_TOOL_LEADS_ENABLED` and changes the checklist's "never stored" lines (Task 14's release rule). Until then the live checklist's sign-in code records no lead. The checklist's new wording and the terms' organiser section belong to the couple tools and events plans, and gathering replies get the events plan's own privacy paragraph.
 7. **Instagram clicks.** Instagram posts carry no link, so their clicks come from the profile link. If the owner sets that link to `https://ahavah.app/?utm_source=instagram&utm_campaign=profile`, those visitors are credited `utm:instagram/profile`; today they arrive untagged.
-8. **ahavah-admin follow-ups (not in this repo):** the social-queue run passes `kind` and `target_path` from a calendar entry to `/admin/growth/brand`; a template renderer reads `GET /admin/growth/queue?template_render=1` once the Growth social set returns, and until it ships event and prompt rows wait in `awaiting_render`; the Sources table and the queue's week and age display come from the admin brief, and the feature rows come with their feature plans. Task 15 creates one Ahavah Admin issue for each and writes their ids here.
+8. **ahavah-admin follow-ups (not in this repo):** the social-queue run passes `kind` and `target_path` from a calendar entry to `/admin/growth/brand`; a template renderer reads `GET /admin/growth/queue?template_render=1` once the Growth social set returns, and until it ships event and prompt rows wait in `awaiting_render`; the Sources table and the queue's week and age display come from the admin brief, and the feature rows come with their feature plans. Issues: renderer TEC-1894, calendar run TEC-1895, queue display and Sources table TEC-1896.
 9. **Unverified:** `next/og`'s `ImageResponse` loads WebAssembly; that it renders under vitest's node environment (Task 13's PNG test) was not run while writing this plan.
 
 ## Self-review
