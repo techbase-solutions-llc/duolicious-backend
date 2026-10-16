@@ -43,3 +43,13 @@ Q_DELETE_WAITLIST_OF = """
 Q_DELETE_BETA_SIGNUP_OF = """
     DELETE FROM beta_signup WHERE email = ANY(%(emails)s)
 """
+
+# lead: an address given before joining (TEC-1845). A lead linked at
+# sign-up cascades off person; one that never was (unconfirmed, or from
+# another flow) is keyed on the address only. A lead's identity is its
+# normalised address (service/leads), so the caller binds `nes`: each
+# address passed through antiabuse normalize_email. Rows typed another way
+# (dots, a plus tag, googlemail) go too.
+Q_DELETE_LEADS_OF = """
+    DELETE FROM lead WHERE normalized_email = ANY(%(nes)s::text[])
+"""

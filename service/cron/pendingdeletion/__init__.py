@@ -13,12 +13,14 @@ flips activated=true + clears deletion_requested_at. A self-service
 cancel-deletion endpoint can land later.
 """
 
+from antiabuse.antispam.signupemail import normalize_email
 from database.asyncdatabase import api_tx
 from database import api_tx as _sync_api_tx
 from service.cron.cronutil import env_int, print_stacktrace, MAX_RANDOM_START_DELAY
 from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
     Q_DELETE_INBOX_OF,
+    Q_DELETE_LEADS_OF,
     Q_DELETE_WAITLIST_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
@@ -170,6 +172,11 @@ async def hard_delete_expired_once():
                 # braces in case the cascade somehow misses on email
                 # equality (e.g. if person_id was NULL at delete time).
                 await tx.execute(Q_DELETE_BETA_SIGNUP_OF, dict(emails=emails))
+                # Leads (TEC-1845): the linked ones went with the person
+                # row; this takes the ones only the address names, however
+                # it was typed.
+                await tx.execute(Q_DELETE_LEADS_OF,
+                                 dict(nes=[normalize_email(e) for e in emails]))
 
     if rows:
         print(f'Hard-deleted {len(rows)} pending-deletion person row(s) + inbox/waitlist cleanup')
