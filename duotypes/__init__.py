@@ -491,8 +491,10 @@ class PostFeedback(BaseModel):
 class PostCheckOtp(BaseModel):
     otp: str = Field(pattern=r"^\d{6}$")
     # Optional acquisition tag. Only stamped onto NEW onboardees (never
-    # existing members). Currently: the public marriage-checklist activity.
-    source: Optional[Literal['marriage_checklist']] = None
+    # existing members): a couple tool's source, or the marriage
+    # checklist's old name, which is stored as tool:checklist (TEC-1845).
+    source: Optional[Literal['marriage_checklist', 'tool:game-me', 'tool:game-us',
+                             'tool:knows-me', 'tool:checklist']] = None
 
 
 class PostFinishOnboarding(BaseModel):

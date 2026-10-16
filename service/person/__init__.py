@@ -14,6 +14,8 @@ from service.config import API_BASE_URL, EMAIL_DOMAIN, PRODUCT_NAME, SIGNUPS_OPE
 from service import entitlements
 from service import metapixel
 from service import signupguard
+from service.leads import confirm_lead, record_lead, tool_leads_enabled
+from service.leads.sources import canonical_tool_source
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
@@ -549,10 +551,14 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
         tx.execute(Q_UPDATE_LAST, dict(person_uuid=row['person_uuid']))
 
         # Qualified-lead attribution: tag NEW onboardees created via a
-        # tagged flow (e.g. the marriage-checklist activity). Existing
+        # tagged flow (a couple tool or the marriage checklist). Existing
         # members (person_id set) and already-tagged rows are untouched,
-        # so an organic lead is never downgraded.
-        if req.source and row['person_id'] is None:
+        # so an organic lead is never downgraded. The code just entered
+        # proves the address, so the tool's lead is recorded confirmed
+        # (TEC-1845, service/leads), but only once the privacy page says
+        # so: AHAVAH_TOOL_LEADS_ENABLED stays off until then.
+        source = canonical_tool_source(req.source)
+        if source and row['person_id'] is None:
             tx.execute(
                 """
                 UPDATE onboardee
@@ -560,8 +566,12 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
                  WHERE email = %(email)s
                    AND lead_source IS NULL
                 """,
-                dict(source=req.source, email=s.email),
+                dict(source=source, email=s.email),
             )
+            if tool_leads_enabled():
+                lead_id = record_lead(tx, email=s.email, source=source)
+                if lead_id is not None:
+                    confirm_lead(tx, lead_id, 'otp')
 
     # Admin > System counts codes that were never entered (TEC-1848). Its
     # own best-effort transaction, after the sign-in has committed.
@@ -933,6 +943,14 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # leaving a stamped person/click orphaned by a failed graduation.
         from service.spotlight.attribution import attribute_signup
         attribute_signup(tx, row['person_id'], req.spotlight_ref)
+
+        # A confirmed lead's source (a tool, an RSVP, an alert) comes before
+        # the first touch: it was recorded on the server against this very
+        # address, where the touch lives on one device (TEC-1845). The
+        # onboardee's own tag, already copied onto the person, comes first.
+        # Never fails the sign-up.
+        from service.leads import link_leads_to_person
+        link_leads_to_person(tx, row['person_id'])
 
         # Where the member came from (finding 42): the first touch and the
         # "How did you hear about Ahavah?" answer the web sends, cleaned,

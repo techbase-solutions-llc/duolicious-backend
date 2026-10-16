@@ -349,11 +349,12 @@ def finish_onboarding(client, monkeypatch):
     emails_used: list[str] = []
 
     def _finish(body: dict | None = None, lead_source: str | None = None,
-                photo: str | None = 'pending'):
+                photo: str | None = 'pending', email: str | None = None):
         # `photo`: the moderation status of the one photo the onboardee
         # uploaded (an upload starts 'pending'), or None for no photo. The
-        # server requires one to finish (finding 94).
-        email = f'onboard-{uuid4()}@example.com'
+        # server requires one to finish (finding 94). `email`: the address
+        # to sign up with, when the test needs to prepare something for it.
+        email = email or f'onboard-{uuid4()}@example.com'
         emails_used.append(email)
         token = secrets.token_hex(64)
         with api_tx() as tx:

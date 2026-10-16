@@ -116,6 +116,11 @@ services:
       # Photo gate (health review finding 91, service/photo_gate.py). Off until
       # the W8 prompt that tells a gated member why ships. 1 turns it on.
       AHAVAH_PHOTO_GATE_ENABLED: ${AHAVAH_PHOTO_GATE_ENABLED:-0}
+      # Leads from a sign-in code on the checklist or a couple tool
+      # (TEC-1845, service/leads). Off until the privacy page's "Before you
+      # join" paragraph and the checklist's new wording are live; 1 turns
+      # it on.
+      AHAVAH_TOOL_LEADS_ENABLED: ${AHAVAH_TOOL_LEADS_ENABLED:-0}
       # Mail held for the owner's proof (health review Wave 3,
       # service/campaigns/switches.py). Each is off until he confirms its
       # proof; 1 turns one on. Set on both api and cron: the cron sends the

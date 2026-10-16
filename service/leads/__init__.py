@@ -28,6 +28,7 @@ its docstring says otherwise.
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from datetime import timedelta
 from typing import Optional
@@ -187,3 +188,47 @@ def lead_unsubscribed(tx, lead_id: int) -> bool:
     row = tx.execute('SELECT unsubscribed_at IS NOT NULL AS u FROM lead WHERE id = %(id)s',
                      dict(id=lead_id)).fetchone()
     return True if row is None else bool(row['u'])
+
+
+# The live marriage checklist, and later the couple tools, confirm an
+# address with a sign-in code. Recording that as a lead stores data the
+# privacy page must describe first, so it is off until the release that
+# carries that paragraph (TEC-1845, plan Task 14). Read on every request, as
+# service/photo_gate.py reads its switch, so a test can flip it and a
+# restart is all production needs.
+TOOL_LEADS_ENV = 'AHAVAH_TOOL_LEADS_ENABLED'
+
+
+def tool_leads_enabled() -> bool:
+    return os.environ.get(TOOL_LEADS_ENV, '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+_Q_LINK = """
+    UPDATE lead SET person_id = %(pid)s, converted_at = NOW(), last_seen_at = NOW()
+     WHERE normalized_email = (SELECT normalized_email FROM person WHERE id = %(pid)s)
+       AND confirmed_at IS NOT NULL
+       AND person_id IS NULL
+"""
+
+_Q_SOURCE_FROM_LEADS = """
+    UPDATE person
+       SET lead_source = COALESCE(lead_source, (
+             SELECT source FROM lead WHERE person_id = %(pid)s
+              ORDER BY created_at, id LIMIT 1))
+     WHERE id = %(pid)s
+"""
+
+
+def link_leads_to_person(tx, person_id: int) -> None:
+    """At finish-onboarding: the new member's confirmed leads point at them,
+    and the earliest names where they came from unless the onboardee already
+    carried a tag. Rolled back to a savepoint and ignored on any failure, so
+    it can never undo the sign-up."""
+    tx.execute('SAVEPOINT link_leads')
+    try:
+        tx.execute(_Q_LINK, dict(pid=person_id))
+        tx.execute(_Q_SOURCE_FROM_LEADS, dict(pid=person_id))
+    except Exception:
+        tx.execute('ROLLBACK TO SAVEPOINT link_leads')
+    else:
+        tx.execute('RELEASE SAVEPOINT link_leads')
