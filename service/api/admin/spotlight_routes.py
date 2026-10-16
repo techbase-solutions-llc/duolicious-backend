@@ -47,7 +47,8 @@ from service.spotlight.dispatch import dispatch_check
 from service.spotlight.eligibility import eligibility, primary_photo_uuid, photo_url
 from service.spotlight.offers import expire_lapsed, last_offers, lapsed_count, suggestable
 from service.spotlight.occurrence import record_occurrence, pictured_people, is_first_confirmation
-from service.spotlight.queue import (create_candidate,
+from service.spotlight.queue import (CALENDAR_HELD_KINDS, CAPTION_MAX, TEMPLATE_KINDS,
+                                     create_candidate,
                                      lock_request_rows, set_status, settings, set_setting,
                                      reap_expired_leases, reconcile_published,
                                      record_receipt, OUTCOMES,
@@ -307,6 +308,7 @@ _RENDER_BLOCKED_PREDICATE = """(
 _Q_ROWS = f"""
     SELECT q.id::text AS id,
            q.request_key,
+           q.created_at,
            q.kind,
            q.platform,
            q.status,
@@ -356,19 +358,23 @@ _Q_ROWS = f"""
        AND (%(needs_render)s::bool IS NOT TRUE
             OR (r.asset_hash IS NULL
                 AND q.status NOT IN ('cancelled', 'published', 'processing', 'scheduled')
-                -- A brand post's artwork comes from the Claude Design sets,
-                -- uploaded by the admin's social-queue run, never from the
-                -- tick's renderer. The tick knows member cards and roundups
-                -- only: handed a subject-less row with no tiles, it draws a
-                -- roundup card reading "0 new members across 0 countries".
-                -- Found by review (TEC-945): one failed artwork upload, or a
-                -- caption edit, and the next 06:00 tick would have put that
-                -- card on a brand post.
-                AND q.kind <> 'brand'))
+                -- A held kind's artwork never comes from the tick's
+                -- renderer: brand and tool arrive from the calendar run,
+                -- event and prompt from their template renderer below. The
+                -- tick knows member cards and roundups only: handed a
+                -- subject-less row with no tiles, it draws a roundup card
+                -- reading "0 new members across 0 countries" (TEC-945).
+                AND q.kind <> ALL(%(held)s::text[])))
+       -- The template renderer's own listing (TEC-1845): event and prompt
+       -- rows still waiting for artwork.
+       AND (%(template_render)s::bool IS NOT TRUE
+            OR (r.asset_hash IS NULL
+                AND q.status NOT IN ('cancelled', 'published', 'processing', 'scheduled')
+                AND q.kind = ANY(%(template)s::text[])))
        -- Wave 3d Task 4 (acceptance 8c): a card whose render was reported
        -- failed sits out its backoff (`post_growth_queue_render_failed`), so
-       -- one that keeps failing cannot hold a place in the tick's 200 rows.
-       AND (%(needs_render)s::bool IS NOT TRUE
+       -- one that keeps failing cannot hold a place in either render listing.
+       AND ((%(needs_render)s::bool IS NOT TRUE AND %(template_render)s::bool IS NOT TRUE)
             OR q.render_next_attempt_at IS NULL
             OR q.render_next_attempt_at <= NOW())
      -- The tick is served cards in the order they became eligible: a card
@@ -583,6 +589,20 @@ _Q_REMOVALS = """
 """
 
 
+def _iso_week(v: Optional[datetime]) -> Optional[str]:
+    """The ISO week a slot falls in, as the Growth tab groups posts."""
+    if v is None:
+        return None
+    year, week, _ = v.astimezone(timezone.utc).isocalendar()
+    return f'{year}-W{week:02d}'
+
+
+def _age_days(v: Optional[datetime]) -> Optional[int]:
+    if v is None:
+        return None
+    return (datetime.now(timezone.utc) - v).days
+
+
 def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
     subject = None
     if r['subject_person_id'] is not None:
@@ -600,6 +620,9 @@ def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
     row = dict(
         id=r['id'],
         request_key=r['request_key'],
+        created_at=_plain(r['created_at']),
+        week=_iso_week(r['scheduled_for']),
+        age_days=_age_days(r['created_at']),
         kind=r['kind'],
         platform=r['platform'],
         status=r['status'],
@@ -637,6 +660,10 @@ def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
         row['tiles'] = r['payload'].get('tiles', [])
         row['count'] = r['payload'].get('count')
         row['countries'] = r['payload'].get('countries')
+    # The data a template kind's renderer fills its Claude Design template
+    # with (TEC-1845). Every other kind leaves the key out.
+    if r['kind'] in TEMPLATE_KINDS and r['payload']:
+        row['template_data'] = r['payload']
     return row
 
 
@@ -654,8 +681,12 @@ def get_growth_queue():
     # disabled, but still needs rendering, so it must be picked up here too.
     # The old status filter keeps working unchanged for compatibility.
     needs_render = request.args.get('needs_render') in ('1', 'true', 'yes')
+    template_render = request.args.get('template_render') in ('1', 'true', 'yes')
     with api_tx('read committed') as tx:
-        rows = tx.execute(_Q_ROWS, dict(status=status, due=due, needs_render=needs_render)).fetchall()
+        rows = tx.execute(_Q_ROWS, dict(status=status, due=due, needs_render=needs_render,
+                                        template_render=template_render,
+                                        held=list(CALENDAR_HELD_KINDS),
+                                        template=list(TEMPLATE_KINDS))).fetchall()
         # Memoised per revision_id: both platform rows of a request share one
         # current revision, so this never computes the same answer twice.
         cache: dict = {}
@@ -849,12 +880,12 @@ def post_growth_queue_image(request_key: str):
             dict(rk=request_key, pl=platform)).fetchone()
     if not known:
         abort(404)
-    # A brand post is drawn at 1080x1350 in the Claude Design sets and is
-    # never square. The square size is what the tick's roundup renderer
-    # produces, so a square image arriving on a brand row means the wrong
-    # card is being attached, whatever sent it. Refused before the upload,
-    # like every other check here.
-    if known['kind'] == 'brand':
+    # A held kind's artwork is drawn at 1080x1350 in the Claude Design sets
+    # and is never square. The square size is what the tick's roundup
+    # renderer produces, so a square image arriving on a held row means the
+    # wrong card is being attached, whatever sent it. Refused before the
+    # upload, like every other check here.
+    if known['kind'] in CALENDAR_HELD_KINDS:
         try:
             st.validate_card_image(data, content_type, sizes=(st.BRAND_CARD_SIZE,))
         except InvalidImage as e:
@@ -1207,9 +1238,7 @@ def post_growth_spotlight_roundup():
 # 64 character request key (see queue._REQUEST_KEY_RE).
 _BRAND_SLUG_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _BRAND_SLUG_MAX = 64 - len('brand:')
-# Instagram's caption limit is 2,200 characters and create_candidate appends
-# a campaign link of roughly forty. The margin is deliberate.
-BRAND_CAPTION_MAX = 2000
+BRAND_CAPTION_MAX = CAPTION_MAX
 
 
 @post('/admin/growth/brand', limiter=growth_limit)
@@ -1305,7 +1334,7 @@ def _approval_slot(kind: str, requested: Optional[datetime],
     answer is `unknown`: the owner's calendar has to be read further before
     anything else can go out.
     """
-    if kind != 'brand':
+    if kind not in CALENDAR_HELD_KINDS:
         return requested or stored or _default_slot(), None
     if requested is not None:
         problem = slot_problem(requested)
@@ -1697,8 +1726,8 @@ def post_growth_queue_retry(s: t.SessionInfo, qid: str):
         # late approval does, rather than publishing the moment it is
         # pressed. Checked before anything is written.
         when = None
-        if row and row['kind'] == 'brand':
-            when, problem = _approval_slot('brand', None, row['scheduled_for'])
+        if row and row['kind'] in CALENDAR_HELD_KINDS:
+            when, problem = _approval_slot(row['kind'], None, row['scheduled_for'])
             if problem:
                 return dict(error='slot_unavailable', reason=problem), 409
         # failed -> scheduled. The attempts cap lives in set_status (Task 2).
@@ -1726,7 +1755,7 @@ def post_growth_queue_reschedule(s: t.SessionInfo, qid: str):
         # approval applies to an explicit slot. Refused before any write.
         kind = tx.execute("SELECT kind FROM publishing_queue WHERE id = %(id)s",
                           dict(id=queue_id)).fetchone()
-        if kind and kind['kind'] == 'brand':
+        if kind and kind['kind'] in CALENDAR_HELD_KINDS:
             problem = slot_problem(when)
             if problem:
                 return dict(error='slot_unavailable', reason=problem), 409

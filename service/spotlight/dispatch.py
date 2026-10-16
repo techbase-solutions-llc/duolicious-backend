@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from service.spotlight.eligibility import eligibility
-from service.spotlight.queue import SUBJECTLESS_KINDS, settings
+from service.spotlight.queue import CALENDAR_HELD_KINDS, SUBJECTLESS_KINDS, settings
 from service.spotlight.restdays import is_beyond_known, is_rest_period
 from service.spotlight.revisions import consent_complete
 
@@ -104,13 +104,14 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
     # have not been read from the owner's calendar, so for a member card
     # there is nothing to refuse on; that is where member cards stood before
     # this check existed, not a new gap, and it closes as soon as the next
-    # month is entered. A brand post is held tighter: nothing about one may
-    # be decided past the known calendar (creation and approval refuse it
-    # too), so dispatch refuses it there as well.
+    # month is entered. A calendar-held kind (brand, event, prompt, tool) is
+    # held tighter: nothing about one may be decided past the known calendar
+    # (creation and approval refuse it too), so dispatch refuses it there as
+    # well.
     now = datetime.now(timezone.utc)
     if is_rest_period(now):
         return False, 'rest_day'
-    if row['kind'] == 'brand' and is_beyond_known(now):
+    if row['kind'] in CALENDAR_HELD_KINDS and is_beyond_known(now):
         return False, 'calendar_unknown'
     cfg = settings(tx)
     if cfg.get('publication_enabled') != 'true':

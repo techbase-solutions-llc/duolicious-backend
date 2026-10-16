@@ -9,7 +9,7 @@ from service.config import WEB_BASE_URL
 from service.spotlight.eligibility import eligibility, primary_photo_uuid
 from service.spotlight.revisions import create_revision
 
-KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight', 'brand')
+KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight', 'brand', 'event', 'prompt', 'tool')
 # Kinds that are about nobody. They carry no subject_person_id, start in
 # `awaiting_render` rather than `awaiting_member`, and need no member's
 # consent. A roundup may still NAME members (its participants), which
@@ -21,7 +21,19 @@ KINDS = ('welcome', 'roundup', 'member_of_week', 'highlight', 'brand')
 # "has a subject", so an approved brand post would have been refused at
 # publish time as `subject_missing`, forever, with nothing on the Growth tab
 # saying why.
-SUBJECTLESS_KINDS = ('roundup', 'brand')
+SUBJECTLESS_KINDS = ('roundup', 'brand', 'event', 'prompt', 'tool')
+# Kinds held to the owner's calendar at creation, approval, retry,
+# reschedule and dispatch, whose artwork is portrait and never comes from
+# the tick's renderer (TEC-945 for brand; TEC-1845 for the scheduler's
+# own kinds: event, prompt and tool).
+CALENDAR_HELD_KINDS = ('brand', 'event', 'prompt', 'tool')
+# Held kinds whose artwork is drawn from a Claude Design template filled
+# with the row's payload (growth spec, Scheduler). tool and brand arrive as
+# finished artwork from the calendar run instead.
+TEMPLATE_KINDS = ('event', 'prompt')
+# Instagram's caption limit is 2,200 characters and create_candidate
+# appends a campaign link of roughly forty. The margin is deliberate.
+CAPTION_MAX = 2000
 # PLATFORMS lives in service.campaigns (Wave 3c task 1): this module already
 # imports from there at load time (make_campaign_link, caption_for_platform), so
 # importing the constant the same way carries no cycle. Re-exported here
