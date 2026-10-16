@@ -311,7 +311,8 @@ def outbox_drain():
         with api_tx() as tx:
             tx.execute(
                 """UPDATE email_outbox SET next_attempt_at = NOW() + interval '1 hour'
-                    WHERE state = 'queued' AND NOT (person_id = ANY(%(ids)s))""",
+                    WHERE state = 'queued'
+                      AND (person_id IS NULL OR NOT (person_id = ANY(%(ids)s)))""",
                 dict(ids=list(person_ids)))
         smtp = _StubSmtp()
         outbox.drain(api_tx, smtp)

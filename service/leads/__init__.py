@@ -232,3 +232,54 @@ def link_leads_to_person(tx, person_id: int) -> None:
         tx.execute('ROLLBACK TO SAVEPOINT link_leads')
     else:
         tx.execute('RELEASE SAVEPOINT link_leads')
+
+
+def news_refusal(tx, lead_id: int, *, requested: bool = False) -> Optional[str]:
+    """Why news (mail the visitor did not ask for in that very request) may
+    not go to this lead, or None to send it. Checked at enqueue and again at
+    send (service/campaigns/outbox.py).
+
+      'unsubscribed'  the lead has left the news mail, or no longer exists
+                      (fails towards not mailing)
+      'unconfirmed'   the address never proved itself: anyone can type an
+                      address into a form, so nothing goes to it unasked
+      'no_consent'    the unticked box is the only answer the visitor gave
+                      (events spec: the box is the only marketing consent;
+                      owner, 13 Oct: no cold outreach). `requested` lifts
+                      this one refusal: an alert:visitor lead's own alert is
+                      mail the visitor asked for."""
+    row = tx.execute(
+        """SELECT unsubscribed_at, confirmed_at, marketing_consent
+             FROM lead WHERE id = %(id)s""",
+        dict(id=lead_id)).fetchone()
+    if row is None or row['unsubscribed_at'] is not None:
+        return 'unsubscribed'
+    if row['confirmed_at'] is None:
+        return 'unconfirmed'
+    if not row['marketing_consent'] and requested is not True:
+        return 'no_consent'
+    return None
+
+
+def mail_refusal(*, email: str, ip: Optional[str], stamp: Optional[str] = None,
+                 website: Optional[str] = None) -> Optional[str]:
+    """Why a confirmation email to this address should not be sent, or None
+    to send it. The free defences sign-in codes for new addresses already
+    have (service/signupguard; owner, 13 Oct: free only): the hidden
+    `website` field, the page stamp, the per-address and per-network limits,
+    the bad-domain list and the mail-domain check. They count against the
+    same per-network budget as sign-in codes. The caller answers a refusal
+    exactly as it answers a send, so a refused caller learns nothing.
+
+    Opens its own read (the bad-domain list): call it before the caller's
+    transaction, never inside one."""
+    if website:
+        return 'honeypot'
+    cleaned = clean_email(email)
+    if cleaned is None:
+        return 'bad_email'
+    _, normalised = cleaned
+    from service import signupguard
+    return signupguard.new_address_refusal(
+        normalized_email=normalised, ip=ip, stamp=stamp,
+        listed_bad=signupguard.on_bad_domain_list(normalised))

@@ -36,6 +36,7 @@ from typing import Any, Optional
 
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
+from service.leads import news_refusal
 
 # Backoff applied AFTER attempt n fails, indexed by n - 1. An attempt that
 # takes the row to MAX_ATTEMPTS is terminal: it goes to 'failed' instead of
@@ -76,6 +77,17 @@ _Q_ENQUEUE = """
     VALUES (%(c)s, %(cid)s, %(pid)s, %(email)s, %(payload)s, %(exempt)s, %(scope)s,
             COALESCE(%(at)s, NOW()))
     ON CONFLICT (campaign, campaign_id, person_id) DO NOTHING
+    RETURNING id
+"""
+
+# Lead mail (TEC-1845): the same table with lead_id in place of person_id.
+# Its own partial unique index (migration 0066) is the idempotency point.
+_Q_ENQUEUE_FOR_LEAD = """
+    INSERT INTO email_outbox (campaign, campaign_id, lead_id, email, payload, exempt, unsub_scope,
+                              next_attempt_at)
+    VALUES (%(c)s, %(cid)s, %(lid)s, %(email)s, %(payload)s, %(exempt)s, 'news',
+            COALESCE(%(at)s, NOW()))
+    ON CONFLICT (campaign, campaign_id, lead_id) WHERE lead_id IS NOT NULL DO NOTHING
     RETURNING id
 """
 
@@ -211,6 +223,37 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
     return row['id'] if row else None
 
 
+def enqueue_for_lead(tx, *, campaign: str, campaign_id: str, lead_id: int, email: str,
+                     subject: str, html: str, from_addr: Optional[str],
+                     list_unsubscribe: Optional[str] = None, marketing: bool = False,
+                     requested: bool = False,
+                     not_before: Optional[datetime] = None) -> Optional[int]:
+    """Queue one message for a lead: someone with no account who gave an
+    email (service/leads). Returns the new row id, or None when this exact
+    (campaign, campaign_id, lead_id) is already in the outbox or, for
+    marketing mail, when service.leads.news_refusal refuses it.
+
+    `marketing` is False for mail the visitor asked for in that very request
+    (a confirmation, a reminder of a gathering they said they would attend),
+    which goes even after they leave the news mail, and True for news (an
+    alert, gatherings near them). News goes only to a confirmed address
+    whose box was ticked, and stops once the lead leaves it. `requested` is
+    True only for an alert:visitor lead's own alert: the visitor asked for
+    that mail, so it needs no ticked box, though it still needs a confirmed
+    address. The drain checks all of this again (_refusal). A lead has no
+    frequency cap, no send log and no post-send hook: all three are keyed
+    on a member."""
+    if marketing and news_refusal(tx, lead_id, requested=requested):
+        return None
+    payload = dict(subject=subject, html=html, from_addr=from_addr,
+                   list_unsubscribe=list_unsubscribe, post_send=None, cap_days=0,
+                   requires_spotlight_opt_in=False, requested=requested is True)
+    row = tx.execute(_Q_ENQUEUE_FOR_LEAD, dict(
+        c=campaign, cid=campaign_id, lid=lead_id, email=email,
+        payload=json.dumps(payload), exempt=not marketing, at=not_before)).fetchone()
+    return row['id'] if row else None
+
+
 def reserve(tx, limit: int = BATCH) -> list[dict]:
     """Claim up to `limit` due rows for this drain and return them in full.
 
@@ -235,6 +278,10 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
     this one transaction, so none of them can be true without the others."""
     row = tx.execute(_Q_ACCEPT, dict(id=id, mid=str(provider_message_id) if provider_message_id else None)).fetchone()
     if not row:
+        return
+    # Lead mail (TEC-1845) has no member: the send log and the hooks are
+    # keyed on person_id. The accepted outbox row is its record.
+    if row['person_id'] is None:
         return
     log_send(tx, row['person_id'], row['campaign'], row['campaign_id'],
              str(provider_message_id) if provider_message_id else None)
@@ -299,6 +346,17 @@ def _refusal(tx, row: dict) -> Optional[str]:
     `requires_spotlight_opt_in` are checked, so no other campaign pays for
     the read."""
     payload = row['payload'] or {}
+    # Lead mail (TEC-1845): there is no member to read consent, campaign
+    # scopes or caps from. Suppression applies to every address. Mail the
+    # visitor asked for (exempt) still goes; news is re-checked here as at
+    # enqueue: refused once the lead has left it, while the address is
+    # unconfirmed, and without a ticked box unless the visitor requested it.
+    if row.get('lead_id') is not None:
+        if is_suppressed_send(row['email']):
+            return 'suppressed'
+        if not row['exempt']:
+            return news_refusal(tx, row['lead_id'], requested=payload.get('requested') is True)
+        return None
     if payload.get('requires_spotlight_opt_in'):
         consent = tx.execute(_Q_SPOTLIGHT_CONSENT, dict(p=row['person_id'])).fetchone()
         if not consent or not consent['spotlight_opt_in'] or not consent['activated']:

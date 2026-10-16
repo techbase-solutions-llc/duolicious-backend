@@ -20,8 +20,10 @@ import hmac
 import os
 from urllib.parse import quote
 
+from antiabuse.antispam.signupemail import normalize_email
 
-_SCOPES = ("waitlist", "beta", "notifications", "claim", "community", "campaigns")
+
+_SCOPES = ("waitlist", "beta", "notifications", "claim", "community", "campaigns", "news")
 
 
 def _secret() -> bytes:
@@ -130,6 +132,17 @@ _Q_UNSUB = {
          WHERE lower(email) = %(email)s
         RETURNING (campaigns_unsubscribed_at = NOW()) AS just_now
     """,
+    # News for leads (TEC-1845, service/leads): an address with no account
+    # that ticked a box at a gathering RSVP or asked for a visitor alert.
+    # Every row of the address is stamped, whichever box the link came from
+    # and however the address was typed on each (dots, a plus tag,
+    # googlemail): a lead is keyed on its normalised address.
+    "news": """
+        UPDATE lead
+           SET unsubscribed_at = COALESCE(unsubscribed_at, NOW())
+         WHERE normalized_email = %(ne)s
+        RETURNING id
+    """,
 }
 
 
@@ -140,5 +153,8 @@ def stamp_unsubscribed(tx, scope: str, email: str) -> bool:
     """
     if scope not in _Q_UNSUB:
         return False
-    row = tx.execute(_Q_UNSUB[scope], dict(email=email.strip().lower())).fetchone()
+    params = dict(email=email.strip().lower())
+    if scope == 'news':
+        params['ne'] = normalize_email(params['email'])
+    row = tx.execute(_Q_UNSUB[scope], params).fetchone()
     return row is not None
