@@ -42,6 +42,7 @@ from duohash import sha512
 from service.admin import record_audit, record_system_audit, require_admin
 from service.api.cron_auth import is_cron_request, require_admin_or_cron
 from service.api.decorators import aget, apost, get, post, limiter, Q_GET_SESSION, _is_private_ip
+from service.campaigns import valid_target_path
 from service.config import USER_IMAGES_BASE_URL
 from service.spotlight.dispatch import dispatch_check
 from service.spotlight.eligibility import eligibility, primary_photo_uuid, photo_url
@@ -1234,10 +1235,15 @@ def post_growth_spotlight_roundup():
 
 
 # A calendar slug, as the admin's social calendar writes it. Lowercase words
-# joined by hyphens, and short enough that `brand:<slug>` fits the queue's
+# joined by hyphens, and short enough that `<kind>:<slug>` fits the queue's
 # 64 character request key (see queue._REQUEST_KEY_RE).
 _BRAND_SLUG_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
-_BRAND_SLUG_MAX = 64 - len('brand:')
+_REQUEST_KEY_MAX = 64
+# The kinds the owner's social calendar sends through this route. A tool
+# post is the monthly game or checklist promotion from static Claude Design
+# artwork (growth spec, Scheduler; TEC-1845): a brand post with its own kind
+# and its own utm_campaign.
+_CALENDAR_ROUTE_KINDS = ('brand', 'tool')
 BRAND_CAPTION_MAX = CAPTION_MAX
 
 
@@ -1246,7 +1252,9 @@ def post_growth_brand():
     """Queue one of Ahavah's own posts (TEC-945): artwork from the Claude
     Design sets, never a member's card, never anyone's face or name.
 
-    Body: {slug, caption, scheduled_for, platforms?}. Creates the rows in
+    Body: {slug, caption, scheduled_for, platforms?, kind?, target_path?}.
+    kind is 'brand' (the default) or 'tool'; target_path is the page the
+    post's link lands on, '/' by default. Creates the rows in
     `awaiting_render`; the artwork then arrives per platform through the
     existing `/admin/growth/queue/<request_key>/image` route, exactly as a
     roundup's does, and that route moves the rows to `review`. Nothing here
@@ -1273,15 +1281,22 @@ def post_growth_brand():
     body = _body()
     slug = body.get('slug')
     caption = body.get('caption')
+    kind = body.get('kind', 'brand')
+    target_path = body.get('target_path', '/')
     # Absent means every platform. An explicit empty list is a caller bug and
     # is refused below, rather than quietly read as "all of them".
     platforms = body.get('platforms')
     if platforms is None:
         platforms = list(PLATFORMS)
-    if not isinstance(slug, str) or not _BRAND_SLUG_RE.match(slug) or len(slug) > _BRAND_SLUG_MAX:
+    if not isinstance(kind, str) or kind not in _CALENDAR_ROUTE_KINDS:
+        return dict(error='bad_kind'), 400
+    if (not isinstance(slug, str) or not _BRAND_SLUG_RE.match(slug)
+            or len(f'{kind}:{slug}') > _REQUEST_KEY_MAX):
         return dict(error='bad_slug'), 400
     if not isinstance(caption, str) or not caption.strip() or len(caption) > BRAND_CAPTION_MAX:
         return dict(error='bad_caption'), 400
+    if not valid_target_path(target_path):
+        return dict(error='bad_target_path'), 400
     # isinstance first: set() of a list holding a dict raises TypeError,
     # which would surface as a 500 rather than the caller's mistake.
     if (not isinstance(platforms, list) or not platforms
@@ -1296,7 +1311,7 @@ def post_growth_brand():
     if problem:
         return dict(error='slot_unavailable', reason=problem), 409
 
-    request_key = f'brand:{slug}'
+    request_key = f'{kind}:{slug}'
     # Same race handling as the roundup: racing calls can all pass the
     # `already` read together, and the losers then fail on the
     # (request_key, platform) unique key. The post exists, so a loser gets
@@ -1306,12 +1321,13 @@ def post_growth_brand():
             if tx.execute("SELECT 1 FROM publishing_queue WHERE request_key = %(rk)s LIMIT 1",
                           dict(rk=request_key)).fetchone():
                 return dict(request_key=request_key, already=True)
-            rk = create_candidate(tx, kind='brand', subject_person_id=None, caption=caption.strip(),
-                                  created_by=_actor(s), platforms=platforms, request_key=request_key)
+            rk = create_candidate(tx, kind=kind, subject_person_id=None, caption=caption.strip(),
+                                  created_by=_actor(s), platforms=platforms, request_key=request_key,
+                                  target_path=target_path)
             tx.execute(
                 "UPDATE publishing_queue SET scheduled_for = %(w)s WHERE request_key = %(rk)s",
                 dict(w=when, rk=rk))
-            _audit(tx, s, 'growth.queue.brand', request_key=rk, platforms=platforms,
+            _audit(tx, s, f'growth.queue.{kind}', request_key=rk, platforms=platforms,
                    scheduled_for=when.isoformat())
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
         return dict(request_key=request_key, already=True)
