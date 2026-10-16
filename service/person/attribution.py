@@ -15,16 +15,20 @@ date, and a value Postgres cannot store (a NUL, a lone surrogate). The
 touch is visitor-controlled input, so the request that finishes
 onboarding must not fail because of it.
 
-lead_source is the first of: utm_source, 'invite' when an invite code
-came with the touch, the referring host; each lower-cased. NULL when the
-touch has none of them. A source the onboardee already carries (the
-marriage checklist's, set at /check-otp) is kept.
+lead_source is written on the source taxonomy (service/leads/sources.py):
+utm:{source}/{campaign} when the touch has a utm_source, else
+referral:{code} when an invite code came with it, else site:{host} for the
+referring host. NULL when the touch has none of them. A source the
+onboardee already carries (a couple tool's or the marriage checklist's,
+set at /check-otp) is kept.
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime
 from typing import Any, Optional
+
+from service.leads.sources import referral_source, site_source, utm_label
 
 VALUE_MAX_LENGTH = 200
 HEARD_ABOUT_MAX_LENGTH = 200
@@ -86,11 +90,11 @@ def lead_source_from(touch: Optional[dict]) -> Optional[str]:
     if not touch:
         return None
     if touch.get('utm_source'):
-        return touch['utm_source'].lower()
+        return utm_label(touch['utm_source'], touch.get('utm_campaign'))
     if touch.get('code'):
-        return 'invite'
+        return referral_source(touch['code'])
     if touch.get('referrer_host'):
-        return touch['referrer_host'].lower()
+        return site_source(touch['referrer_host'])
     return None
 
 

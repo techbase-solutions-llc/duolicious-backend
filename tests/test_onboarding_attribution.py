@@ -7,9 +7,10 @@ did you hear about Ahavah?", on POST /finish-onboarding
 
   1. keeps the accepted first-touch values on person.first_touch and the
      answer on person.heard_about;
-  2. writes person.lead_source from them: utm_source, else 'invite' for an
-     invite code, else the referring host. A source the onboardee already
-     carries (the marriage checklist's) is kept;
+  2. writes person.lead_source from them on the source taxonomy
+     (service/leads/sources.py): utm:{source}/{campaign}, else
+     referral:{code} for an invite code, else site:{host}. A source the
+     onboardee already carries (the marriage checklist's) is kept;
   3. drops unknown keys and oversized, empty or unwritable values, and
      never fails onboarding because of them.
 """
@@ -47,20 +48,20 @@ def test_the_first_touch_and_the_answer_are_kept(finish_onboarding):
     row = _row(pid)
     assert row['first_touch'] == TOUCH
     assert row['heard_about'] == 'A friend at my assembly'
-    assert row['lead_source'] == 'facebook'
+    assert row['lead_source'] == 'utm:facebook/oct-launch'
 
 
-def test_an_invite_code_without_utm_reads_as_invite(finish_onboarding):
+def test_an_invite_code_without_utm_reads_as_a_referral(finish_onboarding):
     r, pid = finish_onboarding(dict(
         first_touch={'code': 'ABC2345', 'referrer_host': 'wa.me'}, heard_about=None))
     _ok(r)
-    assert _row(pid)['lead_source'] == 'invite'
+    assert _row(pid)['lead_source'] == 'referral:ABC2345'
 
 
 def test_a_referrer_alone_names_the_host(finish_onboarding):
     r, pid = finish_onboarding(dict(first_touch={'referrer_host': 'WWW.Google.com'}))
     _ok(r)
-    assert _row(pid)['lead_source'] == 'www.google.com'
+    assert _row(pid)['lead_source'] == 'site:www.google.com'
 
 
 def test_nothing_sent_leaves_every_field_empty(finish_onboarding):
@@ -110,7 +111,7 @@ def test_unknown_keys_and_wrong_types_are_dropped(finish_onboarding):
     row = _row(pid)
     assert row['first_touch'] == {'referrer_host': 'news.example.org'}
     assert row['heard_about'] is None
-    assert row['lead_source'] == 'news.example.org'
+    assert row['lead_source'] == 'site:news.example.org'
 
 
 def test_a_first_touch_that_is_not_an_object_is_ignored(finish_onboarding):
