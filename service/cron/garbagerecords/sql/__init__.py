@@ -128,6 +128,15 @@ WITH q1 AS (
         last_event_data = '{{}}'  -- Escape python's f-string syntax
     WHERE
         id IN (SELECT person_id FROM q7)
+), q11 AS (
+    -- One row per sign-in code request (migration 0065, TEC-1848). Admin >
+    -- System reads the last 31 days; rows are kept for 90.
+    DELETE FROM
+        otp_request
+    WHERE
+        requested_at < NOW() - INTERVAL '90 days'
+    RETURNING
+        1
 )
 SELECT
     SUM(n) AS count,
@@ -146,6 +155,7 @@ FROM (
     SELECT 1 AS n FROM q5 UNION ALL
     SELECT 1 AS n FROM q6 UNION ALL
     SELECT 1 AS n FROM q7 UNION ALL
-    SELECT 1 AS n FROM q8
+    SELECT 1 AS n FROM q8 UNION ALL
+    SELECT 1 AS n FROM q11
 ) AS t(n)
 """
