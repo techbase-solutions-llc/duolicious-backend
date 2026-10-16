@@ -48,11 +48,12 @@ def audit_send(tx, actor: str, campaign: str, result: dict) -> None:
     record_system_audit(tx, actor, SEND_AUDIT_ACTION, metadata=dict(campaign=campaign, **result))
 
 def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[dict],
-                 build: Callable[[dict], tuple[str, str]], *, send: bool,
+                 build: Callable[[dict], tuple], *, send: bool,
                  from_addr: str, unsub_scope: str,
                  list_unsubscribe: Callable[[str], str] | None = None,
                  cap_days: int = 7, exempt: bool = False,
-                 post_send: str | None = None) -> dict:
+                 post_send: str | None = None,
+                 from_name: str | None = None, reply_to: str | None = None) -> dict:
     """`unsub_scope` is the campaign module's own UNSUB_SCOPE: the scope its
     footer and List-Unsubscribe header point at. It is required rather than
     defaulted so a new campaign cannot quietly ship without honouring the
@@ -61,7 +62,11 @@ def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[d
     `post_send` is the NAME of an `outbox.POST_SEND_HOOKS` entry, not a
     callable: the effect has to run in the same transaction as the eventual
     ACCEPTANCE, which happens in a different process from this one (see
-    service/campaigns/outbox.py)."""
+    service/campaigns/outbox.py).
+
+    `build` returns (subject, html), or (subject, html, text) for a message
+    with a text/plain part. `from_name` and `reply_to` are for a note sent
+    personally by someone; with neither, the outbox row is as before."""
     queued = built = skipped_cap = skipped_suppressed = skipped_unsubscribed = 0
     for row in recipients:
         email = row['email']
@@ -81,7 +86,9 @@ def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[d
         # flag on the row is what keeps a dry run from storing links and
         # nonces (see the module docstring).
         try:
-            subject, html = build(row if send else dict(row, dry_run=True))
+            message = build(row if send else dict(row, dry_run=True))
+            subject, html = message[0], message[1]
+            text = message[2] if len(message) > 2 else None
         except Exception as e:
             return dict(queued=queued, built=built, skipped_cap=skipped_cap,
                         skipped_suppressed=skipped_suppressed,
@@ -96,7 +103,8 @@ def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[d
                     email=email, subject=subject, html=html, from_addr=from_addr,
                     unsub_scope=unsub_scope,
                     list_unsubscribe=list_unsubscribe(email) if list_unsubscribe else None,
-                    exempt=exempt, cap_days=cap_days, post_send=post_send)
+                    exempt=exempt, cap_days=cap_days, post_send=post_send,
+                    text=text, from_name=from_name, reply_to=reply_to)
             if queued_id is not None:
                 queued += 1
                 print(f"queued {campaign} for {mask_email(email)}")

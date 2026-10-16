@@ -32,10 +32,13 @@ TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
 # anything else on a 7 day cap meets it and is skipped (30 referral intros
 # were, from 1 Oct). The weekly nudges among them keep a gap between
 # themselves instead (held.py); the referral intro's send log keeps it to
-# once per member (service/cron/referralintro).
+# once per member (service/cron/referralintro). The owner's note to the
+# Spotlight candidates goes to each member once ever
+# (emails/send_spotlight_candidates_note.py), so it neither waits behind E2
+# nor holds the next E2 back.
 SELF_CAPPED_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
                          'match_reminder', 'message_reminder', 'friend_joined',
-                         'referral')
+                         'referral', 'spotlight_note')
 
 _TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS + SELF_CAPPED_CAMPAIGNS)
 

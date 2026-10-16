@@ -14,20 +14,44 @@ from service.config import USER_IMAGES_BASE_URL
 REASONS = ('not_activated', 'staff', 'not_opted_in', 'not_verified', 'under_18', 'reported',
            'pending_deletion', 'featured_recently', 'no_photo', 'photo_missing')
 
-_Q = f"""
-    SELECT p.activated,
-           NOT ({member_sql('p')}) AS staff,
-           p.spotlight_opt_in,
-           (p.ahavah_verification_tier IS NOT NULL AND p.ahavah_verification_tier::text <> 'none') AS verified,
-           (p.date_of_birth IS NOT NULL AND p.date_of_birth <= (NOW() - interval '18 years')::date) AS adult,
-           EXISTS (SELECT 1 FROM skipped s WHERE s.object_person_id = p.id AND s.reported = TRUE) AS reported,
-           (p.deletion_requested_at IS NOT NULL) AS pending_deletion,
-           EXISTS (SELECT 1 FROM spotlight_occurrence o WHERE o.person_id = p.id
-                     AND o.created_at > NOW() - interval '30 days'
-                     AND (%(xrk)s::text IS NULL OR o.request_key <> %(xrk)s::text)) AS featured_recently,
-           EXISTS (SELECT 1 FROM photo ph WHERE ph.person_id = p.id AND ph.moderation_status = 'approved') AS has_photo
-      FROM person p WHERE p.id = %(pid)s
-"""
+def _columns(a: str, xrk: str) -> dict[str, str]:
+    """Each rule as a SQL boolean on the person aliased `a`. `xrk` is the
+    request key a card being re-checked may ignore its own occurrence for
+    (a bind, or NULL for none). Written once, so the per-member check below
+    and `featurable_sql` cannot drift apart."""
+    return {
+        'activated': f"{a}.activated",
+        'staff': f"NOT ({member_sql(a)})",
+        'spotlight_opt_in': f"{a}.spotlight_opt_in",
+        'verified': (f"({a}.ahavah_verification_tier IS NOT NULL"
+                     f" AND {a}.ahavah_verification_tier::text <> 'none')"),
+        'adult': (f"({a}.date_of_birth IS NOT NULL"
+                  f" AND {a}.date_of_birth <= (NOW() - interval '18 years')::date)"),
+        'reported': f"EXISTS (SELECT 1 FROM skipped s WHERE s.object_person_id = {a}.id AND s.reported = TRUE)",
+        'pending_deletion': f"({a}.deletion_requested_at IS NOT NULL)",
+        'featured_recently': (f"EXISTS (SELECT 1 FROM spotlight_occurrence o WHERE o.person_id = {a}.id"
+                              f" AND o.created_at > NOW() - interval '30 days'"
+                              f" AND ({xrk}::text IS NULL OR o.request_key <> {xrk}::text))"),
+        'has_photo': (f"EXISTS (SELECT 1 FROM photo ph WHERE ph.person_id = {a}.id"
+                      f" AND ph.moderation_status = 'approved')"),
+    }
+
+
+# The columns above that are true when the member FAILS the rule.
+_TRUE_FAILS = ('staff', 'reported', 'pending_deletion', 'featured_recently')
+
+_Q = ("SELECT " + ",\n           ".join(f"{sql} AS {name}" for name, sql in _columns('p', '%(xrk)s').items())
+      + "\n      FROM person p WHERE p.id = %(pid)s")
+
+
+def featurable_sql(alias: str = 'p') -> str:
+    """SQL boolean: the person aliased `alias` passes every rule above except
+    consent, so they could be featured if they opted in. For the owner's
+    note to the Spotlight candidates (emails/send_spotlight_candidates_note.py).
+    A fragment, not a bind: it adds no parameters to the query it joins."""
+    return " AND ".join(f"NOT ({sql})" if name in _TRUE_FAILS else f"({sql})"
+                        for name, sql in _columns(alias, 'NULL').items()
+                        if name != 'spotlight_opt_in')
 
 
 def eligibility(tx, person_id: int, photo_uuid: Optional[str] = None, *,

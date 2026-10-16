@@ -66,6 +66,10 @@ POST_SEND_HOOKS = {
         "UPDATE person SET reinvite_sent_at = NOW() WHERE id = %(p)s", dict(p=person_id)),
 }
 
+# Payload keys a personal note may carry (see `enqueue`), passed to the
+# mailer under the same names only when the row has them.
+_PERSONAL_FIELDS = ('text_body', 'from_name', 'reply_to')
+
 _Q_ENQUEUE = """
     INSERT INTO email_outbox (campaign, campaign_id, person_id, email, payload, exempt, unsub_scope,
                               next_attempt_at)
@@ -148,7 +152,9 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
             list_unsubscribe: Optional[str] = None, exempt: bool = False,
             cap_days: int = 7, post_send: Optional[str] = None,
             requires_spotlight_opt_in: bool = False,
-            not_before: Optional[datetime] = None) -> Optional[int]:
+            not_before: Optional[datetime] = None,
+            text: Optional[str] = None, from_name: Optional[str] = None,
+            reply_to: Optional[str] = None) -> Optional[int]:
     """Queue one message. Returns the new row id, or None when this exact
     (campaign, campaign_id, person_id) was already queued, sent, skipped or
     failed -- which is what makes a retried caller safe.
@@ -175,13 +181,22 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
     member consented to Community Spotlight (E4, E5). It rides in the payload
     rather than being inferred from the campaign name so the drain does not
     have to keep a list of which campaigns are Spotlight's, and it is what
-    `_refusal` re-reads consent for at send time (fix wave item 2)."""
+    `_refusal` re-reads consent for at send time (fix wave item 2).
+
+    `text`, `from_name` and `reply_to` are for a note sent personally by
+    someone (the owner's note to the Spotlight candidates): a text/plain
+    part, the display name on From and a Reply-To. Each is stored only when
+    given, and the drain hands the mailer only what was stored, so every
+    other message is sent exactly as before."""
     if post_send is not None and post_send not in POST_SEND_HOOKS:
         raise ValueError(f'unknown post_send hook: {post_send}')
     payload = dict(subject=subject, html=html, from_addr=from_addr,
                    list_unsubscribe=list_unsubscribe, post_send=post_send,
                    cap_days=int(cap_days),
                    requires_spotlight_opt_in=bool(requires_spotlight_opt_in))
+    for key, value in (('text_body', text), ('from_name', from_name), ('reply_to', reply_to)):
+        if value:
+            payload[key] = value
     row = tx.execute(_Q_ENQUEUE, dict(c=campaign, cid=campaign_id, pid=person_id, email=email,
                                       payload=json.dumps(payload), exempt=bool(exempt),
                                       scope=unsub_scope, at=not_before)).fetchone()
@@ -331,10 +346,11 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
             skipped += 1
             print(f"email_outbox: skipped {row['campaign']} for {mask_email(row['email'])} ({reason})")
             continue
+        personal = {k: payload[k] for k in _PERSONAL_FIELDS if payload.get(k)}
         try:
             message_id = smtp.send(subject=payload.get('subject'), body=payload.get('html'),
                                    to_addr=row['email'], from_addr=payload.get('from_addr'),
-                                   list_unsubscribe=payload.get('list_unsubscribe'))
+                                   list_unsubscribe=payload.get('list_unsubscribe'), **personal)
         except Exception as e:      # noqa: BLE001 -- any SMTP failure is a retryable attempt
             with tx_factory() as tx:
                 mark_failed_attempt(tx, row['id'], str(e), int(row['attempts']))
