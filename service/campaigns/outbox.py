@@ -82,17 +82,25 @@ _Q_ENQUEUE = """
 # The inner SELECT takes the row locks with SKIP LOCKED, so a second drain
 # running at the same moment simply does not see the rows this one is about
 # to reserve -- it never blocks on them, and never reserves them twice.
+# The rows are picked once, in a MATERIALIZED CTE, and then updated. The
+# older `WHERE id IN (SELECT ... LIMIT n FOR UPDATE SKIP LOCKED)` let
+# Postgres run the sub-select more than once as a join, so one drain could
+# reserve more than `n` rows (seen in tests: limit=1 returned 2); the extra
+# rows were never sent and the reaper would have moved them to
+# acceptance_unknown. Fixed 16 Oct 2026.
 _Q_RESERVE = """
-    UPDATE email_outbox
-       SET state = 'reserved', reserved_at = NOW(), attempts = attempts + 1
-     WHERE id IN (
+    WITH picked AS MATERIALIZED (
         SELECT id FROM email_outbox
          WHERE state = 'queued' AND next_attempt_at <= NOW()
          ORDER BY id
          LIMIT %(n)s
          FOR UPDATE SKIP LOCKED
-     )
-    RETURNING *
+    )
+    UPDATE email_outbox o
+       SET state = 'reserved', reserved_at = NOW(), attempts = o.attempts + 1
+      FROM picked
+     WHERE o.id = picked.id
+    RETURNING o.*
 """
 
 _Q_REAP = """
