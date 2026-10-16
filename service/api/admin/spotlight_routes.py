@@ -62,6 +62,7 @@ from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enque
                                        is_referenced, outstanding_jobs, overdue_removals)
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
+from service.spotlight.growthposts import event_approval_slot
 from service.spotlight.restdays import next_valid_slot, slot_problem
 from service.spotlight.roundup import roundup_caption, roundup_snapshot
 from service.spotlight.storage import InvalidImage
@@ -1335,7 +1336,8 @@ def post_growth_brand():
 
 
 def _approval_slot(kind: str, requested: Optional[datetime],
-                   stored: Optional[datetime]) -> tuple[Optional[datetime], Optional[str]]:
+                   stored: Optional[datetime],
+                   payload: Optional[dict] = None) -> tuple[Optional[datetime], Optional[str]]:
     """Where an approval puts a row, and why not if it cannot.
 
     Member cards keep the rule they always had: an explicit slot wins, else
@@ -1349,9 +1351,17 @@ def _approval_slot(kind: str, requested: Optional[datetime],
     evening. When nothing valid remains before the calendar runs out, the
     answer is `unknown`: the owner's calendar has to be read further before
     anything else can go out.
+
+    An event post (TEC-1845) is held to the calendar too, but never moves
+    later: a post after the gathering is no use. It keeps a valid stored
+    slot, else takes the latest valid one before it and before the
+    gathering, else is `too_late` (growthposts.event_approval_slot, which
+    reads the start and offset from the row's payload).
     """
     if kind not in CALENDAR_HELD_KINDS:
         return requested or stored or _default_slot(), None
+    if kind == 'event':
+        return event_approval_slot(payload or {}, requested, stored)
     if requested is not None:
         problem = slot_problem(requested)
         return (None, problem) if problem else (requested, None)
@@ -1670,7 +1680,7 @@ def post_growth_queue_approve(s: t.SessionInfo, qid: str):
     queue_id = _qid(qid)
     requested = _parse_dt(_body().get('scheduled_for'))
     with api_tx() as tx:
-        row = tx.execute("SELECT kind, scheduled_for, image_key FROM publishing_queue WHERE id = %(id)s",
+        row = tx.execute("SELECT kind, scheduled_for, image_key, payload FROM publishing_queue WHERE id = %(id)s",
                          dict(id=queue_id)).fetchone()
         if not row:
             abort(404)
@@ -1679,7 +1689,7 @@ def post_growth_queue_approve(s: t.SessionInfo, qid: str):
         # A brand post is additionally held to the owner's calendar: see
         # _approval_slot. Refused before anything is written, so the early
         # return commits nothing.
-        when, problem = _approval_slot(row['kind'], requested, row['scheduled_for'])
+        when, problem = _approval_slot(row['kind'], requested, row['scheduled_for'], row['payload'])
         if problem:
             return dict(error='slot_unavailable', reason=problem), 409
         assert when is not None  # _approval_slot always names a slot when it names no problem
@@ -1735,7 +1745,7 @@ def post_growth_queue_retry(s: t.SessionInfo, qid: str):
     require_admin(s)
     queue_id = _qid(qid)
     with api_tx() as tx:
-        row = tx.execute("SELECT kind, scheduled_for FROM publishing_queue WHERE id = %(id)s",
+        row = tx.execute("SELECT kind, scheduled_for, payload FROM publishing_queue WHERE id = %(id)s",
                          dict(id=queue_id)).fetchone()
         # A brand post is held to the owner's calendar here too: a retry keeps
         # a slot that is still valid and otherwise rolls forward exactly as a
@@ -1743,7 +1753,7 @@ def post_growth_queue_retry(s: t.SessionInfo, qid: str):
         # pressed. Checked before anything is written.
         when = None
         if row and row['kind'] in CALENDAR_HELD_KINDS:
-            when, problem = _approval_slot(row['kind'], None, row['scheduled_for'])
+            when, problem = _approval_slot(row['kind'], None, row['scheduled_for'], row['payload'])
             if problem:
                 return dict(error='slot_unavailable', reason=problem), 409
         # failed -> scheduled. The attempts cap lives in set_status (Task 2).
