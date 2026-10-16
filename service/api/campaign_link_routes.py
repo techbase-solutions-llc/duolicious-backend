@@ -13,17 +13,19 @@ from flask import abort, redirect, request
 
 from database import api_tx
 from service.api.decorators import get
-from service.campaigns import record_click
+from service.campaigns import record_click, with_utm_source
 
 @get('/s/<key>')
 def get_campaign_link(key: str):
+    platform = request.args.get('p')
     with api_tx() as tx:
         target, receipt = record_click(
-            tx, key, request.headers.get('User-Agent', ''),
-            platform=request.args.get('p'))
+            tx, key, request.headers.get('User-Agent', ''), platform=platform)
     if not target:
         abort(404)
-    response = redirect(target, code=302)
+    # TEC-1845: a post's link names the platform the click came from, so
+    # first-touch capture on the web credits utm:{platform}/{kind}.
+    response = redirect(with_utm_source(target, platform), code=302)
     if receipt:
         response.headers['X-Spotlight-Receipt'] = receipt
     return response

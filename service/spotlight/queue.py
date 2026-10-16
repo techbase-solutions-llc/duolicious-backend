@@ -4,8 +4,8 @@ import hmac
 import re
 import uuid
 from typing import Optional
-from service.campaigns import PLATFORMS, caption_for_platform, make_campaign_link
-from service.config import WEB_BASE_URL
+from service.campaigns import (PLATFORMS, caption_for_platform, make_campaign_link,
+                               post_target_url, valid_target_path)
 from service.spotlight.eligibility import eligibility, primary_photo_uuid
 from service.spotlight.revisions import create_revision
 
@@ -89,9 +89,12 @@ _REQUEST_KEY_RE = re.compile(r'^[a-zA-Z0-9:_-]{1,64}$')
 
 
 def create_candidate(tx, *, kind: str, subject_person_id: Optional[int], caption: str, created_by: str,
-                     platforms=PLATFORMS, request_key: Optional[str] = None) -> str:
+                     platforms=PLATFORMS, request_key: Optional[str] = None,
+                     target_path: str = '/', utm_content: Optional[str] = None) -> str:
     if kind not in KINDS:
         raise ValueError('bad_kind')
+    if not valid_target_path(target_path):
+        raise ValueError('bad_target_path')
     if request_key is not None:
         if not _REQUEST_KEY_RE.match(request_key):
             raise ValueError('bad_request_key')
@@ -157,7 +160,11 @@ def create_candidate(tx, *, kind: str, subject_person_id: Optional[int], caption
     # the request, so the platform-neutral form is the honest thing to store
     # there, and `edit_caption` re-derives the per-row captions from it the
     # same way this does.
-    link = make_campaign_link(tx, f'post:{rk}', f"{WEB_BASE_URL}/", None)
+    # TEC-1845: the link lands tagged (utm_campaign = kind, utm_content =
+    # the slug, by default the request key after its first colon) on the
+    # page the post is about; the redirect adds utm_source per click.
+    content = utm_content or (rk.split(':', 1)[1] if ':' in rk else rk)
+    link = make_campaign_link(tx, f'post:{rk}', post_target_url(target_path, kind, content), None)
     base_caption = f"{caption} {link}"
     for platform in platforms:
         tx.execute(

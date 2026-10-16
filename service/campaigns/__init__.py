@@ -6,9 +6,10 @@ retried request cannot send twice. Spec 3.4: every CTA is a /s/<key>
 link that counts clicks."""
 from __future__ import annotations
 
+import re
 import secrets
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from service.config import WEB_BASE_URL
 
@@ -281,6 +282,43 @@ def caption_for_platform(text: str, link: Optional[str], platform: Optional[str]
         return text
     stamped = with_platform(link, platform)
     return f"{text} {stamped}" if text else stamped
+
+
+# A page on the web app a post may land on: a path of letters, digits,
+# hyphens, underscores and slashes, nothing else (TEC-1845). No query and no
+# host, so a post's link can only ever point at our own site.
+_TARGET_PATH_RE = re.compile(r'^/[A-Za-z0-9/_-]*$')
+
+
+def valid_target_path(path: object) -> bool:
+    return (isinstance(path, str) and bool(_TARGET_PATH_RE.match(path))
+            and not path.startswith('//'))
+
+
+def post_target_url(path: str, campaign: str, content: str) -> str:
+    """Where a post's link lands, tagged so first-touch capture credits it
+    (growth spec, Scheduler: utm_campaign is the kind, utm_content the slug).
+    utm_source is added per click by `with_utm_source`, since both platform
+    rows share one link key."""
+    if not valid_target_path(path):
+        raise ValueError('bad_target_path')
+    query = urlencode({'utm_campaign': campaign, 'utm_content': content})
+    return f"{WEB_BASE_URL.rstrip('/')}{path}?{query}"
+
+
+def with_utm_source(target: str, platform: Optional[str]) -> str:
+    """A click on a tagged post link from a named platform lands with
+    utm_source set to it, first. Anything else (no platform, an unknown one,
+    a link that is not a post's, a target that already names a source) is
+    returned untouched."""
+    if platform not in PLATFORMS:
+        return target
+    parts = urlsplit(target)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    keys = {k for k, _ in pairs}
+    if 'utm_campaign' not in keys or 'utm_source' in keys:
+        return target
+    return urlunsplit(parts._replace(query=urlencode([('utm_source', platform), *pairs])))
 
 
 def record_click(tx, key: str, user_agent: str,
