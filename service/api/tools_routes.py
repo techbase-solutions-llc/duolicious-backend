@@ -161,3 +161,20 @@ def delete_tool_board_name(s: Optional[t.SessionInfo], sid: str, gid: int):
        expected_onboarding_status=None)
 def post_tool_board_restore(s: Optional[t.SessionInfo], sid: str, gid: int):
     return _board_change(s, sid, gid, False)
+
+
+@apost('/tools/sessions/<sid>/claim', expected_onboarding_status=None)
+@validate(t.PostToolClaim)
+def post_tool_claim(req: t.PostToolClaim, s: t.SessionInfo, sid: str):
+    """Save a result with the signed-in session's address. The web gets
+    that session from /request-otp and /check-otp (with the tool's
+    source); a member is already signed in."""
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx() as tx:
+            player = sessions.player_for(tx, sid, _token(), s)
+            return sessions.claim(tx, player, s, req.display)
+    except sessions.ToolError as e:
+        return _refused(e)

@@ -446,3 +446,76 @@ def set_removed(tx, player: dict, guest_id: int, removed: bool) -> dict:
     if n == 0:
         raise ToolError('not_found', 404)
     return view(tx, player['session_id'], player['player_id'])
+
+
+def claim(tx, player: dict, s, display: object) -> dict:
+    """Save a seat with the address the signed-in session proved (a sign-in
+    code or a member's account). The owner's save issues the share token
+    and, for Us, knows-me and the couple checklist, the invite token. A
+    guest in Us or the couple checklist may save too, to get the image; a
+    knows-me friend gives only a name. A seat saved with one address is
+    never moved to another."""
+    from service.leads import confirm_lead, record_lead, tool_leads_enabled
+    if s is None or not s.signed_in:
+        raise ToolError('sign_in_required', 401)
+    name = clean_display(display)
+    ne = normalize_email(s.email)
+    if player['seat'] == 'owner':
+        saved_ne = player['owner_normalized_email'] if player['claimed_at'] else None
+        if (saved_ne and saved_ne != ne) or (
+                player['owner_person_id'] is not None and player['owner_person_id'] != s.person_id):
+            raise ToolError('claimed', 409)
+        tx.execute(
+            """UPDATE tool_session
+                  SET owner_email = %(e)s, owner_normalized_email = %(ne)s,
+                      owner_person_id = COALESCE(owner_person_id, %(pid)s),
+                      owner_display = %(d)s, claimed_at = COALESCE(claimed_at, NOW()),
+                      share_token = COALESCE(share_token, %(st)s),
+                      invite_token = CASE WHEN mode = ANY(%(inv)s)
+                                          THEN COALESCE(invite_token, %(it)s) END
+                WHERE id = %(i)s""",
+            dict(e=s.email, ne=ne, pid=s.person_id, d=name, st=new_link_token(),
+                 inv=list(WITH_INVITE), it=new_link_token(), i=player['session_id']))
+    else:
+        if player['mode'] == 'knows_me':
+            raise ToolError('not_allowed', 403)
+        if player['normalized_email'] and player['normalized_email'] != ne:
+            raise ToolError('claimed', 409)
+        tx.execute(
+            """UPDATE tool_player
+                  SET email = %(e)s, normalized_email = %(ne)s,
+                      person_id = COALESCE(person_id, %(pid)s), display = %(d)s
+                WHERE id = %(p)s""",
+            dict(e=s.email, ne=ne, pid=s.person_id, d=name, p=player['player_id']))
+    if s.person_id is None and tool_leads_enabled():
+        lead_id = record_lead(tx, email=s.email, source=player['source'])
+        if lead_id is not None:
+            confirm_lead(tx, lead_id, 'otp')
+    return view(tx, player['session_id'], player['player_id'])
+
+
+_Q_LINK_OWNED = """
+    UPDATE tool_session SET owner_person_id = %(pid)s
+     WHERE owner_person_id IS NULL
+       AND owner_normalized_email = (SELECT normalized_email FROM person WHERE id = %(pid)s)
+"""
+
+_Q_LINK_JOINED = """
+    UPDATE tool_player SET person_id = %(pid)s
+     WHERE person_id IS NULL
+       AND normalized_email = (SELECT normalized_email FROM person WHERE id = %(pid)s)
+"""
+
+
+def link_tool_sessions_to_person(tx, person_id: int) -> None:
+    """At finish-onboarding: the sessions the new member saved before
+    joining become theirs, so they go with the account. Rolled back to a
+    savepoint and ignored on any failure: it can never undo the sign-up."""
+    tx.execute('SAVEPOINT link_tool_sessions')
+    try:
+        tx.execute(_Q_LINK_OWNED, dict(pid=person_id))
+        tx.execute(_Q_LINK_JOINED, dict(pid=person_id))
+    except Exception:
+        tx.execute('ROLLBACK TO SAVEPOINT link_tool_sessions')
+    else:
+        tx.execute('RELEASE SAVEPOINT link_tool_sessions')
