@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from service.admin.queries.members import member_sql
+from service.questions import live
 
 SPLIT_MIN = 5
 CHOICE_FORMATS = ('either_or', 'pick_one')
@@ -23,8 +24,9 @@ LIVE = "b.active AND b.format IN ('either_or', 'pick_one')"
 
 
 class AnswerRefused(ValueError):
-    """'closed': no live question has that key. 'bad_choice': the question
-    does not offer that option."""
+    """'closed': no live question has that key, or the questions are not
+    live yet (service.questions.live), so a stale page cannot save.
+    'bad_choice': the question does not offer that option."""
 
 
 _COLS = 'b.key, b.text, b.format, b.options'
@@ -99,6 +101,8 @@ def question_state(tx, person_id: int, question: dict) -> dict:
 
 def save_answer(tx, person_id: int, key: str, choice_key: str, *,
                 keep_existing: bool = False) -> dict:
+    if not live():
+        raise AnswerRefused('closed')
     question = live_question(tx, key)
     if question is None:
         raise AnswerRefused('closed')

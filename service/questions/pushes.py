@@ -26,7 +26,8 @@ back, to be tried next tick: a row for a push that never arrived would
 hold back one_photo and profile_views for 3 days and count towards the
 2-unvisited cap.
 
-Held: nothing goes unless its switch is on (service/campaigns/switches.py).
+Held: nothing goes unless its switch is on and the questions are live
+(service.questions.switch_on, service/campaigns/switches.py).
 """
 from __future__ import annotations
 
@@ -37,9 +38,8 @@ from zoneinfo import ZoneInfo
 from emails.base import suppressed_sql_pattern
 from service.admin.queries.members import member_sql
 from service.campaigns import held, suppressed_predicate_sql, unsubscribed_predicate_sql
-from service.campaigns.switches import enabled
 from service.growth.queries import _excluded
-from service.questions import copy
+from service.questions import copy, switch_on
 from service.questions.member import ensure_match_question
 from service.questions.schedule import current_drop, resting, week_starts_at
 
@@ -191,7 +191,7 @@ _Q_SILENT = f"""
 
 
 def queue_match_question_pushes(tx, now: datetime) -> int:
-    if not enabled('match_question_push') or not PUSH_READY() or resting(now):
+    if not switch_on('match_question_push') or not PUSH_READY() or resting(now):
         return 0
     week, since = _week(current_drop(tx, now), now)
     n = 0
@@ -224,7 +224,7 @@ _Q_WEEKLY = f"""
 
 
 def queue_weekly_question_pushes(tx, now: datetime) -> int:
-    if not enabled('question_push') or not PUSH_READY() or resting(now):
+    if not switch_on('question_push') or not PUSH_READY() or resting(now):
         return 0
     drop = current_drop(tx, now)
     if drop is None:
@@ -264,7 +264,7 @@ _Q_LAUNCH = f"""
 
 
 def queue_launch_pushes(tx, now: datetime) -> int:
-    if not enabled('questions_launch_push') or not PUSH_READY() or resting(now):
+    if not switch_on('questions_launch_push') or not PUSH_READY() or resting(now):
         return 0
     drop = current_drop(tx, now)
     if drop is None:

@@ -139,6 +139,7 @@ services:
       # Quick questions (TEC-1845). Off until the owner confirms each proof.
       # The api needs them too: Admin > Questions shows their state and E2
       # is built here for the Send button.
+      AHAVAH_QUESTIONS_LIVE_ENABLED: ${AHAVAH_QUESTIONS_LIVE_ENABLED:-0}
       AHAVAH_QUESTION_PUSH_ENABLED: ${AHAVAH_QUESTION_PUSH_ENABLED:-0}
       AHAVAH_MATCH_QUESTION_PUSH_ENABLED: ${AHAVAH_MATCH_QUESTION_PUSH_ENABLED:-0}
       AHAVAH_E2_QUESTION_LINE_ENABLED: ${AHAVAH_E2_QUESTION_LINE_ENABLED:-0}
@@ -314,6 +315,7 @@ services:
       AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
       # Quick questions (TEC-1845): the cron sends the pushes and the launch
       # email. Off until the owner confirms each proof.
+      AHAVAH_QUESTIONS_LIVE_ENABLED: ${AHAVAH_QUESTIONS_LIVE_ENABLED:-0}
       AHAVAH_QUESTION_PUSH_ENABLED: ${AHAVAH_QUESTION_PUSH_ENABLED:-0}
       AHAVAH_MATCH_QUESTION_PUSH_ENABLED: ${AHAVAH_MATCH_QUESTION_PUSH_ENABLED:-0}
       AHAVAH_E2_QUESTION_LINE_ENABLED: ${AHAVAH_E2_QUESTION_LINE_ENABLED:-0}

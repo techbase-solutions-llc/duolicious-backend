@@ -7,8 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from service.campaigns.switches import enabled
-from service.questions import copy
+from service.questions import copy, live, switch_on
 from service.questions.bank import LIVE, choice_of, question_json, question_state
 from service.questions.schedule import barbados_today, current_drop
 
@@ -34,6 +33,9 @@ _Q_DECLINE = """
 
 
 def current_for(tx, person_id: int, now: Optional[datetime] = None) -> dict:
+    """No card until the questions are live."""
+    if not live():
+        return dict(current=None)
     drop = current_drop(tx, now)
     if drop is None:
         return dict(current=None)
@@ -43,7 +45,10 @@ def current_for(tx, person_id: int, now: Optional[datetime] = None) -> dict:
 
 def catch_up_for(tx, person_id: int, now: Optional[datetime] = None) -> dict:
     """Every live question the member has not answered, leaving out this
-    week's, which has the card to itself (owner decision 10)."""
+    week's, which has the card to itself (owner decision 10). None until
+    the questions are live."""
+    if not live():
+        return dict(declined=False, questions=[])
     drop = current_drop(tx, now)
     skip = [drop['question']['key']] if drop else []
     row = tx.execute(_Q_DECLINED, dict(p=person_id)).fetchone()
@@ -72,6 +77,8 @@ _Q_QUICK_ANSWERS = f"""
 
 
 def quick_answers_for(tx, viewer_id: int, prospect_id: int) -> list[dict]:
+    if not live():
+        return []
     out = []
     for r in tx.execute(_Q_QUICK_ANSWERS, dict(viewer=viewer_id, prospect=prospect_id)).fetchall():
         locked = r['mine'] is None
@@ -122,10 +129,13 @@ def ensure_match_question(tx, match_id: str, a_id: int, b_id: int) -> Optional[d
 def conversation_context(tx, person_id: int, other_uuid: str) -> Optional[dict]:
     """None when the two are not matched (or the other member is
     deactivated or blocked). Their answer stays hidden until the member has
-    answered."""
+    answered. Until the questions are live, no question, and none is
+    assigned."""
     m = tx.execute(_Q_MATCH, dict(me=person_id, uuid=other_uuid)).fetchone()
     if m is None:
         return None
+    if not live():
+        return dict(match_question=None)
     question = ensure_match_question(tx, m['match_id'], m['user_a_id'], m['user_b_id'])
     if question is None:
         return dict(match_question=None)
@@ -150,9 +160,9 @@ _Q_HAD_LAUNCH_EMAIL = """
 
 def e2_question_line(tx, person_id: int, now: datetime) -> Optional[str]:
     """The line in Monday's E2: the question that went live in the last 7
-    days. None while the switch is off, when no question went live this
+    days. None while the switch is off or the questions are not live, when no question went live this
     week or when the member had the launch email this week."""
-    if not enabled('e2_question_line'):
+    if not switch_on('e2_question_line'):
         return None
     drop = current_drop(tx, now)
     if drop is None or drop['live_on'] <= barbados_today(now) - timedelta(days=7):

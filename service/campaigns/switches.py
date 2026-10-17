@@ -42,9 +42,15 @@ SWITCHES = {
     'e1_resend': 'AHAVAH_E1_RESEND_ENABLED',
     # E1 and E4 say "your main profile photo" (web lane copy, 79 and 82).
     'spotlight_copy': 'AHAVAH_SPOTLIGHT_COPY_ENABLED',
+    # Quick questions (TEC-1845), the master switch: until launch day the
+    # app shows members no question and takes no answer, and nothing below
+    # sends, whichever way its own switch is set. Admin > Questions works
+    # either way, so the schedule can be approved beforehand.
+    'questions_live': 'AHAVAH_QUESTIONS_LIVE_ENABLED',
     # Quick questions (TEC-1845): the weekly question push and the
     # silent-match push, the question line in E2, and the launch email and
-    # push. Off until the owner has seen each proof on his own device.
+    # push. Off until the owner has seen each proof on his own device, and
+    # each needs questions_live as well (service.questions.switch_on).
     'question_push': 'AHAVAH_QUESTION_PUSH_ENABLED',
     'match_question_push': 'AHAVAH_MATCH_QUESTION_PUSH_ENABLED',
     'e2_question_line': 'AHAVAH_E2_QUESTION_LINE_ENABLED',

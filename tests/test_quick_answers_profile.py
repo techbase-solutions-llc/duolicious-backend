@@ -13,7 +13,7 @@ import pytest
 
 from database import api_tx
 
-pytestmark = pytest.mark.usefixtures('questions_schema')
+pytestmark = pytest.mark.usefixtures('questions_schema', 'questions_live')
 
 _COUNTRY = 'XQ'
 

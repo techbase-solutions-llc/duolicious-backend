@@ -16,7 +16,7 @@ from database import api_tx
 from emails import send_community_weekly as e2
 from service.questions.schedule import barbados_today
 
-pytestmark = pytest.mark.usefixtures('questions_schema')
+pytestmark = pytest.mark.usefixtures('questions_schema', 'questions_live')
 
 LINE = "This week's question: the window seat or the aisle seat? Answer in the app."
 

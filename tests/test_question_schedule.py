@@ -18,7 +18,7 @@ import service.spotlight.restdays as rd
 from database import api_tx
 from service.questions.schedule import barbados_today, current_drop, drop_day, week_start
 
-pytestmark = pytest.mark.usefixtures('questions_schema')
+pytestmark = pytest.mark.usefixtures('questions_schema', 'questions_live')
 
 SUN = date(2027, 1, 3)  # a Sunday
 

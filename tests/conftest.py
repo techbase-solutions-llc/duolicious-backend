@@ -674,6 +674,15 @@ def questions_schema(growth_schema):
 
 
 @pytest.fixture
+def questions_live(monkeypatch):
+    """The master switch on (AHAVAH_QUESTIONS_LIVE_ENABLED): the quick
+    questions as members see them after launch. A module testing that
+    behaviour asks for it beside questions_schema; tests/
+    test_questions_live_switch.py tests the dark state."""
+    monkeypatch.setenv('AHAVAH_QUESTIONS_LIVE_ENABLED', '1')
+
+
+@pytest.fixture
 def make_question(questions_schema):
     import json
     from uuid import uuid4

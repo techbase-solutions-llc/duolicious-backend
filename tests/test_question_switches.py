@@ -12,6 +12,7 @@ import pytest
 from service.campaigns.switches import SWITCHES
 
 NEW = {
+    'questions_live': 'AHAVAH_QUESTIONS_LIVE_ENABLED',
     'question_push': 'AHAVAH_QUESTION_PUSH_ENABLED',
     'match_question_push': 'AHAVAH_MATCH_QUESTION_PUSH_ENABLED',
     'e2_question_line': 'AHAVAH_E2_QUESTION_LINE_ENABLED',

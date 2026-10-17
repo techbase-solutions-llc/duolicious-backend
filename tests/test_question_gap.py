@@ -17,7 +17,7 @@ from database import api_tx
 from emails import one_photo_nudge
 from service.campaigns import held
 
-pytestmark = pytest.mark.usefixtures('questions_schema')
+pytestmark = pytest.mark.usefixtures('questions_schema', 'questions_live')
 
 TUESDAY = datetime(2026, 10, 13, 13, tzinfo=timezone.utc)
 

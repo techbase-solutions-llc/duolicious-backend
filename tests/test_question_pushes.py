@@ -24,7 +24,7 @@ from service.questions import copy
 from service.questions import pushes as qp
 from service.questions.schedule import barbados_today
 
-pytestmark = pytest.mark.usefixtures('questions_schema')
+pytestmark = pytest.mark.usefixtures('questions_schema', 'questions_live')
 
 UTC = timezone.utc
 

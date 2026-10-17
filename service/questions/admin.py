@@ -32,7 +32,7 @@ from service.campaigns.switches import enabled
 from service.questions.bank import CHOICE_FORMATS, LIVE, live_question
 from service.questions.schedule import FIRST_WEEKS, barbados_today, drop_day, week_start
 
-SWITCH_NAMES = ('question_push', 'match_question_push', 'e2_question_line',
+SWITCH_NAMES = ('questions_live', 'question_push', 'match_question_push', 'e2_question_line',
                 'questions_launch_email', 'questions_launch_push')
 LABEL_MAX = 40
 GUARD_RAIL_SWITCH_OFFS = 2
