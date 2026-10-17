@@ -1045,7 +1045,10 @@ class PostToolJoin(BaseModel):
 
 
 class PostToolInviteEmail(BaseModel):
-    email: EmailStr
+    """POST /tools/sessions/<id>/invite-email (TEC-1845). `email` is
+    checked by service.leads.clean_email, as every lead address is, rather
+    than EmailStr, which refuses reserved test domains."""
+    email: str = Field(min_length=3, max_length=254)
     website: Optional[str] = None
     signup_stamp: Optional[str] = None
 

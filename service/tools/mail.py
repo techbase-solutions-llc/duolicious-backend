@@ -241,3 +241,38 @@ def preview_summary(to: str) -> tuple[str, str]:
               dict(section='nice-to-have', title='We pray together every evening', importance=5,
                    frequency='daily')]
     return SUBJECT, checklist_results_html('wife', sample, stored=True)
+
+
+def prepare_invite(tx, player: dict, to_email: str, *, count: bool) -> dict:
+    """The invite the player who saved an Us game or a couple checklist
+    sends to the other person. `count` adds it to the session's tally
+    (Admin > Growth); a refused address is not counted."""
+    from service.tools.sessions import TWO_PLAYER, ToolError
+    if player['seat'] != 'owner':
+        raise ToolError('not_allowed', 403)
+    if player['mode'] not in TWO_PLAYER:
+        raise ToolError('bad_mode')
+    if not player['invite_token'] or not player['owner_display']:
+        raise ToolError('not_saved', 409)
+    if normalize_email(to_email) == player['owner_normalized_email']:
+        raise ToolError('own_address')
+    if count:
+        tx.execute('UPDATE tool_session SET invite_emails = invite_emails + 1 WHERE id = %(i)s',
+                   dict(i=player['session_id']))
+    name = player['owner_display']
+    return dict(to=to_email, subject=invite_subject(player['kind'], name),
+                html=invite_html(player['kind'], name, invite_url(player['invite_token'])))
+
+
+def send_invite_later(msg: dict) -> None:
+    """Straight to the mailer once the request has committed, as the
+    checklist's spouse email is sent: the recipient is neither a member
+    nor a lead, so the outbox, which names one, cannot hold it."""
+    def _go():
+        try:
+            from smtp import aws_smtp
+            aws_smtp.send(subject=msg['subject'], body=msg['html'], to_addr=msg['to'],
+                          from_addr=FROM_ADDR, reply_to=REPLY_TO)
+        except Exception:
+            print(traceback.format_exc())
+    threading.Thread(target=_go, daemon=True).start()

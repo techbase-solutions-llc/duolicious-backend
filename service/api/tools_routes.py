@@ -14,7 +14,18 @@ from flask import request
 
 import duotypes as t
 from database import api_tx
-from service.api.decorators import adelete, aget, apost, get, limiter, post, validate
+from service.api.decorators import (
+    adelete,
+    aget,
+    apost,
+    disable_account_rate_limit,
+    get,
+    limiter,
+    limiter_account,
+    post,
+    shared_recipient_limit,
+    validate,
+)
 
 
 @get('/tools/status')
@@ -219,3 +230,44 @@ def delete_tool_session(s: Optional[t.SessionInfo], sid: str):
     except sessions.ToolError as e:
         return _refused(e)
     return '', 204
+
+
+# 10 a day per account; the shared `recipient` scope (5 an hour, 20 a day
+# per address, with /request-otp and the checklist send) bounds one inbox.
+_invite_account_limit = limiter.shared_limit(
+    '10 per day', scope='tools_invite_email', key_func=limiter_account,
+    exempt_when=disable_account_rate_limit)
+
+
+@apost('/tools/sessions/<sid>/invite-email', expected_onboarding_status=None,
+       limiter=[_invite_account_limit, shared_recipient_limit])
+@validate(t.PostToolInviteEmail)
+def post_tool_invite_email(req: t.PostToolInviteEmail, s: t.SessionInfo, sid: str):
+    """Send the invite link by email. A refused address (signupguard's free
+    rules: the hidden field, the page stamp, the per-network limits and the
+    bad domains) gets the same answer as a sent one, and nothing goes."""
+    from service import leads, signupguard
+    from service.tools import live, mail, sessions, switch_on
+    if not live():
+        return _off()
+    if not switch_on('together_invite_email'):
+        return dict(error='off'), 404
+    cleaned = leads.clean_email(req.email)
+    if cleaned is None:
+        return dict(error='bad_email'), 400
+    to_email = cleaned[0]
+    # mail_refusal opens its own read, so it runs before the transaction.
+    refusal = leads.mail_refusal(email=to_email, ip=request.remote_addr,
+                                 stamp=req.signup_stamp, website=req.website)
+    try:
+        with api_tx() as tx:
+            player = sessions.player_for(tx, sid, _token(), s)
+            msg = mail.prepare_invite(tx, player, to_email, count=refusal is None)
+    except sessions.ToolError as e:
+        return _refused(e)
+    if refusal:
+        signupguard.record_refusal(refusal, new_address=True, email=to_email,
+                                   ip=request.remote_addr)
+        return dict(sent=True), 202
+    mail.send_invite_later(msg)
+    return dict(sent=True), 202
