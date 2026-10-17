@@ -6,7 +6,7 @@ is. Every route needs a signed-in member.
 import duotypes as t
 
 from database import api_tx
-from service.api.decorators import aget, aput, validate
+from service.api.decorators import aget, apost, aput, validate
 
 
 @aput('/answers/<key>')
@@ -32,3 +32,33 @@ def get_answers(s: t.SessionInfo):
     from service.questions.bank import my_answers
     with api_tx('read committed') as tx:
         return dict(answers=my_answers(tx, s.person_id))
+
+
+@aget('/questions/current')
+def get_current_question(s: t.SessionInfo):
+    """This week's question, the member's answer and the split once there
+    are 5 answers and the member has given one."""
+    if s.person_id is None:
+        return 'Not signed in', 401
+    from service.questions.member import current_for
+    with api_tx('read committed') as tx:
+        return current_for(tx, s.person_id)
+
+
+@aget('/questions/catch-up')
+def get_catch_up(s: t.SessionInfo):
+    if s.person_id is None:
+        return 'Not signed in', 401
+    from service.questions.member import catch_up_for
+    with api_tx('read committed') as tx:
+        return catch_up_for(tx, s.person_id)
+
+
+@apost('/questions/catch-up/decline')
+def post_catch_up_decline(s: t.SessionInfo):
+    if s.person_id is None:
+        return 'Not signed in', 401
+    from service.questions.member import decline_catch_up
+    with api_tx() as tx:
+        decline_catch_up(tx, s.person_id)
+    return '', 204
