@@ -365,3 +365,84 @@ def view(tx, session_pk: int, player_id: int) -> dict:
     if mode == 'knows_me':
         out['board'] = _board(tx, session_pk, for_owner=is_owner, me_id=player_id)
     return out
+
+
+_Q_BY_INVITE = """
+    SELECT id, uuid::text AS uuid, kind, mode, owner_display, owner_person_id,
+           owner_normalized_email, deleted_at
+      FROM tool_session WHERE invite_token = %(t)s
+"""
+
+
+def _by_invite(tx, invite_token: object, *, lock: bool = False) -> dict:
+    if not isinstance(invite_token, str) or not _TOKEN_RE.match(invite_token):
+        raise ToolError('not_found', 404)
+    row = tx.execute(_Q_BY_INVITE + (' FOR UPDATE' if lock else ''),
+                     dict(t=invite_token)).fetchone()
+    if row is None:
+        raise ToolError('not_found', 404)
+    if row['deleted_at'] is not None:
+        raise ToolError('deleted', 410)
+    return dict(row)
+
+
+def _seat_state(tx, sess: dict) -> str:
+    players = players_of(tx, sess['id'])
+    owner = next(p for p in players if p['seat'] == 'owner')
+    guests = [p for p in players if p['seat'] == 'guest' and p['removed_at'] is None]
+    if sess['mode'] in TWO_PLAYER and guests:
+        return 'full'
+    if sess['mode'] == 'knows_me':
+        if owner['finished_at'] is None:
+            return 'not_ready'
+        if len(guests) >= KNOWS_ME_MAX_FRIENDS:
+            return 'full'
+    return 'open'
+
+
+def invite_info(tx, invite_token: object) -> dict:
+    """What the second player's start shows. Already played is the web's
+    to tell: the device that played keeps its token."""
+    sess = _by_invite(tx, invite_token)
+    return dict(kind=sess['kind'], mode=sess['mode'], owner_display=sess['owner_display'],
+                state=_seat_state(tx, sess))
+
+
+def _is_owner(sess: dict, s) -> bool:
+    if s.person_id is not None and sess['owner_person_id'] == s.person_id:
+        return True
+    return sess['owner_normalized_email'] == normalize_email(s.email)
+
+
+def join(tx, invite_token: object, *, display: object, s=None) -> dict:
+    """A guest takes a seat. A signed-in guest (a member from the chat, or
+    a visitor who confirmed an address before) is saved at once, with no
+    email step, except in knows-me, where friends give only a name."""
+    sess = _by_invite(tx, invite_token, lock=True)
+    signed_in = s is not None and s.signed_in
+    if signed_in and _is_owner(sess, s):
+        raise ToolError('own_session', 409)
+    state = _seat_state(tx, sess)
+    if state != 'open':
+        raise ToolError(state, 409)
+    fields: dict[str, Any] = dict(display=clean_display(display))
+    if signed_in and sess['mode'] != 'knows_me':
+        fields.update(email=s.email, normalized_email=normalize_email(s.email),
+                      person_id=s.person_id)
+    token = new_player(tx, sess['id'], 'guest', **fields)
+    tx.execute('UPDATE tool_session SET last_visit_at = NOW() WHERE id = %(i)s', dict(i=sess['id']))
+    return dict(session_id=sess['uuid'], player_token=token)
+
+
+def set_removed(tx, player: dict, guest_id: int, removed: bool) -> dict:
+    """The player takes a name off their knows-me board, or puts it back
+    ("Undo")."""
+    if player['seat'] != 'owner' or player['mode'] != 'knows_me':
+        raise ToolError('not_allowed', 403)
+    n = tx.execute(
+        """UPDATE tool_player SET removed_at = CASE WHEN %(r)s THEN NOW() END
+            WHERE id = %(g)s AND session_id = %(s)s AND seat = 'guest'""",
+        dict(r=removed, g=guest_id, s=player['session_id'])).rowcount
+    if n == 0:
+        raise ToolError('not_found', 404)
+    return view(tx, player['session_id'], player['player_id'])

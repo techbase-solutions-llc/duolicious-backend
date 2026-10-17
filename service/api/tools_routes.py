@@ -106,3 +106,58 @@ def get_tool_session(s: Optional[t.SessionInfo], sid: str):
             return sessions.view(tx, player['session_id'], player['player_id'])
     except sessions.ToolError as e:
         return _refused(e)
+
+
+_invite_read_limit = limiter.shared_limit('120 per hour', scope='tools_invite_read')
+_join_limit = limiter.shared_limit('60 per hour', scope='tools_join')
+
+
+@get('/tools/i/<invite>', limiter=_invite_read_limit)
+def get_tool_invite(invite: str):
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            return sessions.invite_info(tx, invite)
+    except sessions.ToolError as e:
+        return _refused(e)
+
+
+@apost('/tools/i/<invite>/players', auth='optional', expected_onboarding_status=None,
+       limiter=_join_limit)
+@validate(t.PostToolJoin)
+def post_tool_join(req: t.PostToolJoin, s: Optional[t.SessionInfo], invite: str):
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx() as tx:
+            out = sessions.join(tx, invite, display=req.display, s=s)
+    except sessions.ToolError as e:
+        return _refused(e)
+    return out, 201
+
+
+def _board_change(s, sid: str, gid: int, removed: bool):
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx() as tx:
+            player = sessions.player_for(tx, sid, _token(), s)
+            return sessions.set_removed(tx, player, gid, removed)
+    except sessions.ToolError as e:
+        return _refused(e)
+
+
+@adelete('/tools/sessions/<sid>/players/<int:gid>', auth='optional',
+         expected_onboarding_status=None)
+def delete_tool_board_name(s: Optional[t.SessionInfo], sid: str, gid: int):
+    return _board_change(s, sid, gid, True)
+
+
+@apost('/tools/sessions/<sid>/players/<int:gid>/restore', auth='optional',
+       expected_onboarding_status=None)
+def post_tool_board_restore(s: Optional[t.SessionInfo], sid: str, gid: int):
+    return _board_change(s, sid, gid, False)
