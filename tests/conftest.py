@@ -778,3 +778,21 @@ def pushed_questions(monkeypatch):
         dict(person_id=person_id, title=title, body=body, url=url, tag=tag)) or 1)
     monkeypatch.setattr(qp, 'PUSH_READY', lambda: True)
     return sent
+
+
+# ---------------------------------------------------------------------------
+# Together (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0068 is idempotent, so applying it here is what the deploy does.
+# A module that reads the tool tables asks for it with
+#     pytestmark = pytest.mark.usefixtures('together_schema')
+
+@pytest.fixture(scope='session')
+def together_schema(growth_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0068_together.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
