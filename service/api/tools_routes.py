@@ -178,3 +178,44 @@ def post_tool_claim(req: t.PostToolClaim, s: t.SessionInfo, sid: str):
             return sessions.claim(tx, player, s, req.display)
     except sessions.ToolError as e:
         return _refused(e)
+
+
+_share_read_limit = limiter.shared_limit('300 per hour', scope='tools_share_read')
+_share_open_limit = limiter.shared_limit('60 per hour', scope='tools_share_open')
+
+
+@get('/tools/r/<share>', limiter=_share_read_limit)
+def get_tool_public(share: str):
+    """The public summary a shared link and its images read. No answers."""
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            return sessions.public_summary(tx, share), 200, {'Cache-Control': 'no-store'}
+    except sessions.ToolError as e:
+        return dict(error=e.reason), e.status, {'Cache-Control': 'no-store'}
+
+
+@post('/tools/r/<share>/open', limiter=_share_open_limit)
+def post_tool_share_open(share: str):
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    with api_tx() as tx:
+        sessions.count_open(tx, share)
+    return '', 204
+
+
+@adelete('/tools/sessions/<sid>', auth='optional', expected_onboarding_status=None)
+def delete_tool_session(s: Optional[t.SessionInfo], sid: str):
+    from service.tools import live, sessions
+    if not live():
+        return _off()
+    try:
+        with api_tx() as tx:
+            player = sessions.player_for(tx, sid, _token(), s)
+            sessions.delete_session(tx, player)
+    except sessions.ToolError as e:
+        return _refused(e)
+    return '', 204

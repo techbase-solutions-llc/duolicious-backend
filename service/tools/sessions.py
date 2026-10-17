@@ -519,3 +519,70 @@ def link_tool_sessions_to_person(tx, person_id: int) -> None:
         tx.execute('ROLLBACK TO SAVEPOINT link_tool_sessions')
     else:
         tx.execute('RELEASE SAVEPOINT link_tool_sessions')
+
+
+_Q_BY_SHARE = """
+    SELECT id, kind, mode, owner_display, completed_at, deleted_at
+      FROM tool_session WHERE share_token = %(t)s
+"""
+
+
+def public_summary(tx, share_token: object) -> dict:
+    """What a shared link and its image may show: names and the headline
+    number, never an answer, an area or another player's score."""
+    if not isinstance(share_token, str) or not _TOKEN_RE.match(share_token):
+        raise ToolError('not_found', 404)
+    row = tx.execute(_Q_BY_SHARE, dict(t=share_token)).fetchone()
+    if row is None:
+        raise ToolError('not_found', 404)
+    if row['deleted_at'] is not None:
+        raise ToolError('deleted', 410)
+    mode = row['mode']
+    players = players_of(tx, row['id'])
+    owner = next(p for p in players if p['seat'] == 'owner')
+    names = [row['owner_display']] if row['owner_display'] else []
+    if mode in TWO_PLAYER:
+        guest = next((p for p in players if p['seat'] == 'guest' and p['removed_at'] is None), None)
+        if guest and guest['display']:
+            names.append(guest['display'])
+        ready = row['completed_at'] is not None
+    else:
+        ready = owner['finished_at'] is not None
+    out: dict[str, Any] = dict(kind=row['kind'], mode=mode, names=names,
+                               state='ready' if ready else 'waiting')
+    if ready and mode == 'me':
+        out['archetype'] = _result_row(tx, row['id'], None)['archetype']
+    elif ready and mode == 'us':
+        out['score'] = _result_row(tx, row['id'], None)['score']
+    elif ready and mode == 'couple':
+        b = _result_row(tx, row['id'], None)['breakdown']
+        out.update(agree=b['agree'], total=b['total'])
+    return out
+
+
+def count_open(tx, share_token: object) -> None:
+    """A share link opened in a browser (Admin > Growth counts them)."""
+    if isinstance(share_token, str) and _TOKEN_RE.match(share_token):
+        tx.execute("""UPDATE tool_session SET share_opens = share_opens + 1
+                       WHERE share_token = %(t)s AND deleted_at IS NULL""", dict(t=share_token))
+
+
+def delete_session(tx, player: dict) -> None:
+    """Delete a result for everyone: its answers, results, names and
+    addresses go now. The row and its tokens stay as a tombstone, so every
+    link says it was deleted, until the sweep removes it 30 days later
+    (service/tools/retention.py). The owner may delete; so may the guest
+    of an Us game or a couple checklist, which they share. A knows-me
+    friend may not."""
+    if player['seat'] == 'guest' and player['mode'] not in TWO_PLAYER:
+        raise ToolError('not_allowed', 403)
+    sid = player['session_id']
+    tx.execute('DELETE FROM tool_answer WHERE session_id = %(s)s', dict(s=sid))
+    tx.execute('DELETE FROM tool_result WHERE session_id = %(s)s', dict(s=sid))
+    tx.execute("""UPDATE tool_player SET display = NULL, email = NULL, normalized_email = NULL,
+                         person_id = NULL, role = NULL
+                   WHERE session_id = %(s)s""", dict(s=sid))
+    tx.execute("""UPDATE tool_session SET deleted_at = NOW(), owner_email = NULL,
+                         owner_normalized_email = NULL, owner_display = NULL,
+                         owner_person_id = NULL, utm = NULL
+                   WHERE id = %(s)s""", dict(s=sid))
