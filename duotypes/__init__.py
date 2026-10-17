@@ -1014,6 +1014,40 @@ class PutAnswer(BaseModel):
     keep_existing: bool = False
 
 
+class PostToolSession(BaseModel):
+    """POST /tools/sessions (TEC-1845). `first_touch` is the device's
+    first touch, typed Any as for /finish-onboarding: the server keeps only
+    what service.person.attribution.clean_first_touch accepts."""
+    kind: Literal['game', 'checklist']
+    mode: Literal['me', 'us', 'knows_me', 'couple', 'single']
+    first_touch: Optional[Any] = None
+
+
+class ToolAnswerIn(BaseModel):
+    question_key: str = Field(min_length=1, max_length=64)
+    # Checked against the question by service.tools; null removes it.
+    answer: Optional[Any] = None
+
+
+class PostToolAnswers(BaseModel):
+    role: Optional[Literal['husband', 'wife']] = None
+    answers: List[ToolAnswerIn] = Field(default_factory=list, max_length=60)
+
+
+class PostToolClaim(BaseModel):
+    display: str = Field(min_length=1, max_length=80)
+
+
+class PostToolJoin(BaseModel):
+    display: str = Field(min_length=1, max_length=80)
+
+
+class PostToolInviteEmail(BaseModel):
+    email: EmailStr
+    website: Optional[str] = None
+    signup_stamp: Optional[str] = None
+
+
 class PostPushTap(BaseModel):
     """POST /push-taps (TEC-1845): the web app landed on a ?src= URL."""
     src: Literal['qpush', 'mpush', 'lpush']
