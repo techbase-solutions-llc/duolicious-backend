@@ -1258,6 +1258,13 @@ def get_prospect_profile(s: Optional[t.SessionInfo], prospect_uuid):
     except Exception:
         pass
 
+    # Quick answers (TEC-1845): signed-in viewers of a full profile only.
+    # The anonymous and limited paths returned above, so neither carries
+    # them. Locked for the viewer until they answer the same question.
+    from service.questions.member import quick_answers_for
+    with api_tx('READ COMMITTED') as tx:
+        profile['quick_answers'] = quick_answers_for(tx, s.person_id, profile['person_id'])
+
     return profile
 
 def get_conversation_prospect(s: t.SessionInfo, prospect_uuid: str):

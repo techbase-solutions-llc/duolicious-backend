@@ -52,3 +52,28 @@ def catch_up_for(tx, person_id: int, now: Optional[datetime] = None) -> dict:
 
 def decline_catch_up(tx, person_id: int) -> None:
     tx.execute(_Q_DECLINE, dict(p=person_id))
+
+
+# Only the prospect's answers to live questions. The viewer's own answer
+# decides the lock: no answer from the viewer, no choice in the response.
+_Q_QUICK_ANSWERS = f"""
+    SELECT b.key, b.text, b.format, b.options,
+           theirs.choice_key AS theirs, mine.choice_key AS mine
+      FROM prompt_answer theirs
+      JOIN prompt_bank b ON b.key = theirs.prompt_key AND {LIVE}
+      LEFT JOIN prompt_answer mine
+             ON mine.person_id = %(viewer)s AND mine.prompt_key = theirs.prompt_key
+            AND mine.choice_key IS NOT NULL
+     WHERE theirs.person_id = %(prospect)s AND theirs.choice_key IS NOT NULL
+     ORDER BY b.sort, b.key
+"""
+
+
+def quick_answers_for(tx, viewer_id: int, prospect_id: int) -> list[dict]:
+    out = []
+    for r in tx.execute(_Q_QUICK_ANSWERS, dict(viewer=viewer_id, prospect=prospect_id)).fetchall():
+        locked = r['mine'] is None
+        out.append(dict(question=question_json(r), locked=locked,
+                        choice_key=None if locked else r['theirs'],
+                        shared=not locked and r['mine'] == r['theirs']))
+    return out
