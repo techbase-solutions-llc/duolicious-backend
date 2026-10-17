@@ -1,0 +1,34 @@
+{
+  "about": "Together (TEC-1845). Game answers both engines must score alike: ahavah-api service/tools/scoring.py (tests/test_together_scoring.py) and ahavah-web src/lib/scoring with src/lib/together/profile.ts (tests/lib/together-scoring-parity.test.ts). The owner is the first person. Expected values worked by hand from the web rules on 17 Oct 2026; change them only with both engines.",
+  "cases": [
+    {
+      "name": "identical",
+      "owner": {"calendar": "aviv-barley", "torah-walk": "intermediate", "sabbath-afternoon": "walk", "spring-feasts": ["passover", "unleavened-bread", "first-fruits", "shavuot"], "autumn-feasts": ["trumpets", "yom-kippur", "sukkot"], "has-children": "no", "children-hope": "large-family", "city-or-country": "country", "homestead": "homestead", "community": "yes", "country": "US", "move": "will-relocate", "languages": ["en"], "pace": "frequent", "talk-how": ["video-calls", "in-person"]},
+      "guest": {"calendar": "aviv-barley", "torah-walk": "intermediate", "sabbath-afternoon": "quiet", "spring-feasts": ["passover", "unleavened-bread", "first-fruits", "shavuot"], "autumn-feasts": ["trumpets", "yom-kippur", "sukkot"], "has-children": "no", "children-hope": "large-family", "city-or-country": "country", "homestead": "homestead", "community": "yes", "country": "US", "move": "will-relocate", "languages": ["en"], "pace": "frequent", "talk-how": ["video-calls", "in-person"]},
+      "score": 100,
+      "breakdown": {"calendar": 1.0, "polygyny": 0.5, "family": 1.0, "relocation": 1.0, "lifestyle": 1.0, "communication": 1.0, "observance": 1.0, "feast": 1.0, "language": 1.0}
+    },
+    {
+      "name": "apart",
+      "owner": {"calendar": "rabbinic", "torah-walk": "learning", "spring-feasts": ["passover"], "has-children": "no", "children-hope": "no", "city-or-country": "city", "homestead": "neither", "community": "no", "country": "GB", "move": "local-only", "languages": ["en", "fr"], "pace": "slow-paced-courtship", "talk-how": ["texting"]},
+      "guest": {"calendar": "aviv-barley", "torah-walk": "experienced", "spring-feasts": ["passover", "unleavened-bread"], "autumn-feasts": ["sukkot"], "has-children": "yes", "children-hope": "yes", "city-or-country": "country", "homestead": "homestead", "community": "yes", "country": "US", "move": "local-only", "languages": ["en"], "pace": "frequent", "talk-how": ["video-calls"]},
+      "score": 21,
+      "breakdown": {"calendar": 0.4, "polygyny": 0.5, "family": 0.0, "relocation": 0.0, "lifestyle": 0.0, "communication": 0.2, "observance": 0.2, "feast": 0.383333333333, "language": 0.5}
+    },
+    {
+      "name": "partial",
+      "owner": {"calendar": "luni-solar"},
+      "guest": {"calendar": "observational-new-moon", "torah-walk": "beginner", "spring-feasts": ["passover"], "has-children": "no", "children-hope": "open-to-more", "city-or-country": "city", "homestead": "neither", "community": "no", "country": "BB", "move": "international-open", "languages": ["en", "es"], "pace": "frequent", "talk-how": ["texting"]},
+      "score": 41,
+      "breakdown": {"calendar": 0.7, "polygyny": 0.5, "family": 0.4, "relocation": 0.5, "lifestyle": 0.4, "communication": 0.4, "observance": 0.5, "feast": 0.4, "language": 0.0}
+    },
+    {
+      "name": "order-matters",
+      "owner": {"calendar": "enoch", "torah-walk": "beginner", "spring-feasts": ["passover", "unleavened-bread", "first-fruits", "shavuot"], "autumn-feasts": ["trumpets"], "has-children": "yes", "children-hope": "open-to-more", "city-or-country": "city", "homestead": "off-grid", "community": "yes", "country": "JM", "move": "wants-partner-willing", "languages": ["en"], "pace": "frequent", "talk-how": ["video-calls", "texting"]},
+      "guest": {"calendar": "other", "torah-walk": "intermediate", "spring-feasts": ["passover", "shavuot"], "autumn-feasts": ["trumpets", "yom-kippur"], "has-children": "no", "children-hope": "blended", "city-or-country": "country", "homestead": "off-grid", "community": "no", "country": "JM", "move": "will-relocate", "languages": ["en", "es", "fr"], "pace": "frequent", "talk-how": ["texting", "in-person"]},
+      "score": 59,
+      "reversed_score": 50,
+      "breakdown": {"calendar": 0.3, "polygyny": 0.5, "family": 0.0, "relocation": 1.0, "lifestyle": 0.35, "communication": 0.6, "observance": 0.8, "feast": 0.65, "language": 1.0}
+    }
+  ]
+}
