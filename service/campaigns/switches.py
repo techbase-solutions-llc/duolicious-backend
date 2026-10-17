@@ -56,6 +56,19 @@ SWITCHES = {
     'e2_question_line': 'AHAVAH_E2_QUESTION_LINE_ENABLED',
     'questions_launch_email': 'AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED',
     'questions_launch_push': 'AHAVAH_QUESTIONS_LAUNCH_PUSH_ENABLED',
+    # Together (TEC-1845), the master switch: until launch every /tools
+    # route but /tools/status answers 404, /together is not found and the
+    # marriage checklist stays as it was. Nothing below sends while it is
+    # off, whichever way its own switch is set (service.tools.switch_on).
+    'together_live': 'AHAVAH_TOGETHER_LIVE_ENABLED',
+    # Together's emails, each off until the owner has seen its proof: the
+    # invite a player sends, the note that the other person has answered
+    # (game), the note that the comparison is ready (checklist) and the
+    # checklist summary a player gets when they finish.
+    'together_invite_email': 'AHAVAH_TOGETHER_INVITE_EMAIL_ENABLED',
+    'together_answered_email': 'AHAVAH_TOGETHER_ANSWERED_EMAIL_ENABLED',
+    'together_ready_email': 'AHAVAH_TOGETHER_READY_EMAIL_ENABLED',
+    'together_summary_email': 'AHAVAH_TOGETHER_SUMMARY_EMAIL_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

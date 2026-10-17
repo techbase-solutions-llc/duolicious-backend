@@ -796,3 +796,52 @@ def together_schema(growth_schema):
     path = Path(__file__).resolve().parent.parent / 'migrations' / '0068_together.sql'
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+@pytest.fixture
+def together_live(monkeypatch):
+    """The master switch on (AHAVAH_TOGETHER_LIVE_ENABLED): Together as
+    players see it after launch. tests/test_tool_sessions.py tests the
+    dark state."""
+    monkeypatch.setenv('AHAVAH_TOGETHER_LIVE_ENABLED', '1')
+
+
+@pytest.fixture
+def no_limits(monkeypatch):
+    """Flask-Limiter off, so a test sees only the rules it is about."""
+    from service.api.decorators import limiter
+    monkeypatch.setattr(limiter, 'enabled', False)
+
+
+@pytest.fixture
+def tool_visitor():
+    """A visitor with no account who confirmed an address with a sign-in
+    code: an onboardee session, as /check-otp leaves it. Returns
+    (email, headers). Sessions, onboardees and leads for the address are
+    deleted afterwards."""
+    import hashlib
+    import secrets
+    from uuid import uuid4
+
+    from database import api_tx
+
+    made: list[str] = []
+
+    def _make(email: str | None = None) -> tuple[str, dict]:
+        address = email or f'visitor-{uuid4().hex[:12]}@ahavah-test.invalid'
+        tok = secrets.token_hex(32)
+        with api_tx() as tx:
+            tx.execute(
+                """INSERT INTO duo_session (session_token_hash, email, signed_in, otp)
+                   VALUES (%(h)s, %(e)s, TRUE, '123456')""",
+                dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=address))
+        made.append(address)
+        return address, {'Authorization': f'Bearer {tok}'}
+
+    yield _make
+
+    with api_tx() as tx:
+        for address in made:
+            tx.execute('DELETE FROM duo_session WHERE email = %(e)s', dict(e=address))
+            tx.execute('DELETE FROM onboardee WHERE email = %(e)s', dict(e=address))
+            tx.execute('DELETE FROM lead WHERE email = %(e)s', dict(e=address))
