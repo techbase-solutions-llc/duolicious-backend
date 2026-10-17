@@ -74,3 +74,26 @@ def get_conversation_context(s: t.SessionInfo, prospect_uuid: str):
     with api_tx() as tx:
         ctx = conversation_context(tx, s.person_id, prospect_uuid)
     return ctx if ctx is not None else ('', 404)
+
+
+# One row per member and source per 10 minutes, so a reload or a second
+# tab does not count twice.
+_Q_TAP = """
+    INSERT INTO push_tap (person_id, src)
+    SELECT %(p)s, %(s)s
+     WHERE NOT EXISTS (SELECT 1 FROM push_tap
+                        WHERE person_id = %(p)s AND src = %(s)s
+                          AND tapped_at > NOW() - interval '10 minutes')
+"""
+
+
+@apost('/push-taps')
+@validate(t.PostPushTap)
+def post_push_tap(req: t.PostPushTap, s: t.SessionInfo):
+    """Nothing recorded a push tap before this (spec, Notifications): the
+    web reads only utm keys and sw.js only opens the URL."""
+    if s.person_id is None:
+        return 'Not signed in', 401
+    with api_tx() as tx:
+        tx.execute(_Q_TAP, dict(p=s.person_id, s=req.src))
+    return '', 204

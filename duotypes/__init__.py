@@ -586,6 +586,11 @@ class PostNotificationsSubscribe(BaseModel):
     swReg.pushManager.subscribe().toJSON() in the browser."""
     endpoint: str = Field(min_length=1, max_length=2048)
     keys: PushSubscriptionKeys
+    # The device's IANA time zone (TEC-1845), from the web's
+    # Intl.DateTimeFormat. Unbounded here on purpose: anything the server
+    # cannot read is stored as None by service.notifications.clean_tz, so
+    # an odd value never stops a device from subscribing.
+    tz: Optional[str] = None
 
 
 class DeleteNotificationsSubscribe(BaseModel):
@@ -998,6 +1003,8 @@ class PatchNotificationPreferences(BaseModel):
     email_verification: Optional[bool] = None
     push_profile_views: Optional[bool] = None
     email_profile_views: Optional[bool] = None
+    # Quick questions (TEC-1845): push only, no email column.
+    push_questions: Optional[bool] = None
 
 
 class PutAnswer(BaseModel):
@@ -1005,6 +1012,11 @@ class PutAnswer(BaseModel):
     page's: it saves only when the member has no answer yet."""
     choice_key: str = Field(min_length=1, max_length=40)
     keep_existing: bool = False
+
+
+class PostPushTap(BaseModel):
+    """POST /push-taps (TEC-1845): the web app landed on a ?src= URL."""
+    src: Literal['qpush', 'mpush', 'lpush']
 
 
 class PostVerificationMultiSelfie(BaseModel):

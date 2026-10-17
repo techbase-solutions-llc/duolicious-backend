@@ -34,7 +34,7 @@ from typing import Any, Dict, Literal, Optional
 
 
 EventKind = Literal[
-    "match", "message", "like", "weekly", "verification", "profile_view"
+    "match", "message", "like", "weekly", "verification", "profile_view", "questions"
 ]
 
 # Map each event kind to the column on notification_preference that
@@ -47,6 +47,7 @@ _EVENT_COLUMN: Dict[EventKind, str] = {
     "weekly":       "push_weekly_digest",
     "verification": "push_verification",
     "profile_view": "push_profile_views",
+    "questions":    "push_questions",
 }
 
 # Defaults that apply when notification_preference has no row for the
@@ -58,6 +59,7 @@ _EVENT_DEFAULTS: Dict[EventKind, bool] = {
     "weekly":       False,
     "verification": True,
     "profile_view": False,
+    "questions":    True,
 }
 
 
@@ -94,6 +96,21 @@ if not PUSH_ENABLED:
     print('service.notifications: VAPID keys missing; push notifications disabled')
 
 
+def clean_tz(value) -> Optional[str]:
+    """A device's IANA time zone as stored on push_subscription.tz (TEC-1845),
+    or None for anything the server cannot read. Never raises: a browser
+    that sends something odd still subscribes, and its pushes use the
+    default zone (service/questions/pushes.py)."""
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(value)
+    except Exception:
+        return None
+    return value
+
+
 def post_subscribe(s, req):
     """Persist a PushSubscription. `s` is t.SessionInfo, `req` is
     t.PostNotificationsSubscribe. Imported via str-typing so this
@@ -106,11 +123,12 @@ def post_subscribe(s, req):
     with api_tx() as tx:
         tx.execute(
             """
-            INSERT INTO push_subscription (person_id, endpoint, p256dh, auth)
-            VALUES (%(person_id)s, %(endpoint)s, %(p256dh)s, %(auth)s)
+            INSERT INTO push_subscription (person_id, endpoint, p256dh, auth, tz)
+            VALUES (%(person_id)s, %(endpoint)s, %(p256dh)s, %(auth)s, %(tz)s)
             ON CONFLICT (person_id, endpoint) DO UPDATE
               SET p256dh    = EXCLUDED.p256dh,
                   auth      = EXCLUDED.auth,
+                  tz        = COALESCE(EXCLUDED.tz, push_subscription.tz),
                   updated_at = NOW()
             """,
             dict(
@@ -118,6 +136,7 @@ def post_subscribe(s, req):
                 endpoint=req.endpoint,
                 p256dh=req.keys.p256dh,
                 auth=req.keys.auth,
+                tz=clean_tz(getattr(req, 'tz', None)),
             ),
         )
         # Every opt-in surface promises like alerts, so a device that
@@ -362,6 +381,10 @@ _EMAIL_COLUMN: Dict[EventKind, str] = {
     "message":      "email_messages",
     "like":         "email_likes",
     "weekly":       "push_weekly_digest",  # no email channel; never emailed
+    # Quick questions (TEC-1845) are push only. Like weekly, the entry
+    # points at the push column and the kind is never emailed: the question
+    # line in E2 belongs to that campaign and its own unsubscribe.
+    "questions":    "push_questions",
     "verification": "email_verification",
     "profile_view": "email_profile_views",
 }
@@ -372,6 +395,7 @@ _EMAIL_DEFAULTS: Dict[EventKind, bool] = {
     "weekly":       False,
     "verification": True,
     "profile_view": False,
+    "questions":    False,
 }
 
 
@@ -576,6 +600,7 @@ def get_notification_preferences(s):
         push_verification=True,   email_verification=True,
         push_profile_views=False, email_profile_views=False,
         push_weekly_digest=False,
+        push_questions=True,
     )
     cols = list(_MATRIX_DEFAULTS.keys())
 
@@ -621,6 +646,14 @@ def patch_notification_preferences(req, s):
         set_clause += ', push_likes_chosen_at = NOW()'
         insert_cols += ', push_likes_chosen_at'
         insert_vals += ', NOW()'
+    # Turning quick-question pushes off is stamped, so switch-offs can be
+    # counted by week (TEC-1845, the guard rail); turning them on clears it.
+    # A second "off" keeps the first stamp.
+    if 'push_questions' in updates:
+        set_clause += (', push_questions_off_at = CASE WHEN %(push_questions)s::boolean THEN NULL '
+                       'ELSE COALESCE(notification_preference.push_questions_off_at, NOW()) END')
+        insert_cols += ', push_questions_off_at'
+        insert_vals += ', CASE WHEN %(push_questions)s::boolean THEN NULL ELSE NOW() END'
     q = f"""
     INSERT INTO notification_preference ({insert_cols}, updated_at)
     VALUES ({insert_vals}, NOW())

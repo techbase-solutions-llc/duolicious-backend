@@ -58,7 +58,9 @@ def _row(person_id: int):
 _DEFAULTS = dict(
     push_matches=True, email_matches=True, push_messages=True, email_messages=True,
     push_likes=False, email_likes=False, push_verification=True, email_verification=True,
-    push_profile_views=False, email_profile_views=False, push_weekly_digest=False)
+    push_profile_views=False, email_profile_views=False, push_weekly_digest=False,
+    # Quick questions (TEC-1845): on by default.
+    push_questions=True)
 
 
 # --- 1. Subscribing ---------------------------------------------------------
