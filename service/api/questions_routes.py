@@ -62,3 +62,15 @@ def post_catch_up_decline(s: t.SessionInfo):
     with api_tx() as tx:
         decline_catch_up(tx, s.person_id)
     return '', 204
+
+
+@aget('/conversation-context/<prospect_uuid>')
+def get_conversation_context(s: t.SessionInfo, prospect_uuid: str):
+    """The chat block of a match (spec, API): the match question, whether
+    the other member has answered and both answers once both have."""
+    if s.person_id is None:
+        return 'Not signed in', 401
+    from service.questions.member import conversation_context
+    with api_tx() as tx:
+        ctx = conversation_context(tx, s.person_id, prospect_uuid)
+    return ctx if ctx is not None else ('', 404)

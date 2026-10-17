@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from service.questions.bank import LIVE, question_json, question_state
+from service.questions.bank import LIVE, choice_of, question_json, question_state
 from service.questions.schedule import current_drop
 
 _Q_CATCH_UP = f"""
@@ -77,3 +77,58 @@ def quick_answers_for(tx, viewer_id: int, prospect_id: int) -> list[dict]:
                         choice_key=None if locked else r['theirs'],
                         shared=not locked and r['mine'] == r['theirs']))
     return out
+
+
+_Q_MATCH = """
+    SELECT m.match_id::text AS match_id, m.user_a_id, m.user_b_id, o.id AS other_id
+      FROM person o
+      JOIN ahavah_match m ON m.user_a_id = LEAST(%(me)s, o.id)
+                         AND m.user_b_id = GREATEST(%(me)s, o.id)
+     WHERE o.uuid = uuid_or_null(%(uuid)s::text)
+       AND o.activated
+       AND NOT is_blocked_pair(%(me)s, o.id)
+"""
+
+# One question per match, chosen once: a live question neither member has
+# answered, otherwise any live one (spec, Data).
+_Q_ASSIGN = f"""
+    INSERT INTO match_question (match_id, prompt_key)
+    SELECT %(m)s::uuid, b.key
+      FROM prompt_bank b
+     WHERE {LIVE}
+     ORDER BY EXISTS (SELECT 1 FROM prompt_answer a
+                       WHERE a.prompt_key = b.key AND a.person_id IN (%(a)s, %(b)s)),
+              b.sort, b.key
+     LIMIT 1
+    ON CONFLICT (match_id) DO NOTHING
+"""
+
+_Q_MATCH_QUESTION = f"""
+    SELECT b.key, b.text, b.format, b.options
+      FROM match_question mq
+      JOIN prompt_bank b ON b.key = mq.prompt_key AND {LIVE}
+     WHERE mq.match_id = %(m)s::uuid
+"""
+
+
+def ensure_match_question(tx, match_id: str, a_id: int, b_id: int) -> Optional[dict]:
+    tx.execute(_Q_ASSIGN, dict(m=match_id, a=a_id, b=b_id))
+    row = tx.execute(_Q_MATCH_QUESTION, dict(m=match_id)).fetchone()
+    return question_json(row) if row else None
+
+
+def conversation_context(tx, person_id: int, other_uuid: str) -> Optional[dict]:
+    """None when the two are not matched (or the other member is
+    deactivated or blocked). Their answer stays hidden until the member has
+    answered."""
+    m = tx.execute(_Q_MATCH, dict(me=person_id, uuid=other_uuid)).fetchone()
+    if m is None:
+        return None
+    question = ensure_match_question(tx, m['match_id'], m['user_a_id'], m['user_b_id'])
+    if question is None:
+        return dict(match_question=None)
+    mine = choice_of(tx, person_id, question['key'])
+    theirs = choice_of(tx, m['other_id'], question['key'])
+    return dict(match_question=dict(
+        question=question, mine=mine, they_answered=theirs is not None,
+        theirs=theirs if mine is not None else None))
