@@ -72,3 +72,34 @@ def test_a_match_with_a_deactivated_member_has_no_context(client, pair):
     with api_tx() as tx:
         tx.execute('UPDATE person SET activated = FALSE WHERE id = %(i)s', dict(i=pair['b']['id']))
     assert _ctx(client, pair['a'], pair['b']).status_code == 404
+
+
+def test_both_members_opening_the_chat_at_once_is_not_a_500(client, pair, make_question):
+    """The other member's request assigns the match question first and
+    commits while this one is waiting on it. Under REPEATABLE READ the
+    INSERT ... ON CONFLICT DO NOTHING then fails to serialise."""
+    import threading
+    import time
+
+    import psycopg
+
+    import database
+
+    q = make_question(sort=-200)
+    other = psycopg.connect(database._api_conninfo)
+    other.execute('INSERT INTO match_question (match_id, prompt_key) VALUES (%s::uuid, %s)',
+                  (pair['match_id'], q['key']))
+
+    def commit_soon():
+        time.sleep(1)
+        other.commit()
+        other.close()
+
+    t = threading.Thread(target=commit_soon)
+    t.start()
+    try:
+        r = _ctx(client, pair['a'], pair['b'])
+    finally:
+        t.join()
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()['match_question']['question']['key'] == q['key']
