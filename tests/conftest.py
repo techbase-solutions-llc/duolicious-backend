@@ -650,3 +650,84 @@ def growth_schema():
             / 'migrations' / '0066_growth_foundations.sql')
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Quick questions (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0067 is idempotent, so applying it here is what the deploy does.
+# A module that reads the quick-question tables asks for it with
+#     pytestmark = pytest.mark.usefixtures('questions_schema')
+# make_question() adds an active choice question with unique keys, so a
+# test's answers and splits never meet another test's. drops.add() sets a
+# question_drop row and puts back any row it replaced.
+
+@pytest.fixture(scope='session')
+def questions_schema(growth_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0067_quick_questions.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
+@pytest.fixture
+def make_question(questions_schema):
+    import json
+    from uuid import uuid4
+
+    from database import api_tx
+
+    made: list[str] = []
+
+    def _make(labels=('Yes', 'No'), *, active: bool = True, sort: int = 0,
+              text: str | None = None) -> dict:
+        key = f'tq-{uuid4().hex[:10]}'
+        fmt = 'either_or' if len(labels) == 2 else 'pick_one'
+        options = [dict(key=f'c{i}-{uuid4().hex[:6]}', label=label) for i, label in enumerate(labels)]
+        text = text or f'Test question {key}?'
+        with api_tx() as tx:
+            tx.execute(
+                """INSERT INTO prompt_bank (key, text, category, format, options, active, sort)
+                   VALUES (%(k)s, %(t)s, 'test', %(f)s, %(o)s::jsonb, %(a)s, %(s)s)""",
+                dict(k=key, t=text, f=fmt, o=json.dumps(options), a=active, s=sort))
+        made.append(key)
+        return dict(key=key, text=text, format=fmt, options=options)
+
+    yield _make
+    with api_tx() as tx:
+        tx.execute('DELETE FROM question_drop WHERE prompt_key = ANY(%(k)s)', dict(k=made))
+        tx.execute('DELETE FROM prompt_bank WHERE key = ANY(%(k)s)', dict(k=made))
+
+
+@pytest.fixture
+def drops(questions_schema):
+    from database import api_tx
+
+    made: list = []
+    saved: list[dict] = []
+
+    def _add(live_on, key: str, approved: bool = True) -> None:
+        with api_tx() as tx:
+            old = tx.execute(
+                'SELECT live_on, prompt_key, approved_at, created_at FROM question_drop WHERE live_on = %(d)s',
+                dict(d=live_on)).fetchone()
+            if old is not None and live_on not in made:
+                saved.append(dict(old))
+            tx.execute('DELETE FROM question_drop WHERE live_on = %(d)s', dict(d=live_on))
+            tx.execute(
+                """INSERT INTO question_drop (live_on, prompt_key, approved_at)
+                   VALUES (%(d)s, %(k)s, CASE WHEN %(a)s::boolean THEN NOW() END)""",
+                dict(d=live_on, k=key, a=approved))
+        made.append(live_on)
+
+    yield _add
+    with api_tx() as tx:
+        tx.execute('DELETE FROM question_drop WHERE live_on = ANY(%(d)s)', dict(d=made))
+        for row in saved:
+            tx.execute(
+                """INSERT INTO question_drop (live_on, prompt_key, approved_at, created_at)
+                   VALUES (%(live_on)s, %(prompt_key)s, %(approved_at)s, %(created_at)s)
+                   ON CONFLICT (live_on) DO NOTHING""", row)
