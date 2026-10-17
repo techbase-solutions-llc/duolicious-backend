@@ -731,3 +731,40 @@ def drops(questions_schema):
                 """INSERT INTO question_drop (live_on, prompt_key, approved_at, created_at)
                    VALUES (%(live_on)s, %(prompt_key)s, %(approved_at)s, %(created_at)s)
                    ON CONFLICT (live_on) DO NOTHING""", row)
+
+
+@pytest.fixture
+def push_member(make_person):
+    """A mailable member with one push subscription in time zone `tz`,
+    last online `online_days_ago` days ago."""
+    from uuid import uuid4
+
+    from database import api_tx
+
+    def _make(name: str, *, tz: str | None = 'UTC', gender: str = 'Woman',
+              online_days_ago: int = 1, push: bool = True) -> dict:
+        p = make_person(name=name, gender=gender,
+                        email=f'{name.lower()}-{uuid4().hex[:8]}@ahavah-test.invalid')
+        with api_tx() as tx:
+            tx.execute("UPDATE person SET last_online_time = NOW() - make_interval(days => %(d)s) "
+                       "WHERE id = %(i)s", dict(d=online_days_ago, i=p['id']))
+            if push:
+                tx.execute(
+                    """INSERT INTO push_subscription (person_id, endpoint, p256dh, auth, tz)
+                       VALUES (%(i)s, %(e)s, 'k', 'a', %(tz)s)""",
+                    dict(i=p['id'], e=f'https://push.test/{uuid4()}', tz=tz))
+        return p
+
+    return _make
+
+
+@pytest.fixture
+def pushed_questions(monkeypatch):
+    """Every quick-question push, captured instead of sent."""
+    from service.questions import pushes as qp
+
+    sent: list[dict] = []
+    monkeypatch.setattr(qp, '_push', lambda person_id, title, body, url, tag: sent.append(
+        dict(person_id=person_id, title=title, body=body, url=url, tag=tag)))
+    monkeypatch.setattr(qp, 'PUSH_READY', lambda: True)
+    return sent
