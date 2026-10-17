@@ -94,7 +94,7 @@ def test_the_weekly_question_goes_at_18_local_on_the_drop_day(push_member, pushe
     _run(qp.queue_weekly_question_pushes, _at(week['today'], 18))
     assert _to(pushed_questions, m) == [dict(
         person_id=m['id'], title="This week's question",
-        body='Mountains or the sea? One tap, then see who picked the same.',
+        body='Mountains or the sea? One tap, then see how others answered.',
         url='/discover?src=qpush', tag=f'question:{live_on}')]
     with api_tx('read committed') as tx:
         assert tx.execute("SELECT 1 FROM push_send_log WHERE person_id = %(p)s AND campaign = 'question' "

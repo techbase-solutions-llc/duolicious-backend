@@ -11,9 +11,9 @@ from __future__ import annotations
 LOCK_SCREEN_CHARS = 110
 
 WEEKLY_TITLE = "This week's question"
-# The spec asks the ux-writing pass to check "see who picked the same": the
-# card shows counts, not people.
-WEEKLY_TAIL = 'One tap, then see who picked the same.'
+# Not "see who picked the same" (the spec's draft): the card shows counts,
+# not people, so it promised names it never gives.
+WEEKLY_TAIL = 'One tap, then see how others answered.'
 MATCH_TITLE = 'An easy first line'
 MATCH_BODY = 'Your new match has a question waiting. Answer first, then see theirs.'
 LAUNCH_TITLE = 'New on Ahavah: quick questions'

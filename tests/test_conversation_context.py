@@ -103,3 +103,14 @@ def test_both_members_opening_the_chat_at_once_is_not_a_500(client, pair, make_q
         t.join()
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()['match_question']['question']['key'] == q['key']
+
+
+def test_a_blocked_pair_gets_nothing(client, pair):
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO skipped (subject_person_id, object_person_id, reported)
+                      VALUES (%(a)s, %(b)s, TRUE)""", dict(a=pair['a']['id'], b=pair['b']['id']))
+    assert _ctx(client, pair['a'], pair['b']).status_code == 404
+    assert _ctx(client, pair['b'], pair['a']).status_code == 404, 'a block hides both ways'
+    with api_tx('read committed') as tx:
+        assert tx.execute('SELECT 1 FROM match_question WHERE match_id = %(m)s::uuid',
+                          dict(m=pair['match_id'])).fetchone() is None
