@@ -21,6 +21,7 @@ from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
     Q_DELETE_INBOX_OF,
     Q_DELETE_LEADS_OF,
+    Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
@@ -176,6 +177,9 @@ async def hard_delete_expired_once():
                 # row; this takes the ones only the address names, however
                 # it was typed.
                 await tx.execute(Q_DELETE_LEADS_OF,
+                                 dict(nes=[normalize_email(e) for e in emails]))
+                # Together sessions saved or shared by the address (TEC-1845).
+                await tx.execute(Q_DELETE_TOOL_DATA_OF,
                                  dict(nes=[normalize_email(e) for e in emails]))
 
     if rows:

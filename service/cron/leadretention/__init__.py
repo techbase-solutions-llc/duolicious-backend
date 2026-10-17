@@ -34,10 +34,15 @@ def purge_stale_leads(tx) -> int:
 
 
 def _purge_once() -> None:
+    from service.tools.retention import purge_stale_tool_sessions
     with api_tx() as tx:
         n = purge_stale_leads(tx)
+        n_tools = purge_stale_tool_sessions(tx)
     if n:
         print(f'lead_retention: {n} lead(s) deleted after {RETENTION_DAYS} days without a visit')
+    if n_tools:
+        print(f'lead_retention: {n_tools} Together session(s) deleted (12 months without a visit, '
+              f'30 days unsaved, or 30 days after a delete)')
 
 
 async def lead_retention_forever() -> None:

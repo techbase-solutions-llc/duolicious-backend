@@ -37,6 +37,7 @@ from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
     Q_DELETE_INBOX_OF,
     Q_DELETE_LEADS_OF,
+    Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
@@ -318,6 +319,7 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
             tx.execute(Q_DELETE_WAITLIST_OF, dict(emails=[row['email']]))
             tx.execute(Q_DELETE_BETA_SIGNUP_OF, dict(emails=[row['email']]))
             tx.execute(Q_DELETE_LEADS_OF, dict(nes=[normalize_email(row['email'])]))
+            tx.execute(Q_DELETE_TOOL_DATA_OF, dict(nes=[normalize_email(row['email'])]))
         record_audit(
             tx, s, 'hard_delete',
             target_email=del_row['email'], target_uuid=uuid,

@@ -53,3 +53,16 @@ Q_DELETE_BETA_SIGNUP_OF = """
 Q_DELETE_LEADS_OF = """
     DELETE FROM lead WHERE normalized_email = ANY(%(nes)s::text[])
 """
+
+# Together (TEC-1845): every session the address saved, and every Us game
+# or couple checklist it joined, since a comparison is shared. A knows-me
+# friend gives no address, so nothing of theirs is found by one. The
+# caller binds `nes`, as for Q_DELETE_LEADS_OF. Sessions linked to the
+# person go with the person row too (owner_person_id cascades).
+Q_DELETE_TOOL_DATA_OF = """
+    DELETE FROM tool_session s
+     WHERE s.owner_normalized_email = ANY(%(nes)s::text[])
+        OR (s.mode IN ('us', 'couple') AND EXISTS (
+              SELECT 1 FROM tool_player p
+               WHERE p.session_id = s.id AND p.normalized_email = ANY(%(nes)s::text[])))
+"""
