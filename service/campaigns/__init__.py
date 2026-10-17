@@ -36,10 +36,11 @@ TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
 # once per member (service/cron/referralintro). The owner's note to the
 # Spotlight candidates goes to each member once ever
 # (emails/send_spotlight_candidates_note.py), so it neither waits behind E2
-# nor holds the next E2 back.
+# nor holds the next E2 back. The quick questions launch email (TEC-1845)
+# goes to each member once ever, in the same way.
 SELF_CAPPED_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
                          'match_reminder', 'message_reminder', 'friend_joined',
-                         'referral', 'spotlight_note')
+                         'referral', 'spotlight_note', 'questions_launch')
 
 _TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS + SELF_CAPPED_CAMPAIGNS)
 

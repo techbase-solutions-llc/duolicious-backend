@@ -22,7 +22,7 @@ import traceback
 from datetime import datetime, timezone
 
 from database import api_tx
-from emails import likes_waiting_weekly, one_photo_nudge, profile_views_weekly, reminders
+from emails import likes_waiting_weekly, one_photo_nudge, profile_views_weekly, questions_launch, reminders
 from service.questions import pushes as question_pushes
 from service.campaigns import held
 from service.campaigns.runner import audit_send
@@ -45,6 +45,9 @@ JOBS = [
     # week's question push.
     ('questions_launch_push', question_pushes.queue_launch_pushes),
     ('question_push', question_pushes.queue_weekly_question_pushes),
+    # The launch email (TEC-1845): once per member, on a drop day while its
+    # switch is on.
+    ('questions_launch_email', questions_launch.queue_due),
 ]
 
 print(f'Hello from cron module: {__name__}')

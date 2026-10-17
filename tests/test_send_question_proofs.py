@@ -9,7 +9,7 @@ import pytest
 from database import api_tx
 from scripts import send_question_proofs as sq
 
-EXPECTED_EMAILS = {'e2_question_line'}
+EXPECTED_EMAILS = {'e2_question_line', 'questions_launch'}
 _TABLES = ('campaign_link', 'email_outbox', 'email_send_log', 'push_send_log', 'push_tap')
 
 

@@ -29,10 +29,12 @@ __all__ = ['PROOF_LINK_DISABLED', 'PROOF_TO', 'PUSH_PERSON_ID', 'plan', 'main']
 
 
 def _emails() -> list[dict]:
-    from emails import send_community_weekly
+    from emails import questions_launch, send_community_weekly
     builders = [
         ('e2_question_line', 'Weekly email with the question line',
          send_community_weekly.preview_question_line, send_community_weekly.FROM_ADDR),
+        ('questions_launch', 'The launch email',
+         questions_launch.preview, questions_launch.FROM_ADDR),
     ]
     out = []
     for name, label, build, from_addr in builders:
