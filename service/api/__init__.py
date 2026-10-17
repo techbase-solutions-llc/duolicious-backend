@@ -1229,3 +1229,5 @@ import service.api.admin.growth_routes  # noqa: E402,F401
 # Community Spotlight publishing queue (2026-09-13) -- admin-or-cron
 # /admin/growth/* queue, settings, candidates and token health (spec 3.6).
 import service.api.admin.spotlight_routes  # noqa: E402,F401
+# Quick questions (TEC-1845).
+import service.api.questions_routes  # noqa: E402,F401

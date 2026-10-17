@@ -1000,6 +1000,13 @@ class PatchNotificationPreferences(BaseModel):
     email_profile_views: Optional[bool] = None
 
 
+class PutAnswer(BaseModel):
+    """PUT /answers/<key> (TEC-1845). `keep_existing` is the email answer
+    page's: it saves only when the member has no answer yet."""
+    choice_key: str = Field(min_length=1, max_length=40)
+    keep_existing: bool = False
+
+
 class PostVerificationMultiSelfie(BaseModel):
     """Silver verification: 3 selfies captured at different head poses
     in a single client-driven burst. Cron stores all three and runs the
