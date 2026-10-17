@@ -144,7 +144,7 @@ def post_tool_join(req: t.PostToolJoin, s: Optional[t.SessionInfo], invite: str)
         return _off()
     try:
         with api_tx() as tx:
-            out = sessions.join(tx, invite, display=req.display, s=s)
+            out = sessions.join(tx, invite, display=req.display, s=s, ip=request.remote_addr)
     except sessions.ToolError as e:
         return _refused(e)
     return out, 201

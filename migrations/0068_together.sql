@@ -11,7 +11,9 @@
 --                 deleted_at, so a link can say it was deleted.
 --   tool_player   the owner and every guest. Only the sha256 of a
 --                 player's token is stored. A guest in knows_me gives only
---                 a display name.
+--                 a display name. join_network is a digest of the guest's
+--                 network salted with the session, never the address: it
+--                 holds one network to 3 joins of an invite a day.
 --   tool_answer   one answer per player and question, readable only by
 --                 the players (service/tools/sessions.py).
 --   tool_result   the session's result (player_id NULL) or a knows_me
@@ -64,8 +66,13 @@ CREATE TABLE IF NOT EXISTS tool_player (
   person_id         INT          REFERENCES person(id) ON DELETE CASCADE,
   finished_at       TIMESTAMPTZ,
   removed_at        TIMESTAMPTZ,
+  join_network      TEXT,
   created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- Added after the first local apply (review, 17 Oct 2026), so a database
+-- that already has the table gains it too.
+ALTER TABLE tool_player ADD COLUMN IF NOT EXISTS join_network TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx__tool_player__one_owner
   ON tool_player (session_id) WHERE seat = 'owner';

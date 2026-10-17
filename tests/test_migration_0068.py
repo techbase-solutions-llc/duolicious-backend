@@ -137,3 +137,15 @@ def test_a_display_name_is_1_to_40_characters():
                     _player(tx, sid, 'guest', bad)
     finally:
         _drop(sid)
+
+
+def test_a_player_row_has_the_join_network_digest_even_on_an_existing_table():
+    """Added after the first local apply (review, 17 Oct 2026): the ALTER
+    gives a database that already had tool_player the column too."""
+    with api_tx() as tx:
+        tx.execute('ALTER TABLE tool_player DROP COLUMN IF EXISTS join_network')
+    _apply()
+    with api_tx() as tx:
+        row = tx.execute("""SELECT data_type FROM information_schema.columns
+                             WHERE table_name = 'tool_player' AND column_name = 'join_network'""").fetchone()
+    assert row is not None and row['data_type'] == 'text'

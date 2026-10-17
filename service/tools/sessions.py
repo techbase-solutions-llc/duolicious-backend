@@ -17,6 +17,7 @@ Every function takes the caller's transaction and never opens one.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -34,6 +35,7 @@ TWO_PLAYER = ('us', 'couple')
 WITH_INVITE = ('us', 'knows_me', 'couple')
 MAX_ANSWERS = 60
 KNOWS_ME_MAX_FRIENDS = 200
+JOINS_PER_NETWORK_DAY = 3
 _TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{16,64}$')
 
 
@@ -222,6 +224,19 @@ def _complete(tx, session_pk: int) -> None:
                dict(i=session_pk))
 
 
+def _refuse_unanswered(tx, session_pk: int, player_id: int) -> None:
+    """A knows-me friend finishes only once they have guessed every scored
+    question the player answered. Finishing shows right or wrong for each
+    one, so a friend who finished with one guess, joined again and guessed
+    the next could read the player's answers a question at a time."""
+    owner = tx.execute("SELECT id FROM tool_player WHERE session_id = %(s)s AND seat = 'owner'",
+                       dict(s=session_pk)).fetchone()
+    scored = [k for k in questions.SCORED_KEYS if k in answers_of(tx, owner['id'])]
+    mine = answers_of(tx, player_id)
+    if any(k not in mine for k in scored):
+        raise ToolError('unanswered', 409)
+
+
 def finish(tx, player: dict) -> dict:
     """The player has answered. Me and single get their result now; Us
     and couple when the second player finishes, computed once (the session
@@ -233,6 +248,8 @@ def finish(tx, player: dict) -> dict:
     tx.execute('SELECT id FROM tool_session WHERE id = %(i)s FOR UPDATE', dict(i=sid))
     if player['seat'] == 'guest' and player['removed_at'] is not None:
         raise ToolError('not_found', 404)
+    if player['mode'] == 'knows_me' and player['seat'] == 'guest' and player['finished_at'] is None:
+        _refuse_unanswered(tx, sid, player['player_id'])
     tx.execute('UPDATE tool_player SET finished_at = COALESCE(finished_at, NOW()) WHERE id = %(p)s',
                dict(p=player['player_id']))
     mode = player['mode']
@@ -423,10 +440,28 @@ def _is_owner(sess: dict, s) -> bool:
     return sess['owner_normalized_email'] == normalize_email(s.email)
 
 
-def join(tx, invite_token: object, *, display: object, s=None) -> dict:
+_Q_JOINS_FROM = """
+    SELECT count(*) AS n FROM tool_player
+     WHERE session_id = %(s)s AND seat = 'guest' AND join_network = %(j)s
+       AND created_at > NOW() - INTERVAL '1 day'
+"""
+
+
+def _join_network(session_pk: int, ip: Optional[str]) -> str:
+    """The guest's network (the IPv4 /24 or IPv6 /64) as a digest salted
+    with the session: enough to count joins, never the address."""
+    from service.signupguard import network_of
+    network = network_of(ip) or (ip or '')
+    return hashlib.sha256(f'{session_pk}|{network}'.encode()).hexdigest()[:32]
+
+
+def join(tx, invite_token: object, *, display: object, s=None, ip: Optional[str] = None) -> dict:
     """A guest takes a seat. A signed-in guest (a member from the chat, or
     a visitor who confirmed an address before) is saved at once, with no
-    email step, except in knows-me, where friends give only a name."""
+    email step, except in knows-me, where friends give only a name. One
+    network joins one invite at most JOINS_PER_NETWORK_DAY times a day, so
+    nobody can re-join a knows-me board to read the player's answers; the
+    session row is locked, so the count holds."""
     sess = _by_invite(tx, invite_token, lock=True)
     signed_in = s is not None and s.signed_in
     if signed_in and _is_owner(sess, s):
@@ -434,7 +469,10 @@ def join(tx, invite_token: object, *, display: object, s=None) -> dict:
     state = _seat_state(tx, sess)
     if state != 'open':
         raise ToolError(state, 409)
-    fields: dict[str, Any] = dict(display=clean_display(display))
+    network = _join_network(sess['id'], ip)
+    if tx.execute(_Q_JOINS_FROM, dict(s=sess['id'], j=network)).fetchone()['n']             >= JOINS_PER_NETWORK_DAY:
+        raise ToolError('too_many_joins', 429)
+    fields: dict[str, Any] = dict(display=clean_display(display), join_network=network)
     if signed_in and sess['mode'] != 'knows_me':
         fields.update(email=s.email, normalized_email=normalize_email(s.email),
                       person_id=s.person_id)
@@ -593,7 +631,7 @@ def delete_session(tx, player: dict) -> None:
     tx.execute('DELETE FROM tool_answer WHERE session_id = %(s)s', dict(s=sid))
     tx.execute('DELETE FROM tool_result WHERE session_id = %(s)s', dict(s=sid))
     tx.execute("""UPDATE tool_player SET display = NULL, email = NULL, normalized_email = NULL,
-                         person_id = NULL, role = NULL
+                         person_id = NULL, role = NULL, join_network = NULL
                    WHERE session_id = %(s)s""", dict(s=sid))
     tx.execute("""UPDATE tool_session SET deleted_at = NOW(), owner_email = NULL,
                          owner_normalized_email = NULL, owner_display = NULL,

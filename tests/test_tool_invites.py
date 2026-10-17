@@ -148,3 +148,41 @@ def test_the_owner_removes_and_restores_a_name(client):
     assert client.get(f'/tools/sessions/{sid}', headers=_h(friend)).get_json()['board'] == []
     o = client.post(f'/tools/sessions/{sid}/players/{gid}/restore', headers=_h(owner)).get_json()
     assert o['board'][0]['removed'] is False
+
+
+# Review, 17 Oct 2026: each join issued a fresh seat, and a finished friend
+# sees right or wrong per question, so one person could re-join and read
+# the player's answers a question at a time.
+
+def test_one_network_joins_an_invite_at_most_3_times_a_day(client):
+    sid, _, invite = _open(client, mode='knows_me', owner_answers={'calendar': 'enoch'})
+
+    def join_from(ip, n, link=invite):
+        return client.post(f'/tools/i/{link}/players', json=dict(display=f'Friend {n}'),
+                           environ_base={'REMOTE_ADDR': ip})
+
+    for n in range(3):
+        assert join_from('203.0.113.7', n).status_code == 201
+    r = join_from('203.0.113.99', 4)  # the same /24
+    assert (r.status_code, r.get_json()) == (429, {'error': 'too_many_joins'})
+    assert join_from('198.51.100.4', 5).status_code == 201
+    _, _, other = _open(client, mode='knows_me', owner_answers={'calendar': 'enoch'})
+    assert join_from('203.0.113.7', 6, other).status_code == 201
+    with api_tx() as tx:
+        tx.execute("""UPDATE tool_player SET created_at = NOW() - INTERVAL '25 hours'
+                       WHERE session_id = (SELECT id FROM tool_session WHERE uuid = %(u)s)""",
+                   dict(u=sid))
+    assert join_from('203.0.113.7', 7).status_code == 201
+
+
+def test_a_friend_finishes_only_once_every_scored_question_is_answered(client):
+    owner_answers = {'calendar': 'enoch', 'move': 'local-only', 'sabbath-afternoon': 'walk'}
+    sid, _, invite = _open(client, mode='knows_me', owner_answers=owner_answers)
+    friend = _join(client, invite, display='Hannah').get_json()['player_token']
+    r = _play(client, sid, friend, {'calendar': 'enoch'})
+    assert (r.status_code, r.get_json()) == (409, {'error': 'unanswered'})
+    v = client.get(f'/tools/sessions/{sid}', headers=_h(friend)).get_json()
+    assert (v['state'], v['result']) == ('playing', None)
+    r = _play(client, sid, friend, {'move': 'will-relocate'})
+    assert r.status_code == 200
+    assert r.get_json()['result'] == {'right': 1, 'total': 2, 'place': 1}
