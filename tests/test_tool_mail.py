@@ -9,6 +9,7 @@ own switch and needs together_live. Nothing here ever breaks a finish.
 from __future__ import annotations
 
 import secrets
+import uuid
 
 import pytest
 
@@ -206,3 +207,92 @@ def test_the_api_says_where_the_checklist_v2_stores_answers():
     from service import person
     doc = inspect.getdoc(person.post_marriage_checklist_send)
     assert 'service/tools' in doc and 'never persisted' not in doc
+
+
+# Review, 17 Oct 2026: the drain did not look at the Together switches
+# again, and lead mail is queued exempt, so a switch turned off after a row
+# was queued, or a lead who left through the news link, did not stop the
+# next Together email.
+
+class _StubSmtp:
+    def __init__(self):
+        self.sent: list[str] = []
+
+    def send(self, **kw):
+        self.sent.append(kw['to_addr'])
+        return f'mid-{len(self.sent)}'
+
+
+def _drain_only(row_ids: list[int]) -> list[str]:
+    from service.campaigns import outbox
+    with api_tx() as tx:
+        tx.execute("""UPDATE email_outbox SET next_attempt_at = NOW() + interval '1 hour'
+                       WHERE state = 'queued' AND NOT (id = ANY(%(i)s))""", dict(i=row_ids))
+        tx.execute("""UPDATE email_outbox SET next_attempt_at = NOW()
+                       WHERE state = 'queued' AND id = ANY(%(i)s)""", dict(i=row_ids))
+    smtp = _StubSmtp()
+    outbox.drain(api_tx, smtp)
+    return smtp.sent
+
+
+def _outcome(row_id: int) -> tuple[str, str]:
+    with api_tx('read committed') as tx:
+        r = tx.execute('SELECT state, last_error FROM email_outbox WHERE id = %(i)s',
+                       dict(i=row_id)).fetchone()
+    return r['state'], r['last_error']
+
+
+def _queued_for_member(person: dict, campaign: str, run: str) -> int:
+    from service.campaigns import held
+    with api_tx() as tx:
+        email = tx.execute('SELECT email FROM person WHERE id = %(p)s',
+                           dict(p=person['id'])).fetchone()['email']
+        return held.queue(tx, campaign=campaign, campaign_id=run, person_id=person['id'],
+                          email=email, subject='s', html='<p>h</p>', from_addr=None,
+                          unsub_scope=mail.UNSUB_SCOPE, unsub_url='https://ahavah.app/u/t')
+
+
+def test_the_drain_refuses_a_together_email_once_its_switch_is_off(make_person, switches,
+                                                                     monkeypatch):
+    run = str(uuid.uuid4())
+    _MADE.append(run)
+    member = _mailable(make_person, 'Daniel')
+    answered = _queued_for_member(member, mail.CAMPAIGN_ANSWERED, f'{run}-a')
+    summary = _queued_for_member(member, mail.CAMPAIGN_SUMMARY, f'{run}-s')
+    ready = _queued_for_member(member, mail.CAMPAIGN_READY, f'{run}-r')
+    monkeypatch.delenv('AHAVAH_TOGETHER_ANSWERED_EMAIL_ENABLED')
+    assert _drain_only([answered]) == []
+    assert _outcome(answered) == ('skipped', 'switched_off')
+    assert len(_drain_only([ready])) == 1 and _outcome(ready)[0] == 'accepted'
+    monkeypatch.delenv('AHAVAH_TOGETHER_LIVE_ENABLED')
+    assert _drain_only([summary]) == []
+    assert _outcome(summary) == ('skipped', 'switched_off')
+
+
+def test_a_lead_who_left_the_news_mail_gets_no_more_together_email(switches, monkeypatch):
+    from service.campaigns import outbox
+    from service.leads import confirm_lead, record_lead
+    from service.unsubscribe import stamp_unsubscribed
+    monkeypatch.setenv('AHAVAH_TOOL_LEADS_ENABLED', '1')
+    run = str(uuid.uuid4())
+    _MADE.append(run)
+    email = f'{run}@ahavah-test.invalid'
+    try:
+        with api_tx() as tx:
+            lead_id = record_lead(tx, email=email, source='tool:game-us')
+            confirm_lead(tx, lead_id, 'otp')
+            rows = [outbox.enqueue_for_lead(
+                tx, campaign=mail.CAMPAIGN_ANSWERED, campaign_id=f'{run}-{n}', lead_id=lead_id,
+                email=email, subject='s', html='<p>h</p>', from_addr=None) for n in (1, 2)]
+        assert len(_drain_only([rows[0]])) == 1
+        with api_tx() as tx:
+            stamp_unsubscribed(tx, 'news', email)
+        assert _drain_only([rows[1]]) == []
+        assert _outcome(rows[1]) == ('skipped', 'unsubscribed')
+        with api_tx() as tx:
+            assert mail._queue(tx, campaign=mail.CAMPAIGN_ANSWERED, campaign_id=f'{run}-3',
+                               to=dict(lead_id=lead_id, email=email), subject='s',
+                               html_for=lambda _u: '<p>h</p>') is None
+    finally:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM lead WHERE email = %(e)s', dict(e=email))

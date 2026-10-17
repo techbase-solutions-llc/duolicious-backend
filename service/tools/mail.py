@@ -149,6 +149,9 @@ def _queue(tx, *, campaign: str, campaign_id: str, to: dict, subject: str,
                           person_id=to['person_id'], email=to['email'], subject=subject,
                           html=html_for(unsub), from_addr=FROM_ADDR, unsub_scope=UNSUB_SCOPE,
                           unsub_url=unsub)
+    from service.leads import lead_unsubscribed
+    if lead_unsubscribed(tx, to['lead_id']):
+        return None
     unsub = unsub_url('news', to['email'], WEB_BASE_URL)
     return outbox.enqueue_for_lead(tx, campaign=campaign, campaign_id=campaign_id,
                                    lead_id=to['lead_id'], email=to['email'], subject=subject,

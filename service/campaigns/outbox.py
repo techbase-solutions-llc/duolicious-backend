@@ -36,7 +36,7 @@ from typing import Any, Optional
 
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
-from service.leads import news_refusal
+from service.leads import lead_unsubscribed, news_refusal
 
 # Backoff applied AFTER attempt n fails, indexed by n - 1. An attempt that
 # takes the row to MAX_ATTEMPTS is terminal: it goes to 'failed' instead of
@@ -300,7 +300,7 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
 
 def mark_skipped(tx, id: int, reason: str) -> None:
     """A send-time re-check refused this row: 'withdrawn', 'suppressed',
-    'unsubscribed' or 'capped'. Terminal, and deliberately distinct from
+    'unsubscribed', 'capped' or 'switched_off'. Terminal, and deliberately distinct from
     'failed' -- nothing went wrong, we simply must not send it. The same
     state and reason string `withdraw_member` writes directly onto the
     Spotlight invites it finds still queued."""
@@ -346,16 +346,28 @@ def _refusal(tx, row: dict) -> Optional[str]:
     `requires_spotlight_opt_in` are checked, so no other campaign pays for
     the read."""
     payload = row['payload'] or {}
+    # Together (TEC-1845): each email's switch, and together_live, are read
+    # again here, for a member or a lead, so turning one off stops what is
+    # already queued.
+    from service.tools import CAMPAIGN_SWITCHES, switch_on
+    together = row['campaign'] in CAMPAIGN_SWITCHES
+    if together and not switch_on(CAMPAIGN_SWITCHES[row['campaign']]):
+        return 'switched_off'
     # Lead mail (TEC-1845): there is no member to read consent, campaign
     # scopes or caps from. Suppression applies to every address. Mail the
     # visitor asked for (exempt) still goes; news is re-checked here as at
     # enqueue: refused once the lead has left it, while the address is
     # unconfirmed, and without a ticked box unless the visitor requested it.
+    # A Together email is queued exempt, but its footer offers the news
+    # link, so a lead who has left the news mail gets no more of it, as a
+    # member who left notifications is refused below.
     if row.get('lead_id') is not None:
         if is_suppressed_send(row['email']):
             return 'suppressed'
         if not row['exempt']:
             return news_refusal(tx, row['lead_id'], requested=payload.get('requested') is True)
+        if together and lead_unsubscribed(tx, row['lead_id']):
+            return 'unsubscribed'
         return None
     if payload.get('requires_spotlight_opt_in'):
         consent = tx.execute(_Q_SPOTLIGHT_CONSENT, dict(p=row['person_id'])).fetchone()

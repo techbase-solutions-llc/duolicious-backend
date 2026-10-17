@@ -20,6 +20,15 @@ sent, whichever way its own switch is set. The proofs
 """
 from service.campaigns.switches import enabled
 
+# Each Together email's outbox campaign and its switch. The outbox drain
+# reads it again at send time (service/campaigns/outbox.py), so a switch
+# turned off after a row was queued stops it.
+CAMPAIGN_SWITCHES = {
+    'together_answered': 'together_answered_email',
+    'together_ready': 'together_ready_email',
+    'together_summary': 'together_summary_email',
+}
+
 
 def live() -> bool:
     """Together is launched: the routes answer."""
