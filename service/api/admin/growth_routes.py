@@ -35,6 +35,19 @@ def get_admin_growth_sources(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         return dict(sources=source_rows(tx))
 
+
+@aget('/admin/growth/tools')
+def get_admin_growth_tools(s: t.SessionInfo):
+    """Couple tools (TEC-1845): per mode, sessions started, completed,
+    saved, invite links made, invite emails sent, sessions a guest joined,
+    guests and share-link openings; sign-ups per tool source. Counts only,
+    never an answer or a name."""
+    require_admin(s)
+    from service.tools.admin import tool_counts
+    with api_tx('read committed') as tx:
+        return tool_counts(tx)
+
+
 _CAMPAIGNS = {'e1': e1, 'e2': e2, 'e3': e3, 'e6': e6}
 
 # Deliberately simple: this only has to reject things that are obviously not
