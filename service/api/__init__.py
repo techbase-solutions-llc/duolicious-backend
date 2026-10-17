@@ -1231,3 +1231,4 @@ import service.api.admin.growth_routes  # noqa: E402,F401
 import service.api.admin.spotlight_routes  # noqa: E402,F401
 # Quick questions (TEC-1845).
 import service.api.questions_routes  # noqa: E402,F401
+import service.api.admin.questions_routes  # noqa: E402,F401

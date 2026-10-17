@@ -1019,6 +1019,21 @@ class PostPushTap(BaseModel):
     src: Literal['qpush', 'mpush', 'lpush']
 
 
+class PatchAdminQuestion(BaseModel):
+    """PATCH /admin/questions/<key> (TEC-1845): switch on or off, and/or
+    new wording for some options, keyed by option key."""
+    active: Optional[bool] = None
+    labels: Optional[Dict[str, str]] = None
+
+
+class PutQuestionDrop(BaseModel):
+    prompt_key: str = Field(min_length=1, max_length=64)
+
+
+class PostApproveDrops(BaseModel):
+    live_on: List[str] = Field(min_length=1, max_length=12)
+
+
 class PostVerificationMultiSelfie(BaseModel):
     """Silver verification: 3 selfies captured at different head poses
     in a single client-driven burst. Cron stores all three and runs the
