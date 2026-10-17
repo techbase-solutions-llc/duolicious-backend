@@ -78,7 +78,14 @@ def answered_html(name: str, cta: str, unsubscribe_url: str, seat: str = 'owner'
                   body_html=body, footer_html=held.footer(why, unsubscribe_url))
 
 
-def invite_subject(kind: str, name: str) -> str:
+def invite_subject(kind: str) -> str:
+    """Fixed: the name is typed by whoever saved, and a subject from our
+    domain is not theirs to write. The name is in the body, escaped."""
+    return ('You are invited to play Together on Ahavah' if kind == 'game'
+            else 'You are invited to the Ahavah marriage checklist')
+
+
+def invite_heading(kind: str, name: str) -> str:
     return (f'{name} wants to see how well you fit' if kind == 'game'
             else f'{name} invited you to the Ahavah marriage checklist')
 
@@ -86,11 +93,12 @@ def invite_subject(kind: str, name: str) -> str:
 def invite_html(kind: str, name: str, cta: str) -> str:
     n = html.escape(name)
     line = GAME_INVITE_LINE if kind == 'game' else CHECKLIST_INVITE_LINE
-    body = _heading(html.escape(invite_subject(kind, name))) + held.para(line) + button('Start', cta)
+    body = (_heading(html.escape(invite_heading(kind, name))) + held.para(line)
+            + button('Start', cta))
     footer = ('Ahavah &middot; Matchmaking for Torah-observant believers.<br/>'
               f'You get this because {n} sent you a link from ahavah.app/together. '
               'We have not added you to any list.')
-    return render(title=html.escape(invite_subject(kind, name)), preheader=html.escape(line),
+    return render(title=html.escape(invite_subject(kind)), preheader=html.escape(line),
                   body_html=body, footer_html=footer)
 
 
@@ -228,11 +236,11 @@ def preview_ready(to: str) -> tuple[str, str]:
 
 
 def preview_invite_game(to: str) -> tuple[str, str]:
-    return invite_subject('game', 'Rivka'), invite_html('game', 'Rivka', invite_url('proof'))
+    return invite_subject('game'), invite_html('game', 'Rivka', invite_url('proof'))
 
 
 def preview_invite_checklist(to: str) -> tuple[str, str]:
-    return invite_subject('checklist', 'Rivka'), invite_html('checklist', 'Rivka', invite_url('proof'))
+    return invite_subject('checklist'), invite_html('checklist', 'Rivka', invite_url('proof'))
 
 
 def preview_summary(to: str) -> tuple[str, str]:
@@ -261,14 +269,18 @@ def prepare_invite(tx, player: dict, to_email: str, *, count: bool) -> dict:
         tx.execute('UPDATE tool_session SET invite_emails = invite_emails + 1 WHERE id = %(i)s',
                    dict(i=player['session_id']))
     name = player['owner_display']
-    return dict(to=to_email, subject=invite_subject(player['kind'], name),
+    return dict(to=to_email, subject=invite_subject(player['kind']),
                 html=invite_html(player['kind'], name, invite_url(player['invite_token'])))
 
 
 def send_invite_later(msg: dict) -> None:
     """Straight to the mailer once the request has committed, as the
     checklist's spouse email is sent: the recipient is neither a member
-    nor a lead, so the outbox, which names one, cannot hold it."""
+    nor a lead, so the outbox, which names one, cannot hold it. A
+    suppressed address is sent nothing; the caller answers as for a send."""
+    if is_suppressed_send(msg['to']):
+        return
+
     def _go():
         try:
             from smtp import aws_smtp

@@ -185,8 +185,8 @@ def test_names_are_escaped_in_every_email():
     for kind in ('game', 'checklist'):
         html = mail.invite_html(kind, 'R&D', 'https://ahavah.app/tools/i/t')
         assert 'R&amp;D' in html and 'R&D' not in html.replace('R&amp;D', '')
-    assert mail.invite_subject('game', 'Rivka') == 'Rivka wants to see how well you fit'
-    assert mail.invite_subject('checklist', 'Rivka') == 'Rivka invited you to the Ahavah marriage checklist'
+    assert mail.invite_subject('game') == 'You are invited to play Together on Ahavah'
+    assert mail.invite_subject('checklist') == 'You are invited to the Ahavah marriage checklist'
 
 
 def test_a_failure_to_queue_never_breaks_finishing(client, make_person, sign_in, switches,

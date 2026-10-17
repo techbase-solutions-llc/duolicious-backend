@@ -96,7 +96,8 @@ def test_one_invite_goes_with_the_players_name_and_link(client, tool_visitor, ou
     assert (r.status_code, r.get_json()) == (202, {'sent': True})
     [msg] = outbox['sent']
     assert msg['to'] == 'rivka@ahavah-test.invalid'
-    assert msg['subject'] == 'Daniel wants to see how well you fit'
+    assert msg['subject'] == 'You are invited to play Together on Ahavah'
+    assert 'Daniel wants to see how well you fit' in msg['html']
     assert f'/tools/i/{invite}' in msg['html'] and 'You both see the score.' in msg['html']
     assert _count(sid) == 1
     assert outbox['asked'][0]['stamp'] == 'stamp-1' and outbox['asked'][0]['email'] == 'rivka@ahavah-test.invalid'
@@ -123,6 +124,44 @@ def test_the_checklist_invite_names_the_checklist(client, tool_visitor, outbox):
     sid, token, invite = _saved(client, headers, mode='couple', kind='checklist')
     _send(client, sid, token, headers)
     [msg] = outbox['sent']
-    assert msg['subject'] == 'Daniel invited you to the Ahavah marriage checklist'
+    assert msg['subject'] == 'You are invited to the Ahavah marriage checklist'
+    assert 'Daniel invited you to the Ahavah marriage checklist' in msg['html']
     assert 'Your answers stay private until you have both finished.' in msg['html']
     assert f'/tools/i/{invite}' in msg['html']
+
+
+# Review, 17 Oct 2026: the send skipped the suppression list, and the
+# subject carried the name the player typed, so anyone who saved could put
+# words of their choosing in a subject line from our domain.
+
+def test_the_typed_name_stays_out_of_the_subject(client, tool_visitor, outbox):
+    _, headers = tool_visitor()
+    body = client.post('/tools/sessions', json=dict(kind='game', mode='us')).get_json()
+    sid, token = body['session_id'], body['player_token']
+    _MADE.append(sid)
+    client.post(f'/tools/sessions/{sid}/claim', json=dict(display='Win a prize & more'),
+                headers=_h(token, headers))
+    _send(client, sid, token, headers)
+    [msg] = outbox['sent']
+    assert 'prize' not in msg['subject']
+    assert 'Win a prize &amp; more wants to see how well you fit' in msg['html']
+
+
+def test_a_suppressed_address_is_sent_nothing(monkeypatch):
+    sent = []
+
+    class _Now:
+        def __init__(self, target, daemon=None):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    from smtp import aws_smtp
+    monkeypatch.setattr(mail.threading, 'Thread', _Now)
+    monkeypatch.setattr(aws_smtp, 'send', lambda **kw: sent.append(kw['to_addr']))
+    msg = dict(subject='s', html='h')
+    mail.send_invite_later(dict(msg, to='someone@example.com'))
+    assert sent == []
+    mail.send_invite_later(dict(msg, to='rivka@ahavah-test.invalid'))
+    assert sent == ['rivka@ahavah-test.invalid']
