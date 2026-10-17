@@ -42,6 +42,14 @@ SWITCHES = {
     'e1_resend': 'AHAVAH_E1_RESEND_ENABLED',
     # E1 and E4 say "your main profile photo" (web lane copy, 79 and 82).
     'spotlight_copy': 'AHAVAH_SPOTLIGHT_COPY_ENABLED',
+    # Quick questions (TEC-1845): the weekly question push and the
+    # silent-match push, the question line in E2, and the launch email and
+    # push. Off until the owner has seen each proof on his own device.
+    'question_push': 'AHAVAH_QUESTION_PUSH_ENABLED',
+    'match_question_push': 'AHAVAH_MATCH_QUESTION_PUSH_ENABLED',
+    'e2_question_line': 'AHAVAH_E2_QUESTION_LINE_ENABLED',
+    'questions_launch_email': 'AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED',
+    'questions_launch_push': 'AHAVAH_QUESTIONS_LAUNCH_PUSH_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})
