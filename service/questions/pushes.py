@@ -17,10 +17,14 @@ subscription; never to one who left campaign emails, to staff, to a test or
 suppressed address; never in quiet hours (21:00 to 08:00 local, from
 push_subscription.tz, US Eastern when missing); never in a rest period or
 past the known calendar (schedule.resting); never after 2 question pushes
-with no visit since. send_to_user_safe only, never notify(), which would
-fall back to email. Each is logged in push_send_log in the job's
-transaction and sent after it commits (held.after_commit); one that fails
-gives its log rows back, to be tried next tick.
+with no visit since. send_to_user_counted only, never notify(), which
+would fall back to email. Each is logged in push_send_log in the job's
+transaction and sent after it commits (held.after_commit), there and then,
+not on a thread. One that reaches no device (a dead subscription, a member
+who turned the setting off after the query, an error) gives its log rows
+back, to be tried next tick: a row for a push that never arrived would
+hold back one_photo and profile_views for 3 days and count towards the
+2-unvisited cap.
 
 Held: nothing goes unless its switch is on (service/campaigns/switches.py).
 """
@@ -56,9 +60,10 @@ def PUSH_READY() -> bool:
     return PUSH_ENABLED
 
 
-def _push(person_id: int, title: str, body: str, url: str, tag: str) -> None:
-    from service.notifications import send_to_user_safe
-    send_to_user_safe(person_id, title, body, url, tag, event_kind='questions')
+def _push(person_id: int, title: str, body: str, url: str, tag: str) -> int:
+    """Send now and return how many devices took it."""
+    from service.notifications import send_to_user_counted
+    return send_to_user_counted(person_id, title, body, url, tag, event_kind='questions')
 
 
 def zone(tz: Optional[str]) -> ZoneInfo:
@@ -145,8 +150,11 @@ def _deliver(tx, person_id: int, logs: list[tuple[str, str]], push: dict) -> boo
     for campaign, cid in logs:
         if not _log(tx, campaign, cid, person_id):
             return False
-    held.after_commit(lambda: _push(person_id, push['title'], push['body'], push['url'], push['tag']),
-                      on_failure=lambda: _unlog(logs, person_id))
+    def send() -> None:
+        if not _push(person_id, push['title'], push['body'], push['url'], push['tag']):
+            _unlog(logs, person_id)
+
+    held.after_commit(send, on_failure=lambda: _unlog(logs, person_id))
     return True
 
 

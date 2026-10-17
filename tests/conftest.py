@@ -760,11 +760,12 @@ def push_member(make_person):
 
 @pytest.fixture
 def pushed_questions(monkeypatch):
-    """Every quick-question push, captured instead of sent."""
+    """Every quick-question push, captured instead of sent, each reaching
+    1 device."""
     from service.questions import pushes as qp
 
     sent: list[dict] = []
     monkeypatch.setattr(qp, '_push', lambda person_id, title, body, url, tag: sent.append(
-        dict(person_id=person_id, title=title, body=body, url=url, tag=tag)))
+        dict(person_id=person_id, title=title, body=body, url=url, tag=tag)) or 1)
     monkeypatch.setattr(qp, 'PUSH_READY', lambda: True)
     return sent

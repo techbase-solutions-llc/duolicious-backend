@@ -325,3 +325,38 @@ def test_a_push_that_fails_loses_no_other_push_and_is_tried_again(make_person, o
     cron.tick(TUESDAY)
     assert [x['person_id'] for x in pushed if x['person_id'] in {s['id'] for s in sides}] == [broken]
     assert len(_pushes(broken, 'match_reminder')) == 1
+
+
+def test_a_reminder_push_still_goes_fire_and_forget_to_every_device(make_person, on, monkeypatch):
+    """The quick-question pushes (TEC-1845) send through the same
+    _send_to_user_blocking, which now returns a count. The reminders keep
+    send_to_user_safe and its thread, and still reach the device."""
+    from types import SimpleNamespace
+
+    from service import notifications
+
+    threads: list = []
+    sends: list[dict] = []
+
+    class _InlineThread:
+        def __init__(self, target=None, kwargs=None, **_ignored):
+            threads.append(target)
+            self._target, self._kwargs = target, kwargs or {}
+
+        def start(self):
+            self._target(**self._kwargs)
+
+    monkeypatch.setattr(notifications, 'threading', SimpleNamespace(Thread=_InlineThread))
+    monkeypatch.setattr(notifications, 'PUSH_ENABLED', True)
+    monkeypatch.setattr(notifications, '_send_one',
+                        lambda endpoint, p256dh, auth, payload: sends.append(payload))
+    monkeypatch.setattr(rm, 'PUSH_READY', lambda: True)
+    a, b = _person(make_person, 'ThreadA'), _person(make_person, 'ThreadB', 'Man')
+    mid = _match(a, b, 4)
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO push_subscription (person_id, endpoint, p256dh, auth)
+                      VALUES (%(p)s, %(e)s, 'k', 'a')""", dict(p=a['id'], e=f'https://push.test/{a["id"]}'))
+    _run()
+    assert threads == [notifications._send_to_user_blocking]
+    assert [s['title'] for s in sends] == ['Say hello to your match']
+    assert _pushes(a['id'], 'match_reminder') == [f'match_reminder-{mid}-d3']

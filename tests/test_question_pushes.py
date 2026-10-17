@@ -273,3 +273,54 @@ def test_every_push_fits_a_lock_screen():
         for push in (copy.weekly_push('2026-11-15', dict(r)), copy.launch_push('2026-11-15', dict(r))):
             assert len(push['body']) <= copy.LOCK_SCREEN_CHARS, push['body']
     assert len(copy.MATCH_BODY) <= copy.LOCK_SCREEN_CHARS
+
+
+def _logged(person, campaign) -> bool:
+    with api_tx('read committed') as tx:
+        return tx.execute("SELECT 1 FROM push_send_log WHERE person_id = %(p)s AND campaign = %(c)s",
+                          dict(p=person['id'], c=campaign)).fetchone() is not None
+
+
+@pytest.fixture
+def real_push(monkeypatch):
+    """The real _push down to the network: each send is recorded and
+    answered with `status[0]` (None is a delivery, 410 a dead subscription)."""
+    from service import notifications
+    sends: list[str] = []
+    status: list = [None]
+
+    def send_one(endpoint, p256dh, auth, payload):
+        sends.append(endpoint)
+        return status[0]
+
+    monkeypatch.setattr(notifications, 'PUSH_ENABLED', True)
+    monkeypatch.setattr(notifications, '_send_one', send_one)
+    monkeypatch.setattr(qp, 'PUSH_READY', lambda: True)
+    return dict(sends=sends, status=status)
+
+
+def test_a_delivered_push_is_sent_before_the_tick_ends_and_stays_logged(push_member, week, on, real_push):
+    m = push_member('Delivered')
+    _run(qp.queue_weekly_question_pushes, _at(week['today'], 18))
+    assert len(real_push['sends']) == 1, 'the push went on a thread, after the tick'
+    assert _logged(m, 'question')
+
+
+def test_a_push_to_a_dead_subscription_gives_its_log_row_back(push_member, week, on, real_push):
+    """A 410 delivers nothing. The row would hold back one_photo and
+    profile_views for 3 days and count towards the 2-unvisited cap."""
+    real_push['status'][0] = 410
+    m = push_member('DeadSub')
+    _run(qp.queue_weekly_question_pushes, _at(week['today'], 18))
+    assert not _logged(m, 'question')
+
+
+def test_a_push_the_member_turned_off_after_the_query_gives_its_log_row_back(
+        push_member, on, real_push, monkeypatch):
+    from service import notifications
+    a, b = push_member('LateOffA'), push_member('LateOffB')
+    _match(a, b, 25)
+    monkeypatch.setattr(notifications, '_allowed_for_event', lambda person_id, kind: False)
+    _run(qp.queue_match_question_pushes, _at(barbados_today(), 12))
+    assert real_push['sends'] == []
+    assert not _logged(a, 'match_question') and not _logged(b, 'match_question')

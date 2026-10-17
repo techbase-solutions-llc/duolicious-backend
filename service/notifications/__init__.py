@@ -192,13 +192,14 @@ def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any]) ->
 _MAX_PUSH_FAILURES = 8
 
 
-def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]):
+def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]) -> int:
     """Look up every push_subscription for the user and send to each.
     Prune rows that 404/410 immediately, or that cross _MAX_PUSH_FAILURES
     consecutive failures. A successful send resets the failure counter.
-    Push is best-effort - other errors are logged but swallowed."""
+    Push is best-effort - other errors are logged but swallowed. Returns
+    how many subscriptions accepted the push."""
     if not PUSH_ENABLED:
-        return
+        return 0
 
     from database import api_tx
     with api_tx() as tx:
@@ -212,7 +213,7 @@ def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]):
         ).fetchall()
 
     if not rows:
-        return
+        return 0
 
     dead_ids = []    # 404/410 - revoked/expired, prune now
     failed_ids = []  # other error - bump the consecutive-failure counter
@@ -252,6 +253,7 @@ def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]):
             "   OR consecutive_failures >= %(thresh)s",
             dict(dead=dead_ids, thresh=_MAX_PUSH_FAILURES),
         )
+    return len(ok_ids)
 
 
 def _allowed_for_event(person_id: int, event_kind: EventKind) -> bool:
@@ -310,6 +312,30 @@ def send_to_user_safe(
         kwargs=dict(person_id=person_id, payload=payload),
         daemon=True,
     ).start()
+
+
+def send_to_user_counted(
+    person_id: int,
+    title: str,
+    body: str,
+    url: str = '/',
+    tag: Optional[str] = None,
+    *,
+    event_kind: EventKind,
+) -> int:
+    """send_to_user_safe without the thread, for a caller that must know
+    whether the push arrived (the quick-question pushes take back their
+    push_send_log rows when it did not). Blocks on the network. Returns
+    how many subscriptions accepted it: 0 when push is off, the member's
+    setting for `event_kind` is off, or every send failed."""
+    if not PUSH_ENABLED:
+        return 0
+    if not _allowed_for_event(person_id, event_kind):
+        return 0
+    payload: Dict[str, Any] = {'title': title, 'body': body, 'url': url}
+    if tag is not None:
+        payload['tag'] = tag
+    return _send_to_user_blocking(person_id, payload)
 
 
 def record_profile_view(viewer_id: int, viewed_uuid: str):
