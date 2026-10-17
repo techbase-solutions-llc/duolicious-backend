@@ -519,8 +519,10 @@ class PostFinishOnboarding(BaseModel):
 
 
 class MarriageChecklistAnswer(BaseModel):
-    """One answered checklist item. Composed into the results email and
-    then discarded; never persisted. Scripture items carry `ref` (e.g.
+    """One answered checklist item. Sent to /marriage-checklist/send it is
+    composed into the results email and discarded. In the checklist v2 it
+    is the stored shape of a tool_answer, kept behind a private link
+    (service/tools/checklist.py). Scripture items carry `ref` (e.g.
     "Ephesians 5:22-33"); the couple's own items carry `title`."""
     section: Literal['biblical', 'nice-to-have', 'challenge']
     ref: Optional[str] = Field(default=None, max_length=60)

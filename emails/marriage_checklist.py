@@ -29,6 +29,11 @@ from emails.base import (
 
 SITE = "https://ahavah.app"
 SUBJECT = "Your marriage checklist summary"
+# The checklist v2 keeps answers behind a private link (TEC-1845, owner
+# decision 10). The export's wording, 6.1.
+STORED_LINE = ("We keep your answers behind a private link so you can come back to them. "
+               "Only you and the person you invite can see them. Either of you can delete them "
+               "at any time.")
 
 _SECTION_LABELS = {
     "biblical": "Biblical Obligations",
@@ -108,10 +113,18 @@ def _row(n: int, a: dict) -> str:
     </table>"""
 
 
-def checklist_results_html(role: str | None, answers: list[dict]) -> str:
+def checklist_results_html(role: str | None, answers: list[dict], stored: bool = False) -> str:
+    """The summary. `stored` is the checklist v2's: each player answers on
+    their own and gets their own summary, and the answers are kept, so the
+    lede drops "sent to you both" and the footer says where they are kept.
+    The first checklist (POST /marriage-checklist/send) sends stored=False,
+    word for word as before."""
     # Highest-rated first, mirroring the activity's summary.
     ordered = sorted(answers, key=lambda a: -int(a.get("importance", 0)))
     role_part = f" as the {role}" if role in ("husband", "wife") else ""
+    lede = (f"Here is the summary you completed{role_part}." if stored else
+            f"Here is the summary you completed{role_part}. We sent the same note to you and "
+            "your spouse, so you can read it side by side and talk it through together.")
 
     rows = "".join(_row(i + 1, a) for i, a in enumerate(ordered))
 
@@ -120,7 +133,7 @@ def checklist_results_html(role: str | None, answers: list[dict]) -> str:
 
 <h1 class="e-title" style="margin:16px 0 12px;font-family:{SANS};font-size:30px;font-weight:800;letter-spacing:-0.02em;line-height:1.1;color:{INK};">What matters most to you<span style="color:{INDIGO};">.</span></h1>
 
-<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK_SOFT};">Here is the summary you completed{role_part}. We sent the same note to you and your spouse, so you can read it side by side and talk it through together.</p>
+<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK_SOFT};">{lede}</p>
 
 {rows}
 
@@ -131,16 +144,19 @@ def checklist_results_html(role: str | None, answers: list[dict]) -> str:
 <p class="e-text" style="margin:14px 0 0;font-family:{SANS};font-size:13px;color:{MUTED};text-align:center;">Know someone seeking a Torah-observant spouse? Pass this along.</p>
 """
 
+    kept = (f"{STORED_LINE}<br/>" if stored else
+            "We never stored your answers. This summary was composed when you sent "
+            "it, then your responses were discarded.<br/>")
     footer_html = (
-        "We never stored your answers. This summary was composed when you sent "
-        "it, then your responses were discarded.<br/>"
-        "Reply to this email to reach a real person. "
+        kept
+        + "Reply to this email to reach a real person. "
         f'<a href="{SITE}" style="color:{INDIGO};font-weight:600;text-decoration:none;">Ahavah</a>, made for Torah-observant believers.'
     )
 
     return render(
         title=SUBJECT,
-        preheader="The summary you completed, sent to you both. We never stored your answers.",
+        preheader=("The summary you completed." if stored else
+                   "The summary you completed, sent to you both. We never stored your answers."),
         body_html=body_html,
         footer_html=footer_html,
     )

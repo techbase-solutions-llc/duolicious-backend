@@ -585,10 +585,12 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
 
 def post_marriage_checklist_send(req: t.PostMarriageChecklistSend, s: t.SessionInfo):
     """Email the marriage-checklist results to the respondent and their
-    spouse. Stateless by design: the answers are composed into the two
-    emails in-request and never persisted (no table write, no answer
-    logging). See docs: the checklist page promises 'we do not store
-    your answers'."""
+    spouse. This endpoint stores no answers: it composes the two emails in
+    the request and keeps only an anonymous count. It serves the first
+    checklist, which the web shows while Together is dark. The checklist
+    v2 keeps answers behind a private link, readable only by the two
+    players, through service/tools (migration 0068); the privacy page
+    says so (TEC-1845)."""
     from emails.marriage_checklist import send_checklist_results
     from emails.base import mask_email
 

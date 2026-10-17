@@ -269,6 +269,8 @@ def finish(tx, player: dict) -> dict:
         right, total = results.guess_score(answers_of(tx, owner['id']),
                                            answers_of(tx, player['player_id']))
         _save_result(tx, sid, player['player_id'], right, dict(right=right, total=total), None)
+    from service.tools import mail
+    mail.after_finish(tx, player, event)
     return dict(view=view(tx, sid, player['player_id']), event=event)
 
 
@@ -491,6 +493,10 @@ def claim(tx, player: dict, s, display: object) -> dict:
         lead_id = record_lead(tx, email=s.email, source=player['source'])
         if lead_id is not None:
             confirm_lead(tx, lead_id, 'otp')
+    if player['kind'] == 'checklist' and player['finished_at'] is not None:
+        # A single who saves after finishing gets their summary now.
+        from service.tools import mail
+        mail.queue_summary(tx, player['session_id'], player['player_id'])
     return view(tx, player['session_id'], player['player_id'])
 
 

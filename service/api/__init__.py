@@ -277,9 +277,10 @@ _checklist_recipient_limit = limiter.shared_limit(
 )
 @validate(t.PostMarriageChecklistSend)
 def post_marriage_checklist_send(req: t.PostMarriageChecklistSend, s: t.SessionInfo):
-    """Stateless send of the marriage-checklist activity results to the
-    authed respondent + their spouse. Onboardees allowed (checklist users
-    are onboardees, not full members). Answers are never stored."""
+    """Send of the first marriage checklist's results to the authed
+    respondent and their spouse. Onboardees allowed (checklist users are
+    onboardees, not full members). Answers sent here are not stored; the
+    checklist v2 stores them through /tools (service/tools)."""
     return person.post_marriage_checklist_send(req, s)
 
 
