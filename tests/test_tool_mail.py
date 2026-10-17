@@ -84,6 +84,29 @@ def test_the_answered_email_goes_to_whoever_finished_first(client, make_person, 
     assert f'/together/game?session={sid}' in rows[0]['payload']['html']
 
 
+def test_the_answered_footer_says_why_by_seat(client, make_person, sign_in, switches):
+    """Review, 17 Oct 2026: the footer always said "you invited", but the
+    email goes to whoever finished first, which can be the guest."""
+    owner = _mailable(make_person, 'Daniel')
+    sid, token, invite = _start(client, sign_in(owner))
+    _play(client, sid, token, {'calendar': 'enoch'})
+    _play(client, sid, _join(client, invite), {'calendar': 'enoch'})
+    [to_owner] = [r for r in _rows(sid) if r['campaign'] == mail.CAMPAIGN_ANSWERED]
+    assert 'You get this because you invited Rivka' in to_owner['payload']['html']
+
+    owner2 = _mailable(make_person, 'Daniel')
+    guest = _mailable(make_person, 'Rivka')
+    sid2, token2, invite2 = _start(client, sign_in(owner2))
+    guest_token = client.post(f'/tools/i/{invite2}/players', json=dict(display='Rivka'),
+                              headers=sign_in(guest)).get_json()['player_token']
+    _play(client, sid2, guest_token, {'calendar': 'enoch'})
+    _play(client, sid2, token2, {'calendar': 'enoch'})
+    [to_guest] = [r for r in _rows(sid2) if r['campaign'] == mail.CAMPAIGN_ANSWERED]
+    assert to_guest['person_id'] == guest['id']
+    html = to_guest['payload']['html']
+    assert 'You get this because Daniel invited you' in html and 'you invited' not in html
+
+
 def test_a_visitor_owner_is_mailed_as_a_lead_only_while_tool_leads_are_on(client, tool_visitor,
                                                                          switches, monkeypatch):
     monkeypatch.delenv('AHAVAH_TOOL_LEADS_ENABLED', raising=False)

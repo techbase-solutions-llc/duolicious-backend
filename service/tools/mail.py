@@ -67,14 +67,15 @@ def answered_subject(name: str) -> str:
     return f'{name} has answered. See how you fit.'
 
 
-def answered_html(name: str, cta: str, unsubscribe_url: str) -> str:
+def answered_html(name: str, cta: str, unsubscribe_url: str, seat: str = 'owner') -> str:
+    """`seat` is the recipient's: whoever finished first is mailed, the
+    player who invited or the guest they invited, and the footer says which."""
     n = html.escape(name)
+    why = (f'You get this because you invited {n} from ahavah.app/together.' if seat == 'owner'
+           else f'You get this because {n} invited you from ahavah.app/together.')
     body = _heading(f'{n} has answered. See how you fit.') + button('See your comparison', cta)
     return render(title=html.escape(answered_subject(name)), preheader=f'{n} has answered.',
-                  body_html=body,
-                  footer_html=held.footer(
-                      f'You get this because you invited {n} from ahavah.app/together.',
-                      unsubscribe_url))
+                  body_html=body, footer_html=held.footer(why, unsubscribe_url))
 
 
 def invite_subject(kind: str, name: str) -> str:
@@ -180,7 +181,7 @@ def queue_answered(tx, session_pk: int, notify_player_id: int) -> Optional[int]:
         cta = result_url(me['kind'], me['uuid'])
         return _queue(tx, campaign=CAMPAIGN_ANSWERED if game else CAMPAIGN_READY,
                       campaign_id=me['uuid'], to=to, subject=answered_subject(name),
-                      html_for=lambda u: answered_html(name, cta, u))
+                      html_for=lambda u: answered_html(name, cta, u, me['seat']))
     return _guarded(tx, 'together_answered', go)
 
 
