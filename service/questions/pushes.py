@@ -232,3 +232,43 @@ def queue_weekly_question_pushes(tx, now: datetime) -> int:
         if _deliver(tx, r['person_id'], [(QUESTION, week)], push):
             n += 1
     return n
+
+
+# The launch push (spec, Launch): once per member ever, on a drop day
+# evening while its switch is on. Not limited to members active in 60 days
+# or to those who have not answered: for a member who has been away it is a
+# reason to come back. It is that week's question push, so it is logged
+# under both keys: questions_launch/launch (once ever) and question/{week}
+# (the week's budget, so no weekly push follows).
+_Q_LAUNCH = f"""
+    SELECT {_member_cols()}
+      FROM person p
+     WHERE {_audience()}
+       AND NOT EXISTS (SELECT 1 FROM push_send_log l
+                        WHERE l.person_id = p.id AND l.campaign = '{LAUNCH}'
+                          AND l.campaign_id = '{LAUNCH_ID}')
+       AND NOT EXISTS (SELECT 1 FROM push_send_log l
+                        WHERE l.person_id = p.id AND l.campaign = '{QUESTION}'
+                          AND l.campaign_id = %(week)s)
+       AND NOT {held.nudged_recently_sql('p.id')}
+     ORDER BY p.id
+"""
+
+
+def queue_launch_pushes(tx, now: datetime) -> int:
+    if not enabled('questions_launch_push') or not PUSH_READY() or resting(now):
+        return 0
+    drop = current_drop(tx, now)
+    if drop is None:
+        return 0
+    week, since = _week(drop, now)
+    push = copy.launch_push(week, drop['question'])
+    n = 0
+    for r in tx.execute(_Q_LAUNCH, _params(week=week)).fetchall():
+        if int(r['unvisited']) >= MAX_UNVISITED or not _evening(drop, now.astimezone(zone(r['tz']))):
+            continue
+        if _pushed_this_week(tx, r['person_id'], week, since):
+            continue
+        if _deliver(tx, r['person_id'], [(LAUNCH, LAUNCH_ID), (QUESTION, week)], push):
+            n += 1
+    return n

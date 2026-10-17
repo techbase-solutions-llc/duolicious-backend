@@ -41,6 +41,9 @@ JOBS = [
     # Quick questions (TEC-1845). The silent-match push runs before the
     # weekly one: when both are due it wins and spends the week's push.
     ('match_question_push', question_pushes.queue_match_question_pushes),
+    # The launch push before the weekly one: in launch week it is the
+    # week's question push.
+    ('questions_launch_push', question_pushes.queue_launch_pushes),
     ('question_push', question_pushes.queue_weekly_question_pushes),
 ]
 
