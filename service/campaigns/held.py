@@ -14,7 +14,8 @@ cadence instead, written into its recipient query:
 
   likes_waiting, one_photo, profile_views   once per ISO week at most (the
       weekly id), plus their own longer rule where one is stated, and never
-      within NUDGE_GAP_DAYS of another of these three or a reminder
+      within NUDGE_GAP_DAYS of another of these three, a reminder or a
+      quick-question push (TEC-1845, owner decision 12 of 16 Oct 2026)
   match_reminder, message_reminder          once per stage (3 days, then 10)
       of one match or one unread conversation
   friend_joined                             once per friend who joins
@@ -33,9 +34,13 @@ from service.campaigns import outbox
 
 NUDGE_GAP_DAYS = 3
 
-# The campaigns that count for the gap.
+# The campaigns that count for the gap. The quick-question pushes count
+# too (TEC-1845): they have no outbox row, so the gap reads their send log.
+# The cost, accepted by the owner: one_photo (Tuesday) and profile_views
+# (Wednesday) are skipped in a week the member had a question push.
 _GAP_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
-                  'match_reminder', 'message_reminder')
+                  'match_reminder', 'message_reminder', 'question', 'match_question')
+_GAP_PUSH_CAMPAIGNS = ('question', 'match_question')
 
 SEND_HOUR_UTC = 12
 
@@ -50,12 +55,17 @@ def nudged_recently_sql(person_ref: str) -> str:
     """SQL boolean: this member was queued one of the gap campaigns in the
     last NUDGE_GAP_DAYS. Read from the outbox, not the send log, so two jobs
     in the same tick see each other's rows before the drain has run. A
-    message the drain skipped does not count."""
+    message the drain skipped does not count. A quick-question push counts
+    from its push_send_log row."""
     names = ', '.join(f"'{c}'" for c in _GAP_CAMPAIGNS)
-    return f"""EXISTS (SELECT 1 FROM email_outbox o
-                WHERE o.person_id = {person_ref} AND o.campaign IN ({names})
-                  AND o.state IN ('queued', 'reserved', 'accepted', 'acceptance_unknown')
-                  AND o.created_at > NOW() - make_interval(days => {NUDGE_GAP_DAYS}))"""
+    pushes = ', '.join(f"'{c}'" for c in _GAP_PUSH_CAMPAIGNS)
+    return f"""(EXISTS (SELECT 1 FROM email_outbox o
+                 WHERE o.person_id = {person_ref} AND o.campaign IN ({names})
+                   AND o.state IN ('queued', 'reserved', 'accepted', 'acceptance_unknown')
+                   AND o.created_at > NOW() - make_interval(days => {NUDGE_GAP_DAYS}))
+             OR EXISTS (SELECT 1 FROM push_send_log l
+                 WHERE l.person_id = {person_ref} AND l.campaign IN ({pushes})
+                   AND l.sent_at > NOW() - make_interval(days => {NUDGE_GAP_DAYS})))"""
 
 
 def in_weekly_window(now: datetime, campaign: str) -> bool:
