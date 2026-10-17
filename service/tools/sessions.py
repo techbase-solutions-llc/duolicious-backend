@@ -321,6 +321,10 @@ def _result(tx, s: dict, me: dict, owner: dict, guest: Optional[dict], mine: dic
         r = _result_row(tx, s['id'], None)
         return dict(score=r['score'], **r['breakdown']) if r else None
     if mode == 'couple':
+        # The guest's seat can go with their account (service/hard_delete):
+        # with no second set of answers there is no comparison to show.
+        if guest is None:
+            return None
         return checklist.compare(answers_of(tx, owner['id']), answers_of(tx, guest['id']))
     if me['seat'] == 'owner':
         return None
@@ -371,7 +375,7 @@ def view(tx, session_pk: int, player_id: int) -> dict:
 
 _Q_BY_INVITE = """
     SELECT id, uuid::text AS uuid, kind, mode, owner_display, owner_person_id,
-           owner_normalized_email, deleted_at
+           owner_normalized_email, completed_at, deleted_at
       FROM tool_session WHERE invite_token = %(t)s
 """
 
@@ -392,7 +396,10 @@ def _seat_state(tx, sess: dict) -> str:
     players = players_of(tx, sess['id'])
     owner = next(p for p in players if p['seat'] == 'owner')
     guests = [p for p in players if p['seat'] == 'guest' and p['removed_at'] is None]
-    if sess['mode'] in TWO_PLAYER and guests:
+    # A finished Us game or couple checklist stays closed even when its
+    # guest's seat has gone (with their account): a new guest would see the
+    # old result.
+    if sess['mode'] in TWO_PLAYER and (guests or sess['completed_at'] is not None):
         return 'full'
     if sess['mode'] == 'knows_me':
         if owner['finished_at'] is None:

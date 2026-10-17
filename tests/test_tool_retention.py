@@ -87,7 +87,7 @@ def test_deleting_an_account_deletes_the_sessions_it_saved_or_shared():
                        dict(s=sid, h=secrets.token_hex(16), ne=ne))
     try:
         with api_tx() as tx:
-            tx.execute(Q_DELETE_TOOL_DATA_OF, dict(nes=[ne]))
+            tx.execute(Q_DELETE_TOOL_DATA_OF, dict(nes=[ne], ids=[]))
         assert _exists([owned, joined, friend]) == [False, False, True]
     finally:
         _drop([owned, joined, friend])
@@ -97,3 +97,134 @@ def test_both_deletion_paths_run_it():
     for path in ('service/cron/pendingdeletion/__init__.py',
                  'service/api/admin/users_action_routes.py'):
         assert 'Q_DELETE_TOOL_DATA_OF' in pathlib.Path(f'/app/{path}').read_text(), path
+
+
+# Review, 17 Oct 2026: both deletion paths deleted the person first, and
+# tool_player.person_id cascades, so the guest's seat went before
+# Q_DELETE_TOOL_DATA_OF could find the shared game by it. The game stayed
+# with its result, the couple owner's view failed and the seat reopened.
+
+def _seat(sid, *, seat='guest', ne=None, pid=None, display='Rivka') -> int:
+    with api_tx() as tx:
+        return tx.execute(
+            """INSERT INTO tool_player (session_id, seat, token_hash, display, normalized_email,
+                                        person_id, finished_at)
+               VALUES (%(s)s, %(seat)s, %(h)s, %(d)s, %(ne)s, %(pid)s, NOW())
+               RETURNING id""",
+            dict(s=sid, seat=seat, h=secrets.token_hex(16), d=display, ne=ne, pid=pid)
+        ).fetchone()['id']
+
+
+def _shared_games_of(leaver: dict) -> dict:
+    """An Us game the leaver joined with their address and account, a couple
+    checklist they joined linked by account only (saved with an address
+    typed another way), and a knows-me board they are on."""
+    from antiabuse.antispam.signupemail import normalize_email
+    with api_tx() as tx:
+        email = tx.execute('SELECT email FROM person WHERE id = %(p)s',
+                           dict(p=leaver['id'])).fetchone()['email']
+    ne = normalize_email(email)
+    other = f'owner-{secrets.token_hex(5)}@ahavah-test.invalid'
+    games = dict(us=_session(mode='us', owner_ne=other),
+                 couple=_session(mode='couple', owner_ne=other),
+                 knows_me=_session(mode='knows_me', owner_ne=other))
+    for mode, sid in games.items():
+        _seat(sid, seat='owner', display=None)
+        _seat(sid, ne=ne if mode == 'us' else None, pid=leaver['id'])
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO tool_result (session_id, score, breakdown)
+                      VALUES (%(s)s, 80, '{}'::jsonb)""", dict(s=games['us']))
+        tx.execute('UPDATE tool_session SET completed_at = NOW() WHERE id = ANY(%(i)s)',
+                   dict(i=[games['us'], games['couple']]))
+    return games
+
+
+def _assert_shared_games_gone(games: dict, leaver: dict) -> None:
+    assert _exists([games['us'], games['couple'], games['knows_me']]) == [False, False, True], \
+        'an Us game or couple checklist the deleted member joined survived'
+    with api_tx() as tx:
+        assert tx.execute('SELECT 1 FROM tool_player WHERE person_id = %(p)s',
+                          dict(p=leaver['id'])).fetchone() is None
+
+
+def test_the_deletion_cron_deletes_the_shared_games_a_guest_joined(make_person):
+    import asyncio
+
+    from service.cron.pendingdeletion import hard_delete_expired_once
+    leaver = make_person(name='GuestLeaver')
+    games = _shared_games_of(leaver)
+    with api_tx() as tx:
+        tx.execute("""UPDATE person SET activated = FALSE,
+                             deletion_requested_at = NOW() - INTERVAL '8 days',
+                             sign_in_time = NOW() - INTERVAL '9 days'
+                       WHERE id = %(p)s""", dict(p=leaver['id']))
+    try:
+        asyncio.run(hard_delete_expired_once())
+        _assert_shared_games_gone(games, leaver)
+    finally:
+        _drop(games.values())
+
+
+def test_the_admin_hard_delete_deletes_the_shared_games_a_guest_joined(make_person, client):
+    import hashlib
+    admin = make_person(name='ToolDeleteAdmin')
+    tok = secrets.token_hex(32)
+    with api_tx() as tx:
+        admin_email = tx.execute(
+            "UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s RETURNING email",
+            dict(i=admin['id'])).fetchone()['email']
+        tx.execute("""INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
+                      VALUES (%(h)s, %(e)s, %(p)s, TRUE, '123456')""",
+                   dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=admin_email, p=admin['id']))
+    leaver = make_person(name='GuestLeaver')
+    games = _shared_games_of(leaver)
+    with api_tx() as tx:
+        email = tx.execute('SELECT email FROM person WHERE id = %(p)s',
+                           dict(p=leaver['id'])).fetchone()['email']
+    try:
+        r = client.delete(f"/admin/users/{leaver['uuid']}",
+                          json={'confirm_email': email, 'reason': 'test'},
+                          headers={'Authorization': f'Bearer {tok}'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        _assert_shared_games_gone(games, leaver)
+    finally:
+        _drop(games.values())
+
+
+@pytest.mark.usefixtures('together_live', 'no_limits')
+@pytest.mark.parametrize('mode,kind', [('us', 'game'), ('couple', 'checklist')])
+def test_a_finished_shared_game_whose_guest_is_gone_stays_closed(client, mode, kind):
+    """However a guest's seat goes, the owner's view still answers and the
+    seat does not reopen for a stranger to see the old result."""
+    body = client.post('/tools/sessions', json=dict(kind=kind, mode=mode)).get_json()
+    sid, owner = body['session_id'], body['player_token']
+    invite = secrets.token_urlsafe(16)
+    with api_tx() as tx:
+        tx.execute("""UPDATE tool_session SET invite_token = %(t)s, owner_display = 'Daniel',
+                             claimed_at = NOW() WHERE uuid = %(u)s""", dict(t=invite, u=sid))
+    answers = ({'calendar': 'enoch'} if kind == 'game'
+               else {'p1': dict(section='biblical', importance=4, stance='agree')})
+
+    def play(token, role):
+        items = [dict(question_key=k, answer=v) for k, v in answers.items()]
+        client.post(f'/tools/sessions/{sid}/answers', json=dict(answers=items, role=role),
+                    headers={'X-Tool-Token': token})
+        return client.post(f'/tools/sessions/{sid}/finish', headers={'X-Tool-Token': token})
+
+    try:
+        play(owner, 'husband' if kind == 'checklist' else None)
+        guest = client.post(f'/tools/i/{invite}/players',
+                            json=dict(display='Rivka')).get_json()['player_token']
+        assert play(guest, 'wife' if kind == 'checklist' else None).get_json()['state'] == 'ready'
+        with api_tx() as tx:
+            tx.execute("""DELETE FROM tool_player WHERE seat = 'guest' AND session_id =
+                            (SELECT id FROM tool_session WHERE uuid = %(u)s)""", dict(u=sid))
+        r = client.get(f'/tools/sessions/{sid}', headers={'X-Tool-Token': owner})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()['guest_display'] is None
+        assert client.get(f'/tools/i/{invite}').get_json()['state'] == 'full'
+        j = client.post(f'/tools/i/{invite}/players', json=dict(display='Stranger'))
+        assert (j.status_code, j.get_json()) == (409, {'error': 'full'})
+    finally:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM tool_session WHERE uuid = %(u)s', dict(u=sid))

@@ -313,13 +313,16 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         person_ids = [int(row['id'])]
         tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
         tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
+        # Together (TEC-1845), before the person delete: a guest's seat
+        # cascades off person, and the shared game is found by it.
+        tx.execute(Q_DELETE_TOOL_DATA_OF, dict(
+            nes=[normalize_email(row['email'])] if row['email'] else [], ids=person_ids))
         del_row = tx.execute(_Q_HARD_DELETE, dict(uuid=uuid)).fetchone()
         tx.execute(Q_DELETE_INBOX_OF, dict(uuids=[del_row['uuid']]))
         if row['email']:
             tx.execute(Q_DELETE_WAITLIST_OF, dict(emails=[row['email']]))
             tx.execute(Q_DELETE_BETA_SIGNUP_OF, dict(emails=[row['email']]))
             tx.execute(Q_DELETE_LEADS_OF, dict(nes=[normalize_email(row['email'])]))
-            tx.execute(Q_DELETE_TOOL_DATA_OF, dict(nes=[normalize_email(row['email'])]))
         record_audit(
             tx, s, 'hard_delete',
             target_email=del_row['email'], target_uuid=uuid,

@@ -54,15 +54,24 @@ Q_DELETE_LEADS_OF = """
     DELETE FROM lead WHERE normalized_email = ANY(%(nes)s::text[])
 """
 
-# Together (TEC-1845): every session the address saved, and every Us game
-# or couple checklist it joined, since a comparison is shared. A knows-me
-# friend gives no address, so nothing of theirs is found by one. The
-# caller binds `nes`, as for Q_DELETE_LEADS_OF. Sessions linked to the
-# person go with the person row too (owner_person_id cascades).
+# Together (TEC-1845): every session the address or the account saved, and
+# every Us game or couple checklist either joined, since a comparison is
+# shared. A knows-me friend's seat goes with the person row (person_id
+# cascades) and the board stays the player's. The caller binds `nes`, as
+# for Q_DELETE_LEADS_OF (an empty list when there is no address), and
+# `ids`, the person ids.
+#
+# Runs BEFORE the person delete. tool_player.person_id cascades, so after
+# it a guest's seat is gone and nothing finds the game they joined: until
+# the review of 17 Oct 2026 the game stayed with its result and the seat
+# reopened for a stranger.
 Q_DELETE_TOOL_DATA_OF = """
     DELETE FROM tool_session s
      WHERE s.owner_normalized_email = ANY(%(nes)s::text[])
+        OR s.owner_person_id = ANY(%(ids)s::int[])
         OR (s.mode IN ('us', 'couple') AND EXISTS (
               SELECT 1 FROM tool_player p
-               WHERE p.session_id = s.id AND p.normalized_email = ANY(%(nes)s::text[])))
+               WHERE p.session_id = s.id
+                 AND (p.normalized_email = ANY(%(nes)s::text[])
+                      OR p.person_id = ANY(%(ids)s::int[]))))
 """

@@ -155,6 +155,12 @@ async def hard_delete_expired_once():
                 # click stays counted; the address goes with the account.
                 await tx.execute(Q_FORGET_CLICK_INVITER, dict(emails=emails))
 
+            # Together sessions saved or shared by the address or the
+            # account (TEC-1845). Before the person delete: a guest's seat
+            # cascades off person, and the shared game is found by it.
+            await tx.execute(Q_DELETE_TOOL_DATA_OF,
+                             dict(nes=[normalize_email(e) for e in emails], ids=person_ids))
+
             await tx.execute(
                 "DELETE FROM person WHERE id = ANY(%(ids)s)",
                 dict(ids=person_ids),
@@ -177,9 +183,6 @@ async def hard_delete_expired_once():
                 # row; this takes the ones only the address names, however
                 # it was typed.
                 await tx.execute(Q_DELETE_LEADS_OF,
-                                 dict(nes=[normalize_email(e) for e in emails]))
-                # Together sessions saved or shared by the address (TEC-1845).
-                await tx.execute(Q_DELETE_TOOL_DATA_OF,
                                  dict(nes=[normalize_email(e) for e in emails]))
 
     if rows:
