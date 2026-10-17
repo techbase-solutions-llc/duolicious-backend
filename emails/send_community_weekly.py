@@ -13,6 +13,7 @@ from service.campaigns.weekid import week_campaign_id
 from service.admin.queries.members import member_sql
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded, count_newcomers_since, newcomers_since
+from service.questions.member import e2_question_line
 from service.unsubscribe import make_url as _unsub_url
 
 UNSUB_SCOPE = 'community'
@@ -197,10 +198,12 @@ def _build_personal(row: dict) -> tuple[str, str]:
         invite = (make_campaign_link(tx, 'e2', invite_target(r['referral_code']), pid, dry_run=dry)
                   if r['referral_code'] else None)
         new_members = newcomers_for(tx, pid, week)
+        question_line = e2_question_line(tx, pid, datetime.now(timezone.utc))
     return parts['subject'], community_weekly_html(
         new_members, week['total'], week['spotlight'], cta,
         _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
-        personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'])
+        personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'],
+        question_line=question_line)
 
 
 def build_for(row: dict) -> tuple[str, str]:
@@ -211,8 +214,11 @@ def build_for(row: dict) -> tuple[str, str]:
         cta = make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/discover", row['person_id'] or None,
                                  dry_run=row.get('dry_run', False))
         new_members = newcomers_for(tx, row['person_id'], week)
+        question_line = (e2_question_line(tx, row['person_id'], datetime.now(timezone.utc))
+                         if row.get('person_id') else None)
     return SUBJECT, community_weekly_html(new_members, week['total'], week['spotlight'], cta,
-                                          _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL))
+                                          _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
+                                          question_line=question_line)
 
 
 def preview_personal(to: str) -> tuple[str, str]:
@@ -224,6 +230,18 @@ def preview_personal(to: str) -> tuple[str, str]:
         [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
         parts['target'], _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
         personal_line=parts['line'], invite_url=invite_target('YOURCODE'), cta_label=parts['cta_label'])
+
+
+def preview_question_line(to: str) -> tuple[str, str]:
+    """The proof of the question line (TEC-1845): E2 as every member gets
+    it, with the line for the sample question. Reads nothing per member and
+    stores nothing; the button goes straight to Discover."""
+    from service.questions.copy import SAMPLE_QUESTION, e2_line
+    return SUBJECT, community_weekly_html(
+        [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
+        f"{WEB_BASE_URL}/discover", _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
+        question_line=e2_line(SAMPLE_QUESTION))
+
 
 def preview_row(to: str) -> dict:
     return dict(person_id=0, email=to, name='Preview', week=_week_context())

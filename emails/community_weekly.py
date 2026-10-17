@@ -87,6 +87,17 @@ def _personal_block(line: Optional[str]) -> str:
     return f'<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:18px;line-height:1.5;color:{INK_SOFT};font-weight:700;">{line}</p>'
 
 
+def _question_block(line: Optional[str]) -> str:
+    """This week's quick question (TEC-1845), held behind
+    AHAVAH_E2_QUESTION_LINE_ENABLED. Built from the question bank, never
+    member text; escaped all the same. It is element text, not an attribute,
+    so quotes stay as written ("This week's question")."""
+    if not line:
+        return ''
+    return (f'<p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;'
+            f'line-height:1.55;color:{INK_SOFT};">{_html.escape(line, quote=False)}</p>')
+
+
 def _invite_block(invite_url: Optional[str]) -> str:
     """The member's own invite link, every week (finding 76)."""
     if not invite_url:
@@ -100,15 +111,19 @@ def _invite_block(invite_url: Optional[str]) -> str:
 
 def community_weekly_html(new_members: list[dict], total_members: int, spotlight: Optional[dict], cta_url: str, unsubscribe_url: str,
                           *, personal_line: Optional[str] = None, invite_url: Optional[str] = None,
-                          cta_label: str = "Open Discover") -> str:
+                          cta_label: str = "Open Discover", question_line: Optional[str] = None) -> str:
     """`personal_line`, `invite_url` and `cta_label` are the held personal
-    parts (AHAVAH_E2_PERSONAL_ENABLED); left out, the email is as it was."""
+    parts (AHAVAH_E2_PERSONAL_ENABLED); `question_line` is this week's quick
+    question (AHAVAH_E2_QUESTION_LINE_ENABLED); left out, the email is as it
+    was."""
     body = f"""
 {chip("Community")}
 
 {title_image("title-community.png", "title-community-wht.png", "This week on Ahavah.", 460)}
 
 {_personal_block(personal_line)}
+
+{_question_block(question_line)}
 
 {_safe_spotlight_block(spotlight)}
 

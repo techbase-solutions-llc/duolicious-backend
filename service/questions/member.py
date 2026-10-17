@@ -4,11 +4,13 @@ Every function takes the caller's transaction and never opens one.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+from service.campaigns.switches import enabled
+from service.questions import copy
 from service.questions.bank import LIVE, choice_of, question_json, question_state
-from service.questions.schedule import current_drop
+from service.questions.schedule import barbados_today, current_drop
 
 _Q_CATCH_UP = f"""
     SELECT b.key, b.text, b.format, b.options
@@ -132,3 +134,29 @@ def conversation_context(tx, person_id: int, other_uuid: str) -> Optional[dict]:
     return dict(match_question=dict(
         question=question, mine=mine, they_answered=theirs is not None,
         theirs=theirs if mine is not None else None))
+
+
+_Q_HAD_LAUNCH_EMAIL = """
+    SELECT 1 FROM email_send_log
+     WHERE person_id = %(p)s AND campaign = 'questions_launch'
+       AND sent_at > %(now)s::timestamptz - interval '7 days'
+    UNION ALL
+    SELECT 1 FROM email_outbox
+     WHERE person_id = %(p)s AND campaign = 'questions_launch'
+       AND created_at > %(now)s::timestamptz - interval '7 days'
+    LIMIT 1
+"""
+
+
+def e2_question_line(tx, person_id: int, now: datetime) -> Optional[str]:
+    """The line in Monday's E2: the question that went live in the last 7
+    days. None while the switch is off, when no question went live this
+    week or when the member had the launch email this week."""
+    if not enabled('e2_question_line'):
+        return None
+    drop = current_drop(tx, now)
+    if drop is None or drop['live_on'] <= barbados_today(now) - timedelta(days=7):
+        return None
+    if tx.execute(_Q_HAD_LAUNCH_EMAIL, dict(p=person_id, now=now)).fetchone():
+        return None
+    return copy.e2_line(drop['question'])
