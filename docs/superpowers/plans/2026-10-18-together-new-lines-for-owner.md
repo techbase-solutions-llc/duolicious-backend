@@ -69,6 +69,27 @@ The 5 proofs went to your inbox on 18 Oct, each marked [PROOF].
 
 "If you join Ahavah, these can become your profile prompts." is in the design but is not true yet (prompt drafts come with quick questions release 2), so it stays hidden.
 
+## Lines added overnight by the review fixes (18 Oct)
+
+A review of the web screens found 38 faults; the fixes needed these lines, none of them in the design:
+
+- A friend filling in missed guesses: "Every question needs a guess before you can finish."
+- Reopening a saved result from an email: "Confirm your email to open your result" (or "...open your checklist"), with "We send a 6-digit code to your email."
+- An empty name on the save step: "Enter the name to show on your result."
+- A name with < or > in it: "Enter a name without < or >."
+- After Share falls back to copying: "Link copied"
+- Failures: "We could not delete this result. Check your connection and try again.", "We could not remove that name. Check your connection and try again." and "We could not put that name back. Check your connection and try again."
+- The checklist FAQ's last sentence is now "If you saved with your email, we also email you your own summary." (a partner who joined with only a name is not emailed, so the old line promised too much).
+- The checklist's search step description, once version 2 is live: "Work through biblical obligations, rate what matters most to you and compare answers with your intended or spouse."
+- A delete link now sits on the Me result, the Who knows me best board, the Us and checklist waiting screens and the single checklist result, using the design's own delete dialog and lines, because the save screen promises "Either of you can delete them at any time".
+
+## Decisions the review left for you
+
+1. The "Find people who answered like you" button is 336px wide but a 320px phone gives it 280px. Pill buttons never wrap, so it needs either a shorter label on phones (for example "Find people like you") or a smaller pill without its icon.
+2. A member who opens their own invite link sees "This link has already been used." The API does not say which session is theirs, so the page cannot send them to it. Either we change the API to return it, or the line becomes "This is your own link. Send it to the other person."
+3. The couple waiting screen's delete asks "Delete this result? The link will stop working for everyone." The checklist's own line, "Delete this comparison for both of you?", would also fit.
+4. The checklist page's general search description still says "share a personal summary" in both versions.
+
 ## Copy pass: proposed changes (18 Oct, not applied)
 
 Run with `/copy-pass`: `ux-writing` on the screen lines, `humanizer` rules on the prose. The prose scored 0 ("Clean") on the detector and passed the house style check. Each change below waits for your yes; anything not listed stays as written above.
