@@ -55,7 +55,7 @@ TAP_LINE = "Tap your answer. We'll save it once you're signed in."
 ALSO_TITLE = "Also new on Ahavah"
 # True while every member holds Premium; 14 lapse from 16 Dec (spec,
 # decision 9), so the first line changes if the email goes later.
-ALSO_NEW = ("See who liked you in Liked you, and like them back from their profile.",
+ALSO_NEW = ("See who liked you in Liked you, and like them back with one tap.",
             "Discover now keeps going past the first 10 profiles.",
             "A reminder when a match or a message is waiting for you.")
 

@@ -128,7 +128,7 @@ def test_the_email_reads_as_drafted():
                  '>Mountains<', '>The sea<',
                  "Tap your answer. We'll save it once you're signed in.",
                  'Also new on Ahavah',
-                 'See who liked you in Liked you, and like them back from their profile.',
+                 'See who liked you in Liked you, and like them back with one tap.',
                  'Discover now keeps going past the first 10 profiles.',
                  'A reminder when a match or a message is waiting for you.',
                  "This week's is mountains or the sea. Tap your answer."):
