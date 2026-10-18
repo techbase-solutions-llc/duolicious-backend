@@ -15,7 +15,7 @@ Linear: TEC-1897
 ## Before you start
 
 - The highest migration on disk is `migrations/0068_together.sql` (ahavah-api, branch `launch-email`, 18 Oct). This plan adds `0069_admin_community.sql` only. If another branch has taken 0069 by the time you start, take the next free number and change it everywhere this plan names 0069.
-- ahavah-api: branch `admin-community-data` from `origin/ahavah/main`. ahavah-admin: branch `admin-community-data` from `master` (068f6ae on 18 Oct). Use superpowers:using-git-worktrees.
+- ahavah-api: branch `admin-community-data` from `origin/ahavah/main` (e48e38f on 18 Oct). ahavah-admin: run `git fetch` first, then branch `admin-community-data` from `origin/master` (a13b115 on 18 Oct). Not the local `master`: it is stale at 42a3fea and has no `src/lib/acting.ts`, `src/components/admin/needs-you.tsx` or `tests/acting.test.mjs`, which Tasks 15 to 25 edit. Not 068f6ae either: that is the tip of `together-launch` (the Together launch posts), which is not merged and must not ride along with this work. Use superpowers:using-git-worktrees.
 - API tests run one file at a time with:
   `cd /d/Antigravity/ahavah-api && MSYS_NO_PATHCONV=1 docker compose -p ahavah-api -f docker-compose.test.yml run --rm -v /d/Antigravity/ahavah-api:/app -e INSIDE_CONTAINER=1 --entrypoint bash api /app/tests/run.sh tests/<file>.py -q -p no:warnings`
   The `-p ahavah-api` is required. The tests share the `ahavah-api-postgres-1` database with other sessions: never remove, reset or recreate that container or its volume, and never run the whole suite. In a worktree, change the path in both the `cd` and the `-v` mount. Below, `RUN tests/x.py` means that command with `tests/x.py`.
@@ -61,6 +61,7 @@ Defaults so the work can start. The owner may change any of them; each is repeat
 6. "Came back" defaults to any time since the send (G.1, tagged as the owner's decision). The "Within 7 days" figure is measured from a new per-day presence record that starts on the deploy day; runs before it read "Not measured".
 7. Waiting on a reply is the design's W.1: counts only. "Write to them" and "Send the reminder" are drawn disabled, since either would be a new member-facing email outside this issue.
 8. Unfinished sign-ups leave out people who came through a couple tool or the checklist and saved no sign-up step. The reminder stays off (U.1).
+9. "Email me when a report arrives" is one setting for the whole admin, and the email goes to the owner's address whichever admin turned it on (added by the 18 Oct review; see item 25 below).
 
 ## File structure
 
@@ -83,7 +84,7 @@ ahavah-api:
 | `service/moderation/__init__.py`, `service/api/admin/moderation_routes.py`, `service/admin/queries/moderation.py` (modify) | report state and resolve, the alert preference, photo filters and lists |
 | `service/growth/email_outcomes.py` (create), `service/api/admin/growth_routes.py` (modify) | came back, push turned on, run history, push and tiers routes |
 | `service/api/admin/system_routes.py` (modify) | `/admin/system/errors` |
-| `commonsql/__init__.py`, `service/person/__init__.py` (modify) | write the member online day with each presence bump |
+| `commonsql/__init__.py`, `service/person/__init__.py` (modify) | write the member online day with each presence bump; restart `photo.uploaded_at` when a photo replaces another (Task 1) |
 | `emails/admin_alerts.py` (create), `scripts/send_admin_alert_proofs.py` (create) | the 2 owner alerts and their proofs |
 | `service/cron/adminalerts/__init__.py` (create), `service/cron/__init__.py` (modify) | the hourly alert and retention job |
 
@@ -109,14 +110,19 @@ ahavah-admin:
 
 **Files:**
 - Create: `migrations/0069_admin_community.sql`
-- Modify: `tests/conftest.py` (append after the `together_schema` fixture at the end of the file)
+- Modify: `tests/conftest.py` (append after the `tool_visitor` fixture at the end of the file)
+- Modify: `service/person/__init__.py` (`patch_profile_info`, the photo upsert's `ON CONFLICT (person_id, position) DO UPDATE SET` list)
 - Test: `tests/test_migration_0069.py` (create)
 
 **Interfaces:**
-- Consumes: `person`, `photo`, `skipped` (init-api.sql).
-- Produces: tables `report_resolution(reporter_id, reported_id, reported_at, outcome, note, resolved_by_uuid, resolved_by_email, resolved_at)`, `admin_alert_pref(alert, enabled, updated_at, updated_by)`, `admin_alert_log(alert, alert_key, sent_at)`, `api_error_tally(route, hour, n, last_at)`, `member_online_day(person_id, day, first_at, last_at)`; column `photo.uploaded_at TIMESTAMPTZ` (NULL for photos stored before the deploy, `NOW()` for new ones). Fixtures `admin_community_schema` (session, autouse) and `admin_bearer` (a signed-in admin's `Authorization` header dict).
+- Consumes: `person`, `photo`, `skipped`, `email_send_log` (init-api.sql, migration 0039).
+- Produces: tables `report_resolution(reporter_id, reported_id, reported_at, outcome, note, resolved_by_uuid, resolved_by_email, resolved_at)`, `admin_alert_pref(alert, enabled, updated_at, updated_by)`, `admin_alert_log(alert, alert_key, sent_at)`, `api_error_tally(route, hour, n, last_at)`, `member_online_day(person_id, day, first_at, last_at)`; column `photo.uploaded_at TIMESTAMPTZ` (NULL for photos stored before the deploy, `NOW()` for new ones and for a photo that replaces another at the same position); indexes `idx__skipped__reported` (partial, reported rows only) and `email_send_log_campaign_idx`. Fixtures `admin_community_schema` (session, autouse) and `admin_bearer` (a signed-in admin's `Authorization` header dict).
 
-The deploy runs every `migrations/*.sql` on every deploy (`scripts/apply-deploy-migrations.sh`), before it recreates the containers, so the file must be idempotent and additive.
+The deploy (`scripts/apply-deploy-migrations.sh`, run by `.github/workflows/deploy-ahavah.yml` after the build and before it recreates api, chat and cron) applies each migration file once and records its checksum in `ahavah_schema_migration`; if a file it has already applied changes, the deploy stops. So 0069 must be additive, must never be edited after it ships (a later change is 0070), and must still be idempotent, because the test fixtures below run it at the start of every test session.
+
+Two indexes come with it. The unresolved-report count runs on every Overview load (Needs you) and every hourly cron tick, and reads `skipped` by `reported`; `skipped` holds every pass anyone has made and has no index on `reported`. Run history reads `email_send_log` by `(campaign, campaign_id)` up to 24 times a load, and its only indexes lead with `person_id`. A plain `CREATE INDEX` (not `CONCURRENTLY`, which cannot run inside the test fixture's transaction) on a partial predicate is a sub-second lock at today's size.
+
+A photo uploaded at a position that already holds one is an upsert (`patch_profile_info`, `ON CONFLICT (person_id, position) DO UPDATE`), which would keep the replaced photo's `uploaded_at`, so "Photo waiting" would date the new photo by the old one. The upsert sets `uploaded_at = NOW()`.
 
 `admin_community_schema` is autouse because Task 10 makes every presence bump write `member_online_day`: a test database without the table would quietly stop moving `last_online_time` for every other test file.
 
@@ -226,6 +232,51 @@ def test_the_presence_and_error_tables_exist():
             """SELECT table_name FROM information_schema.tables
                 WHERE table_name IN ('member_online_day', 'api_error_tally')""").fetchall()}
     assert names == {'member_online_day', 'api_error_tally'}
+
+
+def test_the_report_and_send_log_indexes_exist():
+    with api_tx('read committed') as tx:
+        names = {r['indexname'] for r in tx.execute(
+            """SELECT indexname FROM pg_indexes
+                WHERE indexname IN ('idx__skipped__reported', 'email_send_log_campaign_idx')""").fetchall()}
+    assert names == {'idx__skipped__reported', 'email_send_log_campaign_idx'}
+
+
+def test_a_replaced_photo_takes_a_new_upload_time(make_person, monkeypatch):
+    """An upload at a position that already holds a photo is an upsert. It
+    must restart the upload time, or "Photo waiting" dates the new photo by
+    the one it replaced. The app's own function, with the object store stubbed
+    as tests/test_onboarding_freshness.py does."""
+    import base64
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    import duotypes as t
+    import service.person as sp
+
+    monkeypatch.setattr(sp, 'put_image_in_object_store', lambda *a, **k: None)
+
+    def png(colour) -> str:
+        buf = BytesIO()
+        Image.new('RGB', (64, 64), color=colour).save(buf, format='PNG')
+        return 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+
+    p = make_person(name='Replacer')
+    s = SimpleNamespace(person_id=p['id'])
+    sp.patch_profile_info(t.PatchProfileInfo(base64_file=dict(
+        position=1, base64=png((10, 20, 30)), top=0, left=0)), s)
+    with api_tx() as tx:
+        tx.execute("UPDATE photo SET uploaded_at = NOW() - INTERVAL '2 days' WHERE person_id = %(p)s",
+                   dict(p=p['id']))
+    sp.patch_profile_info(t.PatchProfileInfo(base64_file=dict(
+        position=1, base64=png((200, 50, 90)), top=0, left=0)), s)
+    with api_tx('read committed') as tx:
+        row = tx.execute(
+            """SELECT uploaded_at > NOW() - INTERVAL '1 minute' AS fresh
+                 FROM photo WHERE person_id = %(p)s AND position = 1""", dict(p=p['id'])).fetchone()
+    assert row['fresh'] is True
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -242,14 +293,17 @@ Create `migrations/0069_admin_community.sql`:
 -- Admin, acting on the community (TEC-1897): the records the design needs
 -- that the database did not keep.
 --
--- Idempotent and additive: the deploy runs every migration file on every
--- deploy, before the containers are recreated.
+-- Additive. The deploy applies each file once and records its checksum
+-- (scripts/apply-deploy-migrations.sh), and stops if an applied file
+-- changes: never edit this file once it has shipped; a change is 0070.
+-- Idempotent, because the test fixtures apply it at every session start.
 
 -- 1. A report's resolution. A report is a `skipped` row with reported =
--- TRUE, keyed by its pair. A pair can be reported again after an unskip,
--- so the resolution also carries the report's own time: a fresh report on
--- the same pair is unresolved until someone resolves it. `reported_at` is
--- the naive UTC `skipped.created_at` it resolves.
+-- TRUE, keyed by its pair. The skip upsert (antiabuse/sql Q_INSERT_SKIPPED)
+-- moves created_at to NOW() every time the pair is skipped or reported
+-- again, so the resolution also carries the report's own time: a fresh
+-- report on the same pair is unresolved until someone resolves it.
+-- `reported_at` is the naive UTC `skipped.created_at` it resolves.
 CREATE TABLE IF NOT EXISTS report_resolution (
   reporter_id       INT         NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   reported_id       INT         NOT NULL REFERENCES person(id) ON DELETE CASCADE,
@@ -310,7 +364,48 @@ CREATE TABLE IF NOT EXISTS member_online_day (
 -- the default then applies to new photos only.
 ALTER TABLE photo ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ;
 ALTER TABLE photo ALTER COLUMN uploaded_at SET DEFAULT NOW();
+
+-- 6. Two reads this work adds on every load. The unresolved-report count
+-- (Overview's Needs you, and the adminalerts cron each hour) reads skipped
+-- by `reported`; skipped holds every pass and had no index on it. Run
+-- history reads email_send_log by campaign and run id; its indexes led
+-- with person_id.
+CREATE INDEX IF NOT EXISTS idx__skipped__reported
+  ON skipped (created_at) WHERE reported;
+CREATE INDEX IF NOT EXISTS email_send_log_campaign_idx
+  ON email_send_log (campaign, campaign_id);
 ```
+
+- [ ] **Step 3b: Restart the upload time when a photo replaces another**
+
+In `service/person/__init__.py`, inside `patch_profile_info`'s `base64_file` branch, in the `photo_insertion` CTE, replace:
+
+```python
+            ) ON CONFLICT (person_id, position) DO UPDATE SET
+                uuid = EXCLUDED.uuid,
+                blurhash = EXCLUDED.blurhash,
+                extra_exts = EXCLUDED.extra_exts,
+                hash = EXCLUDED.hash,
+                verified = FALSE
+        ), updated_person AS (
+```
+
+with:
+
+```python
+            ) ON CONFLICT (person_id, position) DO UPDATE SET
+                uuid = EXCLUDED.uuid,
+                blurhash = EXCLUDED.blurhash,
+                extra_exts = EXCLUDED.extra_exts,
+                hash = EXCLUDED.hash,
+                verified = FALSE,
+                -- A new photo at this position (TEC-1897, migration 0069):
+                -- its own upload time, not the replaced photo's.
+                uploaded_at = NOW()
+        ), updated_person AS (
+```
+
+The migration runs before the containers are recreated, so the column exists before this code does.
 
 - [ ] **Step 4: Add the fixtures**
 
@@ -351,13 +446,13 @@ def admin_bearer(make_person, sign_in):
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `RUN tests/test_migration_0069.py`
-Expected: `6 passed`.
+Run: `RUN tests/test_migration_0069.py` then `RUN tests/test_onboarding_freshness.py`
+Expected: `8 passed`; the photo upload suite passes as before.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add migrations/0069_admin_community.sql tests/conftest.py tests/test_migration_0069.py
+git add migrations/0069_admin_community.sql service/person/__init__.py tests/conftest.py tests/test_migration_0069.py
 git -c user.email=admin@techbaseltd.com commit -m "feat(db): the records the admin community design needs, migration 0069" -m "Refs: TEC-1897"
 ```
 
@@ -754,15 +849,18 @@ a `skipped` row with reported = TRUE. Resolving records an outcome, who and
 when; Overview counts unresolved reports only."""
 from __future__ import annotations
 
+from antiabuse.sql import Q_INSERT_SKIPPED
 from database import api_tx
 
 
 def _report(a, b, reason='spam') -> None:
+    """The app's own report write: the skip upsert POST /skip/by-uuid runs
+    (antiabuse/lodgereport skip_by_uuid), without the report email. A
+    second report on the same pair updates the row and moves created_at."""
     with api_tx() as tx:
-        tx.execute(
-            """INSERT INTO skipped (subject_person_id, object_person_id, reported, report_reason)
-               VALUES (%(a)s, %(b)s, TRUE, %(r)s)""",
-            dict(a=a['id'], b=b['id'], r=reason))
+        tx.execute(Q_INSERT_SKIPPED, dict(subject_uuid=a['uuid'], object_uuid=b['uuid'],
+                                          reported=True, report_reason=reason,
+                                          is_bot_report=False))
 
 
 def _reports(client, headers) -> dict:
@@ -824,10 +922,7 @@ def test_a_new_report_on_the_same_pair_is_unresolved_again(client, admin_bearer,
     _report(a, b)
     key = _mine(_reports(client, admin_bearer), a)['report_key']
     client.post(f'/admin/reports/{key}/resolve', headers=admin_bearer, json=dict(outcome='dismissed'))
-    with api_tx() as tx:  # unskip, then report again: a new skipped row
-        tx.execute("DELETE FROM skipped WHERE subject_person_id = %(a)s AND object_person_id = %(b)s",
-                   dict(a=a['id'], b=b['id']))
-    _report(a, b, reason='Again')
+    _report(a, b, reason='Again')  # the upsert moves created_at: a new report
     row = _mine(_reports(client, admin_bearer), a)
     assert row['outcome'] is None and row['report_key'] != key
 
@@ -881,9 +976,11 @@ Expected: failures with `KeyError: 'unresolved'` and 404s for the new routes.
 In `service/moderation/__init__.py`, replace the whole `Q_LIST_REPORTS = """ ... """` constant with:
 
 ```python
-# A report is identified by its pair and its own time, because a pair can be
-# reported again after an unskip (TEC-1897). The key is the reporter's id,
-# the reported member's id and the report's time to the microsecond.
+# A report is identified by its pair and its own time (TEC-1897): the skip
+# upsert (antiabuse/sql Q_INSERT_SKIPPED) moves created_at whenever the pair
+# is reported or skipped again, and a new report must read Unresolved. The
+# key is the reporter's id, the reported member's id and the report's time
+# to the microsecond.
 _REPORT_KEY = ("s.subject_person_id || '-' || s.object_person_id || '-' || "
                "to_char(s.created_at, 'YYYYMMDDHH24MISSUS')")
 
@@ -1009,7 +1106,8 @@ Update the module docstring's last paragraph ("Read-only for now. Future enhance
 ```python
 Resolving (TEC-1897): POST /admin/reports/<report_key>/resolve records an
 outcome in `report_resolution`, keyed by the pair and the report's own
-time, so a pair reported again after an unskip is a new, unresolved report.
+time. The skip upsert moves that time when the pair is reported again, so
+a repeat report is a new, unresolved one.
 ```
 
 - [ ] **Step 4: Add the routes**
@@ -1118,6 +1216,7 @@ Definitions, each from the design's W.1:
 - A conversation is one-sided when only one person has written; the other is waiting to reply. Its date is the opener's.
 - A match is silent when it is over 7 days old and nobody has written. Both people in it are waited on.
 - `offline_7d` and `push_on` are out of the members with a like waiting, the design's "14 of 20" and "4 of 20".
+- A pair where either person has blocked the other is never waiting and is left out of every W.1 figure. A block is a report (`is_blocked_pair`, migration 0035): it hides the match and the conversation from both people, so neither can reply. Likes already leave out any pair with a `skipped` row.
 
 CONTENT IS NEVER READ: `community.py` builds on `_SENT_MESSAGES` (id, direction, person and the other party only). The test reads the module's SQL and fails if `m.message`, `search_body`, `translations` or `audio_uuid` appear, and checks no message text reaches the response.
 
@@ -1264,6 +1363,21 @@ def test_push_and_last_online_are_reported(client, admin_bearer, make_person):
     assert body['summary']['push_on'] - before['push_on'] == 1
 
 
+def test_a_blocked_pair_is_never_waiting(client, admin_bearer, make_person):
+    a, b, c, d = (make_person(name=n) for n in ('WO', 'WP', 'WQ', 'WR'))
+    _message(a, b)
+    _match(c, d, days_ago=8)
+    before = _waiting(client, admin_bearer)['summary']
+    with api_tx() as tx:  # b blocks a, d blocks c: a block is a report
+        for s, o in ((b, a), (d, c)):
+            tx.execute("""INSERT INTO skipped (subject_person_id, object_person_id, reported, report_reason)
+                          VALUES (%(s)s, %(o)s, TRUE, 'blocked')""", dict(s=s['id'], o=o['id']))
+    body = _waiting(client, admin_bearer)
+    assert all(_row(body, p) is None for p in (a, b, c, d))
+    assert before['one_sided'] - body['summary']['one_sided'] == 1
+    assert before['silent_matches_7d'] - body['summary']['silent_matches_7d'] == 1
+
+
 def test_no_message_content_is_read_or_returned(client, admin_bearer, make_person):
     for sql in (community.Q_WAITING_SUMMARY, community.Q_WAITING_MEMBERS):
         low = sql.lower()
@@ -1386,12 +1500,15 @@ _CONVOS = """
           FROM sent GROUP BY lo, hi
 """
 
+# Matches between active counted members that neither has blocked: a block
+# hides the match from both (is_blocked_pair, migration 0035).
 _MEMBER_MATCHES = f"""
         SELECT m.user_a_id, m.user_b_id, m.created_at
           FROM ahavah_match m
           JOIN person ma ON ma.id = m.user_a_id
           JOIN person mb ON mb.id = m.user_b_id
          WHERE {counted_member_sql('ma')} AND {counted_member_sql('mb')}
+           AND NOT is_blocked_pair(m.user_a_id, m.user_b_id)
 """
 
 _SILENT = """
@@ -1404,7 +1521,7 @@ _SILENT = """
 _WITH = f"""
     WITH sent AS ({member_sent_sql(active=True)}),
     likes AS ({waiting_likes_sql()}),
-    convos AS ({_CONVOS}),
+    convos AS (SELECT c.* FROM ({_CONVOS}) c WHERE NOT is_blocked_pair(c.lo, c.hi)),
     member_matches AS ({_MEMBER_MATCHES}),
     silent AS ({_SILENT}),
     per AS (SELECT person_id, count(*) AS n, min(created_at) AS oldest
@@ -1497,7 +1614,7 @@ import service.api.admin.community_routes  # noqa: E402,F401
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `RUN tests/test_admin_community_waiting.py`
-Expected: `8 passed`.
+Expected: `9 passed`.
 
 - [ ] **Step 5: Run the content guard's sibling**
 
@@ -1760,8 +1877,10 @@ def onboardee():
         values = ', '.join(f'%({k})s' for k in cols)
         with api_tx() as tx:
             tx.execute(f"INSERT INTO onboardee ({names}) VALUES ({values})", cols)
-            tx.execute("""UPDATE onboardee SET created_at = NOW() - make_interval(hours => %(h)s * 2),
-                                               updated_at = NOW() - make_interval(hours => %(h)s)
+            # make_interval's `hours` takes an integer only; `secs` takes the
+            # fractional idle times the tests use (0.2 hours).
+            tx.execute("""UPDATE onboardee SET created_at = NOW() - make_interval(secs => %(h)s * 7200),
+                                               updated_at = NOW() - make_interval(secs => %(h)s * 3600)
                            WHERE email = %(e)s""", dict(h=idle_hours, e=email))
         made.append(email)
         return email
@@ -1816,7 +1935,7 @@ def test_a_tool_visitor_who_saved_no_step_is_not_listed(client, admin_bearer, on
     before = _rows(client, admin_bearer)['count']
     onboardee(lead_source='tool:game-us')
     assert _rows(client, admin_bearer)['count'] == before
-    onboardee(lead_source='marriage_checklist', name='Started anyway')
+    onboardee(lead_source='tool:checklist', name='Started anyway')
     assert _rows(client, admin_bearer)['count'] == before + 1
 
 
@@ -2624,7 +2743,7 @@ Expected: collection error, `ImportError: cannot import name 'email_outcomes' fr
 
 - [ ] **Step 3: Write the module**
 
-Create `service/growth/email_outcomes.py`. Move `_Q_RUN_RESULTS` (with its comment block) and `_run_results` out of `service/api/admin/growth_routes.py` into it unchanged, renamed `Q_RUN_RESULTS` and `run_results`, then add:
+Create `service/growth/email_outcomes.py` with the content below. `Q_RUN_RESULTS` and `run_results` are `_Q_RUN_RESULTS` (with its comment block) and `_run_results` from `service/api/admin/growth_routes.py`, moved verbatim and renamed; they are written out here in full:
 
 ```python
 """What each email achieved (TEC-1897; frames G.1, G.2 and G.4).
@@ -2643,7 +2762,42 @@ from service.campaigns.runner import SEND_AUDIT_ACTION
 
 PUSH_CAMPAIGN = 'e6'
 
-# (Q_RUN_RESULTS and run_results, moved here unchanged from growth_routes.)
+# What one run achieved. `reached` is the members its mail was accepted for
+# (the drain writes the send log on acceptance). `clicks` counts clicks on
+# the /s/ links that run's own mail carried, found in the outbox payload,
+# with bots left out as service.growth.queries.post_stats leaves them out.
+# A campaign mints its CTA links under its own key as the link kind and with
+# the recipient as the link's subject (each module's build_for), so each
+# outbox row is only searched for its own member's few links. Matching on
+# kind alone searched every link the campaign ever minted in every mail of
+# the run, about 53 more e2 links a week. `links` is 0 when the mail carried
+# no tracked link (an e1 run before 13 Oct 2026, when its confirm link was
+# bare, or a run from before the outbox), and
+# then there is no click figure to give.
+Q_RUN_RESULTS = """
+    WITH run_links AS (
+        SELECT DISTINCT l.key
+          FROM email_outbox o
+          JOIN campaign_link l
+            ON l.kind = o.campaign
+           AND l.subject_person_id = o.person_id
+           AND strpos(o.payload->>'html', '/s/' || l.key) > 0
+         WHERE o.campaign = %(c)s AND o.campaign_id = %(cid)s
+    )
+    SELECT (SELECT count(*) FROM email_send_log
+             WHERE campaign = %(c)s AND campaign_id = %(cid)s) AS reached,
+           (SELECT count(*) FROM run_links) AS links,
+           (SELECT count(*) FROM campaign_click c JOIN run_links r ON r.key = c.link_key
+             WHERE c.ua_class <> 'bot') AS clicks
+"""
+
+
+def run_results(tx, campaign: str, campaign_id: str | None) -> tuple[int | None, int | None]:
+    if not campaign_id:
+        return None, None
+    r = tx.execute(Q_RUN_RESULTS, dict(c=campaign, cid=campaign_id)).fetchone()
+    return int(r['reached']), (int(r['clicks']) if r['links'] else None)
+
 
 _Q_RUN_OUTCOMES = """
     SELECT count(*) FILTER (WHERE p.last_online_time > l.sent_at)::int AS came_back,
@@ -2742,12 +2896,10 @@ def came_back_all_time(tx, campaign: str) -> int:
     return tx.execute(_Q_CAME_BACK_ALL, dict(c=campaign)).fetchone()['n']
 ```
 
-Place the moved `Q_RUN_RESULTS` and `run_results` between `PUSH_CAMPAIGN` and `_Q_RUN_OUTCOMES`, replacing the `# (Q_RUN_RESULTS ...)` comment line.
-
 - [ ] **Step 4: Wire the routes**
 
 In `service/api/admin/growth_routes.py`:
-- Delete the moved `_Q_RUN_RESULTS` constant and `_run_results` function, and add `from service.growth import email_outcomes` to the imports.
+- Delete the moved code: the comment block that begins `# What one run achieved.` with the `_Q_RUN_RESULTS` constant under it, and the `_run_results` function (keep `_NEXT_RUN_ID`, which sits between them). Nothing else imports either (checked 18 Oct). Add `from service.growth import email_outcomes` to the imports.
 - In `get_admin_growth_emails`, replace:
 
 ```python
@@ -5764,9 +5916,11 @@ git -c user.email=admin@techbaseltd.com commit -m "feat(system): the API errors 
 
 - [ ] **Step 1: Write the script**
 
-Copy `tests/_evidence/design-wave-1-shots.mjs` to `tests/_evidence/design-wave-2-shots.mjs`. Change its header comment to name TEC-1897 and the frames below, and add these stub routes to its route table (sample figures are the export's mock values, so a screenshot can be laid beside its frame; they never reach production):
+Copy `tests/_evidence/design-wave-1-shots.mjs` to `tests/_evidence/design-wave-2-shots.mjs`. Keep its fixtures (`ago`, `HEALTH`, `OVERVIEW_STUB`, `GROWTH_REST`, `QUEUE`, `REPORTS_ONE`, `PHOTOS`), the stub server and `shot()`. The wave 1 stub has no route table: each `shot()` call passes its own `stub` map from a path (the query string is dropped) to a body, and its `query` is the part after `/?`. Change the header comment to name TEC-1897 and the frames below, delete every shot loop between `const THEMES = ["light", "dark"];` and `await chrome.close();`, and put this in their place (sample figures are the export's mock values, so a screenshot can be laid beside its frame; they never reach production):
 
 ```js
+// --- TEC-1897: the community views -------------------------------------------
+
 const COMMUNITY_STUBS = {
   "/admin/community/waiting": { summary: {
     likes_waiting: 58, members_with_likes: 20, oldest_like_at: "2026-06-17T15:00:00+00:00", offline_7d: 14, push_on: 4,
@@ -5789,27 +5943,73 @@ const COMMUNITY_STUBS = {
   "/admin/moderation/profile-gaps": { kpis: { not_verified: 31, only_declined: 3, no_photo: 1, no_face_photo: 4 },
     rows: [{ uuid: "u2", name: "Sample member", gap: "only_declined", tier: "none" }] },
   "/admin/moderation/photo-gate": { enabled: false, members: [] },
+  "/admin/moderation/photos": { ...PHOTOS(4), approved_no_face: { photos: 6, people: 5, members: 4, staff: 1 } },
   "/admin/system/errors": { available: true, last_24h: 0, last_7d: 0, routes: [] },
   "/admin/alerts/report": { enabled: false, switch_on: false },
 };
-```
 
-and the page list (each at 390, 768 and 1440, light and dark):
+// One unresolved report and one resolved (frames R.2 and R.4).
+const REPORTS_W2 = {
+  count: 2, unresolved: 1,
+  reports: [
+    { ...REPORTS_ONE.reports[0], report_key: "1-2-20261015140000000000",
+      outcome: null, note: null, resolved_at: null, resolved_by_name: null },
+    { ...REPORTS_ONE.reports[0], report_key: "3-4-20261012140000000000", reporter_uuid: "u-3", reported_uuid: "u-4",
+      outcome: "warned", note: "Spoke to them", resolved_at: ago(5), resolved_by_name: "Sarah" },
+  ],
+};
 
-```js
-const PAGES = [
-  ["overview", "/"],
-  ["growth", "/?tab=growth"],
-  ["reports", "/?tab=moderation&sub=reports"],
-  ["photos-no-face", "/?tab=moderation&sub=photos"],
-  ["profile-gaps", "/?tab=moderation&sub=gaps"],
-  ["photo-gate", "/?tab=moderation&sub=gate"],
-  ["users", "/?tab=users"],
-  ["waiting", "/?tab=users&view=waiting"],
-  ["unfinished", "/?tab=users&view=unfinished"],
-  ["system", "/?tab=system"],
+// Frame W.5: one Users row with Last online and Likes waiting.
+const USERS_W2 = { page: 1, page_size: 20, total: 1, rows: [{
+  email: "sample@example.com", uuid: "u1", name: "Sample member", sign_up_time: ago(40), roles: [], entitlements: [],
+  activated: true, in_beta: false, in_waitlist: false, has_person: true, unsubscribed_at: null,
+  last_online_at: ago(9), likes_waiting: 5 }] };
+
+const STUB_W2 = {
+  ...OVERVIEW_STUB, ...GROWTH_REST, ...COMMUNITY_STUBS,
+  "/admin/reports": REPORTS_W2, "/admin/users": USERS_W2, "/admin/system/health": HEALTH,
+};
+
+const SIZES_W2 = [
+  { tag: "390", width: 390, height: 844 },
+  { tag: "768", width: 768, height: 1024 },
+  { tag: "1440", width: 1440, height: 900 },
 ];
+
+const PAGES = [
+  ["overview", "tab=overview"],
+  ["growth", "tab=growth"],
+  ["reports", "tab=moderation&sub=reports"],
+  ["photos", "tab=moderation&sub=photos"],
+  ["profile-gaps", "tab=moderation&sub=gaps"],
+  ["photo-gate", "tab=moderation&sub=gate"],
+  ["users", "tab=users"],
+  ["waiting", "tab=users&view=waiting"],
+  ["unfinished", "tab=users&view=unfinished"],
+  ["system", "tab=system"],
+];
+
+for (const [name, query] of PAGES) {
+  for (const size of SIZES_W2) {
+    for (const theme of THEMES) {
+      await shot(`${name}-${size.tag}-${theme}`, { query, ...size, theme, stub: STUB_W2 });
+    }
+  }
+}
+
+// Frame G.4: the run history sheet, opened from the weekly email's name.
+for (const size of SIZES_W2) {
+  await shot(`growth-run-history-${size.tag}-light`, {
+    query: "tab=growth", ...size, theme: "light", stub: STUB_W2, fullPage: false,
+    before: async (page) => {
+      await page.getByRole("button", { name: "Weekly community email" }).first().click();
+      await page.waitForTimeout(400);
+    },
+  });
+}
 ```
+
+The script keeps wave 1's closing lines, which print any page with horizontal overflow.
 
 - [ ] **Step 2: Run it**
 
@@ -5820,7 +6020,7 @@ cd /d/Antigravity/ahavah-admin && AHAVAH_API_ORIGIN=http://127.0.0.1:5000 npx ne
 cd /d/Antigravity/ahavah-admin && node tests/_evidence/design-wave-2-shots.mjs http://localhost:3101 "C:/Users/Ehud/AppData/Local/Temp/tec-1897-shots"
 ```
 
-Expected: 60 screenshots. Open each beside its frame in `Ahavah Admin Acting on the Community.html`. At 390 nothing scrolls sideways (check `document.documentElement.scrollWidth <= 390` in each 390 shot, which the wave 1 script already asserts) and the Needs you band is on the first screen without a scroll. At 768 and 1440 every row of tiles is full width and level.
+Expected: 63 screenshots and the closing line "no horizontal overflow". Open each beside its frame in `Ahavah Admin Acting on the Community.html`. At 390 nothing scrolls sideways (check `document.documentElement.scrollWidth <= 390` in each 390 shot, which the wave 1 script already asserts) and the Needs you band is on the first screen without a scroll. At 768 and 1440 every row of tiles is full width and level.
 
 - [ ] **Step 3: Commit**
 
@@ -5903,6 +6103,8 @@ Each item says what the design or brief asks, what the database can honestly giv
 22. **Growth layout.** G.1 at 1440 puts Push, Verification tiers and the Publishing queue in one row and Quotable notes (brief 3) below the emails. The plan adds Push and Verification tiers as their own row after the stats (the 768 arrangement) and leaves the queue and everything else in place; the full Growth layout belongs with the referral brief's round, as the brief says ("Lay out Growth once").
 23. **Started by** reads the audit log, which has a row for cron and command line sends only since 13 Oct 2026; earlier runs read "Not recorded".
 24. **The gate tile** now opens the gate list (`?tab=moderation&sub=gate`), which has no sub-tab in the export, instead of the Photos queue.
+25. **Whose "Email me" it is** (added by the 18 Oct review). R.2's switch reads "Email me", but three accounts hold the admin role (ids 18, 23 and 126) and the plan stores one setting for all of them (`admin_alert_pref`, keyed by the alert alone) and always mails `OWNER_TO`. If another admin turns it on, the owner gets the emails and that admin gets none; if another admin turns it off, the owner's emails stop. The default keeps it as one setting that mails the owner. Decide whether only the owner's account may change it, or whether each admin keeps their own setting and gets the email at their own address (a `person_id` column on the preference, and a send to each admin who has it on).
+26. **A report made again** (added by the 18 Oct review). The app writes a report with the skip upsert, which moves the pair's `created_at` whenever that member reports or passes the same person again. The plan treats that as a new report: it reads Unresolved and counts on Needs you, and the earlier resolution stays in `report_resolution` without showing. A plain pass on someone already reported cannot come from the app (a block hides the person everywhere), only from a direct API call. No decision needed unless you want a repeat report shown with the earlier outcome beside it.
 
 ## Self-review
 
@@ -5926,8 +6128,31 @@ Each item says what the design or brief asks, what the database can honestly giv
 | Users: last online, "has likes waiting", push status | 6, 19 |
 | Deploy order | 26 |
 
-**Placeholders:** none of "TBD", "TODO", "fill in" or "similar to Task N". One step references code moved verbatim rather than repeating it (Task 11's `Q_RUN_RESULTS` and `run_results`, quoted by their location in `growth_routes.py`, lines 90-117 and 129-133).
+**Placeholders:** none of "TBD", "TODO", "fill in" or "similar to Task N". Task 11's moved `Q_RUN_RESULTS` and `run_results` are written out in full (review, 18 Oct).
 
 **Type consistency:** `counted_member_sql(alias, *, active)` (Task 5) is used in Tasks 7 to 12 with the same name; `waiting_likes_sql()` and `member_sent_sql(active)` (Task 5) in Tasks 6 and 8; `iso_row` (Task 5) in Tasks 5, 7, 8 and 12; `report_key` is the same `"<reporter>-<reported>-<YYYYMMDDHH24MISSUS>"` in Tasks 4 and 14; `email_outcomes.run_outcomes` returns `came_back`, `came_back_7d`, `push_turned_on`, which the index renames `last_run_*` (Task 11) and the admin reads under those names (Tasks 15, 16, 22); `started_by` values `schedule`, `command_line`, `send_button` match `startedByLabel` (Task 15); the admin hooks of Task 16 are the ones Tasks 17 to 24 import.
 
 **Review Focus:** each of the five lines has its named test in its owning task (Tasks 4, 5, 3, 14 and 10).
+
+## Review (18 Oct)
+
+A review against the code and schema on `origin/ahavah/main` (e48e38f) and ahavah-admin `origin/master` (a13b115). Every SQL statement in Tasks 1 to 14 was run against the local test database inside a transaction that was rolled back (the 0069 tables as temporary tables, the migration itself applied twice), and all of them ran; nothing was left in the shared database. `src/lib/community.ts` (Task 15) type-checks under `tsc --strict` and its 9 tests pass, run from a scratch copy. The API test command was run on an existing file (`tests/test_migration_0068.py`, 10 passed). Migration 0069 is free on every local and remote branch and in the one worktree.
+
+What changed, and why:
+
+1. **Admin base branch** (Before you start). The plan said `master` at 068f6ae. Local `master` is stale at 42a3fea and has no `acting.ts`, `needs-you.tsx` or `acting.test.mjs`, which Tasks 15 to 25 edit; 068f6ae is the unmerged tip of `together-launch`. The admin now branches from `origin/master` (a13b115) after a fetch.
+2. **Deploy behaviour** (Task 1). The plan said the deploy runs every migration on every deploy. `scripts/apply-deploy-migrations.sh` applies each file once, records its checksum and stops the deploy if an applied file changes. The text and the migration's header now say so: 0069 is never edited after it ships.
+3. **Two indexes** (Task 1). The unresolved-report count reads `skipped` by `reported` on every Overview load and every cron tick, and `skipped` (every pass ever made) had no such index. Run history reads `email_send_log` by campaign and run id up to 24 times a load, and its indexes led with `person_id`. Migration 0069 now adds a partial index on reported rows and one on `(campaign, campaign_id)`, with a test.
+4. **A replaced photo's upload time** (Task 1). An upload to a position that already holds a photo is an upsert, which would have kept the old photo's `uploaded_at`, so "Photo waiting" dated the new photo by the old one. The upsert now sets it, with a behavioural test through `patch_profile_info`.
+5. **Blocked pairs on the waiting list** (Task 5). A one-sided conversation or a silent match where one person had blocked (reported) the other counted as someone waiting, though a block hides both from each other. The waiting queries now leave out any pair `is_blocked_pair` (migration 0035) holds, with a test. The funnel still counts history as it happened.
+6. **The re-report test** (Task 4). The test unskipped with a DELETE and reported with an INSERT, a path the app never takes. The app reports through the skip upsert, which moves `created_at` on every repeat. The test helper now runs that upsert (`antiabuse.sql.Q_INSERT_SKIPPED`) and the comments describe it. Conflicts item 26 records what a repeat report does.
+7. **A test fixture that could not run** (Task 7). `make_interval(hours => ...)` takes an integer, so the 0.2 hour idle time raised `function make_interval(hours => numeric) does not exist` (checked on the test database). The fixture uses `secs`.
+8. **A retired lead source** (Task 7). The test used `marriage_checklist`, which migration 0066 rewrote to `tool:checklist`; it now uses the live value.
+9. **The conftest anchor** (Task 1). The fixtures are appended after `tool_visitor`, the last fixture in the file, not `together_schema`.
+10. **Moved code written in full** (Task 11). `Q_RUN_RESULTS` and `run_results` were referenced by line number; they are now in the step, and the delete instruction names exactly what goes.
+11. **The rendered proof script** (Task 25). The wave 1 harness has no route table: each shot passes its own stub map and a query without `/?`, and it shoots 390 and 1280. The step now gives the code: the stubs (with Users, Reports and Photos bodies the new screens need), the three widths, the 10 pages and the run history sheet, 63 shots.
+12. **A new owner decision** (Decisions taken item 9, conflicts item 25). "Email me when a report arrives" is one setting shared by the three admin accounts and always mails the owner, so another admin can turn the owner's emails on or off.
+
+Checked and found sound: the staff rule on every new count matches the endpoint it sits beside (Growth's address list where Growth uses it, the member rule alone where Moderation's gate tile does, as conflicts item 17 says); every Barbados day and week converts on both sides; production reads stay counts, no query names message content, and the two owner emails sit behind default-off switches passed to both api and cron; the JSON keys and routes in Tasks 3 to 14 match the types and hooks in Tasks 15 and 16.
+
+Left as it is, on purpose: Tasks 17 to 24 change React components with no failing test first. The admin has no component test harness; their logic lives in `community.ts` and `acting.ts`, tested in Tasks 15 and 17, and the components are checked by the type check, the build, `/sot-sync` and Task 25's screenshots.
