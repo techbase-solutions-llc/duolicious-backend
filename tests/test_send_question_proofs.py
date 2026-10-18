@@ -78,3 +78,13 @@ def test_no_proof_carries_a_live_unsubscribe_link():
         assert f'href="{sq.PROOF_LINK_DISABLED}"' in e['html'], e['name']
     by_name = {e['name']: e['html'] for e in sq.plan()[0]}
     assert "This week's question: mountains or the sea? Answer in the app." in by_name['e2_question_line']
+
+
+def test_the_launch_proof_answer_buttons_are_inert():
+    """A tap on a proof button would save the owner's own answer to a real
+    question, so each one goes to PROOF_LINK_DISABLED."""
+    from service.config import WEB_BASE_URL
+    html = {e['name']: e['html'] for e in sq.plan()[0]}['questions_launch']
+    assert f'{WEB_BASE_URL.rstrip("/")}/q/' not in html
+    assert html.count(f'href="{sq.PROOF_LINK_DISABLED}"') >= 3  # 2 answers and the unsubscribe
+    assert '>Mountains<' in html and '>The sea<' in html

@@ -25,7 +25,8 @@ UTC = timezone.utc
 
 
 @pytest.fixture
-def on(monkeypatch):
+def on(monkeypatch, questions_live):
+    """Its own switch and the questions_live master switch, both on."""
     monkeypatch.setenv('AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED', '1')
 
 
@@ -63,6 +64,15 @@ def _queued(person) -> list[dict]:
 def test_off_by_default(make_person, week, monkeypatch):
     monkeypatch.delenv('AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED', raising=False)
     m = _member(make_person, 'LaunchMailOff')
+    _run(_at(week['today'], 12))
+    assert _queued(m) == []
+
+
+def test_its_own_switch_alone_sends_nothing(make_person, week, monkeypatch):
+    """Both switches: its own, and questions_live (service.questions.switch_on)."""
+    monkeypatch.setenv('AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED', '1')
+    monkeypatch.delenv('AHAVAH_QUESTIONS_LIVE_ENABLED', raising=False)
+    m = _member(make_person, 'LaunchMailDark')
     _run(_at(week['today'], 12))
     assert _queued(m) == []
 

@@ -47,6 +47,8 @@ title-premium-reminder-wht.png
 title-premium-reminder.png
 title-premium-welcome-wht.png
 title-premium-welcome.png
+title-quick-questions-wht.png
+title-quick-questions.png
 title-receipt-wht.png
 title-receipt.png
 title-reengage-wht.png

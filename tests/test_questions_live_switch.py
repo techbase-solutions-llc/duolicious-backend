@@ -204,6 +204,15 @@ def test_no_e2_question_line_while_dark(make_person, make_question, drops, dark)
     assert "This week's question" not in html
 
 
+def test_no_launch_email_while_dark(make_person, week, dark):
+    from emails import questions_launch as ql
+    p = make_person(name='DarkLaunch', email=f'darklaunch-{uuid4().hex[:8]}@ahavah-test.invalid')
+    _run(ql.queue_due, datetime.combine(week['today'], time(12, 30), UTC))
+    with api_tx('read committed') as tx:
+        assert tx.execute("SELECT 1 FROM email_outbox WHERE person_id = %(p)s AND campaign = 'questions_launch'",
+                          dict(p=p['id'])).fetchone() is None
+
+
 # ---------------------------------------------------------------------------
 # What stays on
 # ---------------------------------------------------------------------------
@@ -238,6 +247,7 @@ def test_the_proofs_still_reach_the_owner_while_dark(monkeypatch, dark):
     monkeypatch.setattr(sq, '_subscriptions', lambda pid: [dict(endpoint='https://push.test/a', p256dh='k', auth='a')])
     monkeypatch.setattr(sq, '_push_one', lambda sub, payload: pushes.append(payload))
     sq.main(['--send'])
-    assert {s['to_addr'] for s in sent} == {sq.PROOF_TO} and len(sent) == 1
+    assert {s['to_addr'] for s in sent} == {sq.PROOF_TO} and len(sent) == 2
     assert "This week's question" in sent[0]['body']
+    assert sent[1]['subject'] == '[PROOF] New on Ahavah: quick questions'
     assert len(pushes) == 3

@@ -10,6 +10,8 @@ reuses: emails to PROOF_TO only, straight through the mailer, never the
 outbox; pushes to account PUSH_PERSON_ID's subscriptions only, sent
 directly; sample data only; no switch read or changed; every unsubscribe
 link inert. Push links carry no ?src=, so a proof tap counts as nothing.
+The launch email's answer buttons are inert too: a tap on /q/{key}/{choice}
+would save the owner's own answer to a real question.
 
 The tag check the spec asks for ("Whether iOS replaces by tag is
 unverified; the owner's proof should test it"): the weekly and launch
@@ -19,6 +21,7 @@ only the launch proof is left once both have arrived.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import Optional
 
@@ -26,6 +29,12 @@ from scripts.send_proofs import (PROOF_LINK_DISABLED, PROOF_TO, PUSH_PERSON_ID, 
                                  _push_one, _smtp, _subscriptions)
 
 __all__ = ['PROOF_LINK_DISABLED', 'PROOF_TO', 'PUSH_PERSON_ID', 'plan', 'main']
+
+
+def _inert_answers(html: str) -> str:
+    """Each answer link (/q/<key>/<choice>) replaced by PROOF_LINK_DISABLED."""
+    from service.config import WEB_BASE_URL
+    return re.sub(re.escape(WEB_BASE_URL.rstrip('/')) + r'/q/[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
 
 
 def _emails() -> list[dict]:
@@ -40,7 +49,7 @@ def _emails() -> list[dict]:
     for name, label, build, from_addr in builders:
         subject, html = build(PROOF_TO)
         out.append(dict(name=name, label=label, subject=f"[PROOF] {subject}",
-                        html=_inert(name, html), from_addr=from_addr))
+                        html=_inert_answers(_inert(name, html)), from_addr=from_addr))
     return out
 
 

@@ -2,7 +2,8 @@
 
 To every member who has not left campaign emails, once per member ever
 (email_send_log campaign questions_launch), on a drop day from 12:00 UTC,
-held behind AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED. Members away for more
+held behind AHAVAH_QUESTIONS_LAUNCH_EMAIL_ENABLED and the questions_live
+master switch (service.questions.switch_on). Members away for more
 than 30 days are included: for them it is a reason to come back.
 
 Each option is its own campaign link to /q/{key}/{choice} on the web app,
@@ -26,9 +27,9 @@ from emails.base import INK, LIME, MUTED, SANS, chip, render, suppressed_sql_pat
 from service.admin.queries.members import member_sql
 from service.campaigns import (held, make_campaign_link, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
-from service.campaigns.switches import enabled
 from service.config import EMAIL_DOMAIN, WEB_BASE_URL
 from service.growth.queries import _excluded
+from service.questions import switch_on
 from service.questions.copy import SAMPLE_QUESTION, in_sentence, short_question
 from service.questions.schedule import barbados_today, current_drop, resting
 from service.unsubscribe import make_url as unsub_url
@@ -38,8 +39,9 @@ CAMPAIGN_ID = 'questions_launch'
 SWITCH = 'questions_launch_email'
 UNSUB_SCOPE = 'campaigns'
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
-# The width the Claude Design export sets for the title (360 to 528 px).
-TITLE_WIDTH = 460
+# The title image's 1x width: 801 px at 2x, halved and rounded down. The
+# design shows it at up to 420 px.
+TITLE_WIDTH = 400
 
 SUBJECT = "New on Ahavah: quick questions"
 CHIP = "New in the app"
@@ -116,7 +118,7 @@ _Q_DUE = f"""
 
 
 def queue_due(tx, now: datetime) -> int:
-    if not enabled(SWITCH) or now.hour < held.SEND_HOUR_UTC or resting(now):
+    if not switch_on(SWITCH) or now.hour < held.SEND_HOUR_UTC or resting(now):
         return 0
     drop = current_drop(tx, now)
     if drop is None or drop['live_on'] != barbados_today(now):
@@ -139,7 +141,8 @@ def queue_due(tx, now: datetime) -> int:
 
 def preview(to: str) -> tuple[str, str]:
     """The proof: week 1's question, buttons straight to the answer page,
-    nothing stored."""
+    nothing stored. scripts/send_question_proofs.py makes those buttons
+    inert, with the unsubscribe link, before the owner gets it."""
     q = SAMPLE_QUESTION
     return SUBJECT, launch_html(q, [(o['label'], _target(q, o['key'])) for o in q['options']],
                                 unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL))
