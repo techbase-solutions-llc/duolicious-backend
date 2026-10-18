@@ -53,9 +53,12 @@ On the second player's start, the send-link screen and the invite email: "Neithe
 - A single's checklist: "I wrote my non-negotiables. ahavah.app/marriage-checklist"
 - Inviting someone to the checklist: "Will you take the Ahavah marriage checklist with me? {link}"
 
-## The invite email
+## The emails
 
-Footer: "We have not added you to any list."
+The 5 proofs went to your inbox on 18 Oct, each marked [PROOF].
+
+- The invite email's footer: "We have not added you to any list."
+- The checklist's "your comparison is ready" email uses the game's wording from the design (4.10): "Rivka has answered. See how you fit." with the button "See your comparison". The design has no checklist version. If you want one, a suggestion: "Rivka has finished the checklist. See where you agree."
 
 ## Launch posts (captions 1 and 4; 2 and 3 are the design's own)
 
