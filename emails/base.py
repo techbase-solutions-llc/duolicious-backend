@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 from functools import lru_cache
 
 EMAIL_ASSET_ORIGIN: str = os.environ.get(
@@ -223,6 +224,50 @@ _STYLE = f"""
 """
 
 
+# Phone type sizes (owner, 19 Oct 2026). Gmail on Android shows email text
+# about 1.4 times its CSS size and leaves images and spacing alone, and no CSS
+# an email carries turns that off. Of 3 test emails on the owner's phone, the
+# one with every text size at 70% looked right ("a good in between"). So the
+# inline sizes, which are what a phone uses, are 70% of the design (never
+# below 10px), and wider screens get the design sizes back through a class
+# per size: a min-width query for clients that read <style>, and an [if mso]
+# block for desktop Outlook, which ignores media queries.
+PHONE_TYPE_SCALE = 0.7
+PHONE_TYPE_FLOOR = 10
+_SIZED_TAG = re.compile(r'<([a-zA-Z][a-zA-Z0-9]*)(\s[^<>]*?style="[^"]*?font-size:\s*(\d+)px[^"]*")([^<>]*)>')
+
+
+def phone_px(design_px: int) -> int:
+    return max(PHONE_TYPE_FLOOR, round(design_px * PHONE_TYPE_SCALE))
+
+
+def _phone_type_sizes(fragment: str) -> tuple[str, set[int]]:
+    """Inline font sizes scaled for phones, each tag marked with its design
+    size as class fsN so wider screens can restore it."""
+    sizes: set[int] = set()
+
+    def one(m: re.Match) -> str:
+        tag, attrs, px, rest = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+        if phone_px(px) == px:
+            return m.group(0)
+        sizes.add(px)
+        attrs = re.sub(r'font-size:\s*\d+px', f'font-size:{phone_px(px)}px', attrs, count=1)
+        whole = attrs + rest
+        if re.search(r'\sclass="', whole):
+            whole = re.sub(r'\sclass="', f' class="fs{px} ', whole, count=1)
+        else:
+            whole = f' class="fs{px}"' + whole
+        return f'<{tag}{whole}>'
+
+    return _SIZED_TAG.sub(one, fragment), sizes
+
+
+def _desktop_type_css(sizes: set[int]) -> tuple[str, str]:
+    rules = ''.join(f'.fs{px}{{font-size:{px}px !important;}}' for px in sorted(sizes))
+    return (f'@media (min-width:621px) {{ {rules} }}' if rules else '',
+            f'<!--[if mso]><style>{rules}</style><![endif]-->' if rules else '')
+
+
 def render(
     *,
     title: str,
@@ -245,7 +290,7 @@ def render(
     else:
         header_row = f'<tr><td style="padding:0;">{hero_html}</td></tr>'
 
-    return f"""<!doctype html>
+    doc = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
@@ -286,3 +331,6 @@ def render(
 </table>
 </body>
 </html>"""
+    doc, sizes = _phone_type_sizes(doc)
+    css, mso = _desktop_type_css(sizes)
+    return doc.replace('</style>', css + '</style>', 1).replace('</head>', mso + '\n</head>', 1)

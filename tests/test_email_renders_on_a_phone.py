@@ -84,7 +84,9 @@ def test_every_email_carries_the_brand_stack(sample):
 # headlines never show in Ultra, and they slipped past the source-text guard
 # because their builders live outside the folders it scans (19 Oct 2026).
 # This reads the rendered email instead, wherever the builder lives.
-_HEADLINE = re.compile(r'<h[1-4]\b|font-size:\s*(2\d|[3-9]\d)px', re.I)
+# Inline sizes are the phone's (70%), so the design size is also read from
+# the fsN class render() adds.
+_HEADLINE = re.compile(r'<h[1-4]\b|font-size:\s*(2\d|[3-9]\d)px|\bfs(2\d|[3-9]\d)\b', re.I)
 
 # Waiting for title images (brief 2026-10-19-email-titles-for-phones.md) or
 # the owner's waiver. Remove a name when its email gets its title; the last
@@ -120,3 +122,25 @@ def test_awaiting_titles_is_current():
     done = sorted(s['name'] for s in SAMPLES
                   if s['name'] in _AWAITING_TITLES and 'error' not in s and not _HEADLINE.search(s['html']))
     assert not done, f'these have their titles now; remove them from _AWAITING_TITLES: {done}'
+
+
+def test_phone_type_is_70_percent_and_desktop_gets_the_design_back():
+    # Owner, 19 Oct 2026: of 3 test emails on his phone, the one with text at
+    # 70% looked right. Inline sizes are the phone's; classes restore the
+    # design on wider screens and in desktop Outlook.
+    from emails.base import phone_px
+    s = next(x for x in SAMPLES if x['name'] == 'questions_launch')
+    html = s['html']
+    assert phone_px(17) == 12 and phone_px(13) == 10 and phone_px(12) == 10
+    assert 'font-size:17px;' not in html.split('</head>')[1]
+    assert re.search(r'class="fs17[ "][^>]*font-size:12px', html)
+    assert '@media (min-width:621px) {' in html and '.fs17{font-size:17px !important;}' in html
+    assert '<!--[if mso]><style>' in html
+
+
+@pytest.mark.parametrize('sample', [s for s in SAMPLES if 'error' not in s and 'max-width:600px' in s['html']
+                                    and s['audience'] != 'staff'], ids=lambda s: s['name'])
+def test_no_phone_text_below_the_floor(sample):
+    body = sample['html'].split('</head>', 1)[1]
+    small = [int(px) for px in re.findall(r'font-size:\s*(\d+)px', body) if int(px) < 10]
+    assert not small, f"{sample['name']} has text below 10px on a phone: {sorted(set(small))}"
