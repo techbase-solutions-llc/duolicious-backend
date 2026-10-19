@@ -191,6 +191,29 @@ def test_names_are_escaped_in_every_email():
     assert mail.invite_subject('checklist') == 'You are invited to the Ahavah marriage checklist'
 
 
+def test_the_answered_emails_open_on_their_title_image_with_the_name_under_it():
+    """Email titles for phones (owner, 19 Oct 2026): the body is the title
+    image over the line with the name. The whole sentence stays the subject,
+    so it is still the page title, and is not drawn as a heading."""
+    game = mail.answered_html('R&D', 'https://ahavah.app/together/game', 'https://ahavah.app/u/t')
+    ready = mail.answered_html('R&D', 'https://ahavah.app/together/checklist', 'https://ahavah.app/u/t',
+                               seat='guest', kind='checklist')
+    assert 'title-together-answered.png' in game and 'alt="See how you fit."' in game
+    assert '>R&amp;D has answered.</p>' in game
+    assert 'title-checklist-ready.png' in ready and 'alt="See where you agree."' in ready
+    assert '>R&amp;D has finished.</p>' in ready
+    assert 'title-together-answered' not in ready and 'title-checklist-ready' not in game
+    assert '<h2' not in game and '<h2' not in ready
+
+
+def test_the_deletion_email_opens_on_its_title_and_escapes_the_name():
+    from service.person.deletion_email import deletion_pending_template
+    html = deletion_pending_template(name='Tom & <b>Jerry</b>', purge_iso='Sun, October 25, 2026')
+    assert 'title-deletion.png' in html and 'alt="Sorry to see you go."' in html
+    assert 'Tom &amp; &lt;b&gt;Jerry&lt;/b&gt;' in html and '<b>Jerry' not in html
+    assert 'Hi there,' in deletion_pending_template(name='  ', purge_iso='Sun, October 25, 2026')
+
+
 def test_a_failure_to_queue_never_breaks_finishing(client, make_person, sign_in, switches,
                                                     monkeypatch):
     monkeypatch.setattr(mail, '_recipient', lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('boom')))

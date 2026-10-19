@@ -8,6 +8,8 @@ styling for Gmail. Sent on DELETE /account: warm goodbye + the cutoff date +
 the Cancel-deletion recovery + a feedback ask (replies route to a human inbox
 via the Reply-To the caller sets).
 """
+import html
+
 from service.config import WEB_BASE_URL
 from emails.base import (
     render,
@@ -28,7 +30,9 @@ SITE = "https://ahavah.app"
 def deletion_pending_template(name: str, purge_iso: str) -> str:
     """Build the HTML body. `purge_iso` is the user-readable cutoff date
     string (e.g. "Fri, June 26, 2026") — the caller formats it."""
-    safe_name = (name or "there").strip()
+    # The member types their own name, so it is escaped like every other
+    # name that goes into an email.
+    safe_name = html.escape((name or "").strip() or "there")
 
     body_html = f"""
 {chip("Account update")}
