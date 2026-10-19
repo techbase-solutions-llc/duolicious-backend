@@ -311,7 +311,7 @@ add('together_answered_game', 'service/tools/mail.py answered_html (game)', 'mem
     T.FROM_ADDR)
 add('together_ready_checklist', 'service/tools/mail.py answered_html (checklist)', 'member or lead',
     'HELD: AHAVAH_TOGETHER_READY_EMAIL_ENABLED, off until launch',
-    lambda: (T.answered_subject('Rivka'), T.answered_html('Rivka', T.result_url('checklist', _sess), unsub('notifications'), seat='guest')),
+    lambda: (T.answered_subject('Rivka', 'checklist'), T.answered_html('Rivka', T.result_url('checklist', _sess), unsub('notifications'), seat='guest', kind='checklist')),
     T.FROM_ADDR)
 add('together_invite_game', 'service/tools/mail.py invite_html (game)', 'anyone (address typed by a player)',
     'HELD: AHAVAH_TOGETHER_INVITE_EMAIL_ENABLED, off until launch',

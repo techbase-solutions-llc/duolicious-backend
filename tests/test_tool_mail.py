@@ -143,6 +143,7 @@ def test_the_checklist_uses_the_ready_switch_and_link(client, make_person, sign_
     rows = _rows(sid)
     assert [r['campaign'] for r in rows] == [mail.CAMPAIGN_READY]
     assert f'/marriage-checklist?session={sid}' in rows[0]['payload']['html']
+    assert rows[0]['payload']['subject'].endswith('has finished the checklist. See where you agree.')
 
 
 def test_a_checklist_player_gets_their_summary_with_the_stored_wording(client, make_person, sign_in,

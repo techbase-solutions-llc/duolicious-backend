@@ -1,9 +1,9 @@
 """Together's emails (TEC-1845).
 
   answered  "{name} has answered. See how you fit." to whoever finished an
-            Us game first (together_answered_email); the same template for
-            a couple checklist (together_ready_email). Export 4.10 and
-            6.12, which share one template.
+            Us game first (together_answered_email, export 4.10); for a
+            couple checklist "{name} has finished the checklist. See where
+            you agree." (together_ready_email; owner, 19 Oct 2026).
   summary   the checklist summary (emails/marriage_checklist.py, stored
             wording) to a checklist player once they have finished and
             saved (together_summary_email; owner decision 12).
@@ -63,18 +63,21 @@ def _heading(text: str) -> str:
             f'font-weight:800;line-height:1.3;color:{INK};">{text}</h2>')
 
 
-def answered_subject(name: str) -> str:
+def answered_subject(name: str, kind: str = 'game') -> str:
+    if kind == 'checklist':
+        return f'{name} has finished the checklist. See where you agree.'
     return f'{name} has answered. See how you fit.'
 
 
-def answered_html(name: str, cta: str, unsubscribe_url: str, seat: str = 'owner') -> str:
+def answered_html(name: str, cta: str, unsubscribe_url: str, seat: str = 'owner', kind: str = 'game') -> str:
     """`seat` is the recipient's: whoever finished first is mailed, the
     player who invited or the guest they invited, and the footer says which."""
     n = html.escape(name)
     why = (f'You get this because you invited {n} from ahavah.app/together.' if seat == 'owner'
            else f'You get this because {n} invited you from ahavah.app/together.')
-    body = _heading(f'{n} has answered. See how you fit.') + button('See your comparison', cta)
-    return render(title=html.escape(answered_subject(name)), preheader=f'{n} has answered.',
+    body = _heading(html.escape(answered_subject(name, kind))) + button('See your comparison', cta)
+    return render(title=html.escape(answered_subject(name, kind)),
+                  preheader=f'{n} has finished the checklist.' if kind == 'checklist' else f'{n} has answered.',
                   body_html=body, footer_html=held.footer(why, unsubscribe_url))
 
 
@@ -191,8 +194,8 @@ def queue_answered(tx, session_pk: int, notify_player_id: int) -> Optional[int]:
             return None
         cta = result_url(me['kind'], me['uuid'])
         return _queue(tx, campaign=CAMPAIGN_ANSWERED if game else CAMPAIGN_READY,
-                      campaign_id=me['uuid'], to=to, subject=answered_subject(name),
-                      html_for=lambda u: answered_html(name, cta, u, me['seat']))
+                      campaign_id=me['uuid'], to=to, subject=answered_subject(name, me['kind']),
+                      html_for=lambda u: answered_html(name, cta, u, me['seat'], me['kind']))
     return _guarded(tx, 'together_answered', go)
 
 
@@ -234,8 +237,9 @@ def preview_answered(to: str) -> tuple[str, str]:
 
 
 def preview_ready(to: str) -> tuple[str, str]:
-    return answered_subject('Rivka'), answered_html(
-        'Rivka', result_url('checklist', _PROOF_SESSION), unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL))
+    return answered_subject('Rivka', 'checklist'), answered_html(
+        'Rivka', result_url('checklist', _PROOF_SESSION), unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
+        kind='checklist')
 
 
 def preview_invite_game(to: str) -> tuple[str, str]:

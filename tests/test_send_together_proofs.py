@@ -67,4 +67,7 @@ def test_no_proof_carries_a_live_unsubscribe_link():
     for name in ('together_answered', 'together_ready'):
         assert f'href="{tp.PROOF_LINK_DISABLED}"' in by_name[name], name
     assert 'Rivka has answered. See how you fit.' in by_name['together_answered']
+    # Owner, 19 Oct 2026: the checklist says it in its own words.
+    assert 'Rivka has finished the checklist. See where you agree.' in by_name['together_ready']
+    assert 'See how you fit' not in by_name['together_ready']
     assert 'We keep your answers behind a private link' in by_name['together_summary']
