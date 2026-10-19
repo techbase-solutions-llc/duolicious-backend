@@ -111,7 +111,7 @@ def reminder_html(
     body = f"""
 {chip("Premium")}
 
-{title_image("title-premium-reminder.png", "title-premium-reminder-wht.png", "Every friend adds a month.", 486)}
+{title_image("title-premium-reminder.png", "title-premium-reminder-wht.png", "Every friend adds a month.", 277)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   Your free early-member Premium runs until

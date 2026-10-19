@@ -26,7 +26,7 @@ def emailtemplate():
     body = f"""
 {chip("Account update")}
 
-{title_image("title-resting.png", "title-resting-wht.png", "Your profile is resting.", 516)}
+{title_image("title-resting.png", "title-resting-wht.png", "Your profile is resting.", 290)}
 
 <p class="e-text" style="margin:0 0 18px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   We only show active members, so after a month away your profile has been

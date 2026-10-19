@@ -26,7 +26,7 @@ def notifications_nudge_html(first_name: str, settings_url: str, unsubscribe_url
     body = f"""
 {chip("Notifications")}
 
-{title_image("title-note.png", "title-note-wht.png", "A note from Ahavah.", 460)}
+{title_image("title-note.png", "title-note-wht.png", "A note from Ahavah.", 281)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   {name}, when someone likes you or writes to you on Ahavah, we can tell you

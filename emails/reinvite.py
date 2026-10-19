@@ -94,7 +94,7 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
         body = f"""
 {chip("Your profile is paused")}
 
-{title_image("title-resting.png", "title-resting-wht.png", "Your profile is resting.", 528)}
+{title_image("title-resting.png", "title-resting-wht.png", "Your profile is resting.", 290)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   {name}, your profile is paused because you have been away, so nobody can see
@@ -119,7 +119,7 @@ def reinvite_html(first_name: str, total_new: int, cta_url: str, unsubscribe_url
         body = f"""
 {chip("Since you were last online")}
 
-{title_image("title-digest.png", "title-digest-wht.png", "The community is growing.", 528)}
+{title_image("title-digest.png", "title-digest-wht.png", "The community is growing.", 276)}
 
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   {name}, {count_line}{match_tail}

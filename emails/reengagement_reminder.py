@@ -42,7 +42,7 @@ def _body(email: str) -> str:
     return f"""
 {chip("One last nudge")}
 
-{title_image("title-reengage.png", "title-reengage-wht.png", "Help us prepare your matches.", 528)}
+{title_image("title-reengage.png", "title-reengage-wht.png", "Help us prepare your matches.", 317)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   Shalom. We are sending one last quiet nudge before launch. You are on the

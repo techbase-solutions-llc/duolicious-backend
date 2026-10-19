@@ -34,7 +34,7 @@ def _body(code: str, share_href: str | None = None, link_href: str | None = None
     return f"""
 {chip("You + 1")}
 
-{title_image("title-referral.png?v=2", "title-referral-wht.png?v=2", "Bring someone with you.", 528)}
+{title_image("title-referral.png?v=3", "title-referral-wht.png?v=3", "Bring someone with you.", 219)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   Shalom. You were one of the first people to opt into the Ahavah beta.
@@ -90,7 +90,7 @@ def _member_body(code: str, share_href: str | None = None, link_href: str | None
     return f"""
 {chip("Invite a friend")}
 
-{title_image("title-referral.png?v=2", "title-referral-wht.png?v=2", "Bring someone with you.", 528)}
+{title_image("title-referral.png?v=3", "title-referral-wht.png?v=3", "Bring someone with you.", 219)}
 
 <p {p}>
   Shalom. Ahavah grows one trusted introduction at a time, so we are

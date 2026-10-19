@@ -66,7 +66,7 @@ def member_note_html(
     body = f"""
 {chip("A personal note")}
 
-{title_image("title-note.png", "title-note-wht.png", "A note from Ahavah.", 460)}
+{title_image("title-note.png", "title-note-wht.png", "A note from Ahavah.", 281)}
 
 {paras}
 """

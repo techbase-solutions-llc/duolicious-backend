@@ -469,11 +469,11 @@ def test_an_asset_that_is_not_bundled_keeps_the_https_url():
 
 
 def test_a_cache_busting_query_still_resolves_to_the_bundled_file():
-    """referral_intro.py appends ?v=2. A cid has no query string, so the
+    """referral_intro.py appends ?v=3. A cid has no query string, so the
     name before it is what names the part."""
     from emails.base import asset_src
 
-    assert asset_src(f'{PNG}?v=2') == f'cid:{PNG}'
+    assert asset_src(f'{PNG}?v=3') == f'cid:{PNG}'
 
 
 def test_the_social_badges_travel_inside_the_message():

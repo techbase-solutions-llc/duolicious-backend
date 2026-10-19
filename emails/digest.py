@@ -52,7 +52,7 @@ def digest_html(
     body = f"""
 {chip("Community digest")}
 
-{title_image("title-digest.png", "title-digest-wht.png", "The community is growing.", 528)}
+{title_image("title-digest.png", "title-digest-wht.png", "The community is growing.", 276)}
 
 <p class="e-text" style="margin:0 0 24px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   {lede}

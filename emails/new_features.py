@@ -45,7 +45,7 @@ def _body() -> str:
     return f"""
 {chip("Product update")}
 
-{title_image("title-new-features.png", "title-new-features-wht.png", "New features, live now.", 520)}
+{title_image("title-new-features.png", "title-new-features-wht.png", "New features, live now.", 327)}
 
 <p class="e-text" style="margin:0 0 4px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   Live for every member today:

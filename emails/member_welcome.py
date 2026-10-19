@@ -52,7 +52,7 @@ def member_welcome_html(
     body = f"""
 {chip("Welcome")}
 
-{title_image("title-member-welcome.png", "title-member-welcome-wht.png", "Welcome to the family.", 512)}
+{title_image("title-member-welcome.png", "title-member-welcome-wht.png", "Welcome to the family.", 276)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   You're in. Ahavah is matchmaking built by and for Torah-observant
