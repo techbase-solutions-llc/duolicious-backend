@@ -31,7 +31,7 @@ pattern). Treat the canonical file as the pixel/visual spec, not as code to ship
 
 **Fonts** — `'Plus Jakarta Sans'` (body), `'Ultra'` (display headings). In sent
 email, fall back to a web-safe stack: headings `Georgia, 'Times New Roman', serif`;
-body `Arial, Helvetica, sans-serif` (web fonts won't load in most clients).
+body `emails.base.SANS` (web fonts will not load in most clients, so its fallbacks are what most readers see). Never a fixed `width="600"` table: the shell is fluid up to 600px, and `tests/test_email_renders_on_a_phone.py` fails on anything wider than a phone.
 
 **Colors**
 - Ink / text: `#0F0B1F`

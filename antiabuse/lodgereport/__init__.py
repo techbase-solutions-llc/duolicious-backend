@@ -12,6 +12,7 @@ import traceback
 import threading
 import html
 import yaml
+from emails.base import SANS  # the brand body stack (18 Oct 2026)
 import erlastic
 from io import StringIO
 import re
@@ -109,10 +110,11 @@ def report_template(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Report</title>
+    <style>pre {{ white-space: pre-wrap; word-break: break-word; }}</style>
 </head>
-<body>
+<body style="font-family:{SANS};color:#0F0B1F;-webkit-text-size-adjust:100%;word-break:break-word;">
 
-<pre>
+<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
 {safe_report_str}
 </pre>
 
@@ -122,13 +124,13 @@ def report_template(
 
 
 <p><b>Last messages between reporter and accused:</b></p>
-<pre>
+<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
 {safe_last_messages}
 </pre>
 
 
 <p><b>Reporter's reason:</b></p>
-<pre>
+<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
 {safe_reason}
 </pre>
 

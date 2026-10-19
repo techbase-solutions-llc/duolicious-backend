@@ -24,6 +24,8 @@ def _nsfw_removed_row_html(r: dict) -> str:
         f"</tr>"
     )
 
+from emails.base import SANS  # the brand body stack (18 Oct 2026)
+
 def _nsfw_admin_notice_html(removed: list[dict]) -> str:
     """F19: plain internal-ops HTML listing each NSFW auto-removed photo
     (person name, photo uuid, score) so a false positive on a 34-member
@@ -31,8 +33,8 @@ def _nsfw_admin_notice_html(removed: list[dict]) -> str:
     rows_html = "".join(_nsfw_removed_row_html(r) for r in removed)
     return f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"/></head>
-<body style="font-family:Arial,Helvetica,sans-serif;color:#0F0B1F;">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="font-family:{SANS};color:#0F0B1F;-webkit-text-size-adjust:100%;word-break:break-word;">
 <p>The NSFW auto-removal sweep just hard-deleted {len(removed)} photo(s) for
 having an nsfw_score above 0.8. The photos were staged into undeleted_photo
 so the CDN cleaner removes them, but if any of these are false positives the

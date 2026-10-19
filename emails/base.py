@@ -151,7 +151,7 @@ def button(label: str, href: str, *, variant: str = "lime", full: bool = True) -
     return f"""
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="{width}margin:0;">
       <tr><td align="center" bgcolor="{bg}" style="border-radius:14px;">
-        <a href="{href}" target="_blank" style="display:block;padding:18px 32px;font-family:{SANS};font-size:18px;font-weight:800;letter-spacing:0.01em;line-height:1;color:{color};text-decoration:none;border-radius:14px;white-space:nowrap;">{label}</a>
+        <a href="{href}" target="_blank" style="display:block;padding:18px 32px;font-family:{SANS};font-size:18px;font-weight:800;letter-spacing:0.01em;line-height:1.25;color:{color};text-decoration:none;border-radius:14px;">{label}</a>
       </td></tr>
     </table>"""
 
@@ -164,7 +164,9 @@ def button(label: str, href: str, *, variant: str = "lime", full: bool = True) -
 # title text so screen readers and image-off clients still get the words.
 def title_image(file_name: str, file_name_dark: str, alt: str, width: int) -> str:
     base_style = (
-        f"width:{width}px;max-width:100%;height:auto;"
+        # Fluid, so a title that fails to load cannot hold the email wider
+        # than a phone; the width attribute below keeps Outlook at its size.
+        f"width:100%;max-width:{width}px;height:auto;"
         "margin:18px 0 16px;border:0;outline:none;text-decoration:none;"
     )
     # Both variants go inline when they are bundled, so the prefers-color-scheme
@@ -257,11 +259,16 @@ def render(
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Ultra&display=swap" rel="stylesheet"/>
 <style>{_STYLE}</style>
 </head>
-<body style="margin:0;padding:0;background:{CANVAS};">
+<body style="margin:0;padding:0;background:{CANVAS};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{preheader}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{CANVAS};">
   <tr><td align="center" style="padding:24px 12px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+    <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+    <!-- Fluid up to 600px. A fixed width="600" table cannot shrink: a
+         percentage max-width does not resolve while a table is sized, so the
+         email laid out 624px wide and Gmail on Android rewrote it ("Revert
+         auto-sizing"), growing the text and nothing else (18 Oct 2026). -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
       <tr><td class="e-card" style="background:#ffffff;border-radius:14px;overflow:hidden;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{SANS};color:{INK};line-height:1.5;">
           {header_row}
@@ -274,6 +281,7 @@ def render(
         </table>
       </td></tr>
     </table>
+    <!--[if mso]></td></tr></table><![endif]-->
   </td></tr>
 </table>
 </body>

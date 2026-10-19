@@ -27,14 +27,16 @@ LIME = "#D7FF81"
 PANEL = "#FBF9F4"
 CANVAS = "#ECE9E0"
 MUTED = "#6A6580"
-SANS = "'Plus Jakarta Sans', Arial, Helvetica, sans-serif"
+# The brand body stack, so staff mail matches member mail (it was an Arial
+# copy; 18 Oct 2026).
+from emails.base import SANS  # noqa: E402
 
 
 def _row(label: str, value_html: str) -> str:
     return f"""
     <tr>
       <td style="padding:9px 0;border-bottom:1px solid rgba(15,11,31,0.06);font-family:{SANS};font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:{MUTED};width:130px;vertical-align:top;">{label}</td>
-      <td style="padding:9px 0 9px 16px;border-bottom:1px solid rgba(15,11,31,0.06);font-family:{SANS};font-size:15px;line-height:1.5;color:{INK};">{value_html}</td>
+      <td style="padding:9px 0 9px 16px;border-bottom:1px solid rgba(15,11,31,0.06);font-family:{SANS};font-size:15px;line-height:1.5;color:{INK};word-break:break-word;">{value_html}</td>
     </tr>"""
 
 
@@ -84,10 +86,10 @@ def new_signup_html(
 <meta name="color-scheme" content="light"/>
 <title>New Ahavah signup</title>
 </head>
-<body style="margin:0;padding:0;background:{CANVAS};">
+<body style="margin:0;padding:0;background:{CANVAS};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{CANVAS};">
   <tr><td align="center" style="padding:24px 12px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:14px;overflow:hidden;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;">
       <tr><td style="padding:28px 32px 8px;font-family:{SANS};">
         <span style="display:inline-block;padding:7px 13px;border-radius:999px;background:#EDE8FE;color:{INDIGO};font-size:12px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;">&#9679;&nbsp; {html.escape(chip_label)}</span>
         <h1 style="margin:16px 0 4px;font-family:{SANS};font-size:24px;font-weight:800;letter-spacing:-0.01em;color:{INK};">{count_line}</h1>
