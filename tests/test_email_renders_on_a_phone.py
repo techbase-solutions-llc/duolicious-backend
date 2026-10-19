@@ -67,6 +67,9 @@ def test_nothing_is_wider_than_a_phone(sample):
 def test_the_shell_stops_text_enlarging(sample):
     # Gmail drops the <style> block, so the setting has to be inline.
     assert re.search(r'<body[^>]*-webkit-text-size-adjust:100%', sample['html']), sample['name']
+    # Chrome on Android (the Gmail app's viewer) honours only the standard
+    # spelling; the -webkit- one is Apple's.
+    assert re.search(r'<body[^>]*[;"]text-size-adjust:100%', sample['html']), sample['name']
 
 
 @pytest.mark.parametrize('sample', [s for s in SAMPLES if 'error' not in s], ids=lambda s: s['name'])

@@ -259,7 +259,7 @@ def render(
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Ultra&display=swap" rel="stylesheet"/>
 <style>{_STYLE}</style>
 </head>
-<body style="margin:0;padding:0;background:{CANVAS};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<body style="margin:0;padding:0;background:{CANVAS};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{preheader}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{CANVAS};">
   <tr><td align="center" style="padding:24px 12px;">
@@ -268,9 +268,9 @@ def render(
          percentage max-width does not resolve while a table is sized, so the
          email laid out 624px wide and Gmail on Android rewrote it ("Revert
          auto-sizing"), growing the text and nothing else (18 Oct 2026). -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%;">
       <tr><td class="e-card" style="background:#ffffff;border-radius:14px;overflow:hidden;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{SANS};color:{INK};line-height:1.5;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{SANS};color:{INK};line-height:1.5;-webkit-text-size-adjust:100%;text-size-adjust:100%;">
           {header_row}
           <tr><td class="e-body" style="padding:36px;">
             {body_html}
