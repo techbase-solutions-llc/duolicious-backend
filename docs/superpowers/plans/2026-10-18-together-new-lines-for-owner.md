@@ -2,6 +2,15 @@
 
 Linear: TEC-1845. For the owner to read before Together goes live (plan `2026-10-17-together-release-1.md`, Task 29 Step 3, Spec conflicts items 2 to 6, 9 and 18). Each line is in the code now, marked "Not in the export". Nothing launches on a line you have not read.
 
+## Decided by the owner, 19 Oct (built and deployed, Together still dark)
+
+- All 9 copy-pass proposals below were applied (web cc8fe22; the caption is in admin `together-launch` bc284ba).
+- On phones the join button reads "Find people like you". The full label stays on wider screens and as the accessible name.
+- A member opening their own invite link sees "This is your own link" and "Send it to the other person."
+- The checklist's ready email reads "{name} has finished the checklist. See where you agree." (API 3e51a94).
+
+Still open: the lines below that the copy pass kept, the Me archetype rule, the couple waiting delete wording, the checklist page's general description, and the email title images (brief 2026-10-19-email-titles-for-phones.md).
+
 ## The game
 
 Round intros (only "The feasts" was in the design):
