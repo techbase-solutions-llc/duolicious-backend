@@ -92,9 +92,6 @@ _HEADLINE = re.compile(r'<h[1-4]\b|font-size:\s*(2\d|[3-9]\d)px|\bfs(2\d|[3-9]\d
 # the owner's waiver. Remove a name when its email gets its title; the last
 # test below fails until you do.
 _AWAITING_TITLES = {
-    'account_deletion_pending', 'marriage_checklist_results',
-    'together_answered_game', 'together_ready_checklist', 'together_invite_game',
-    'together_invite_checklist', 'together_checklist_summary',
     # older templates baselined in test_email_templates_use_the_brand_shell.py
     'community_invite', 'new_features', 'profile_nudge', 'referral_community',
 }

@@ -36,7 +36,7 @@ _NOT_TEMPLATES = {'base.py', '__init__.py'}
 # is next redesigned, and a second test fails if a listed file turns out to be
 # clean, so the list cannot rot.
 _KNOWN_HAND_ROLLED = {
-    'community_invite.py', 'feedback.py', 'marriage_checklist.py',
+    'community_invite.py', 'feedback.py',
     'new_features.py', 'profile_nudge.py', 'referral_community.py',
     'waitlist_admin.py',
 }
@@ -214,7 +214,7 @@ def test_every_title_image_names_a_file_that_exists_in_both_variants():
     for path in _template_files():
         for light, dark in call.findall(path.read_text(encoding='utf-8')):
             for name in (light, dark):
-                # referral_intro.py cache-busts with "?v=2"; the file is the
+                # referral_intro.py cache-busts with "?v=3"; the file is the
                 # part before the query string.
                 if name.split('?', 1)[0] not in available:
                     missing.append(f'{path.name}: {name}')

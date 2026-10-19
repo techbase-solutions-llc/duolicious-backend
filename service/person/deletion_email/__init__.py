@@ -19,6 +19,7 @@ from emails.base import (
     INDIGO,
     MUTED,
     SANS,
+    title_image,
 )
 
 SITE = "https://ahavah.app"
@@ -32,7 +33,7 @@ def deletion_pending_template(name: str, purge_iso: str) -> str:
     body_html = f"""
 {chip("Account update")}
 
-<h1 class="e-title" style="margin:14px 0 18px;font-family:{SANS};font-size:30px;font-weight:800;letter-spacing:-0.01em;line-height:1.12;color:{INK};">Sorry to see you go</h1>
+{title_image("title-deletion.png", "title-deletion-wht.png", "Sorry to see you go.", 258)}
 
 <p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   Hi {safe_name},

@@ -3,7 +3,10 @@
   answered  "{name} has answered. See how you fit." to whoever finished an
             Us game first (together_answered_email, export 4.10); for a
             couple checklist "{name} has finished the checklist. See where
-            you agree." (together_ready_email; owner, 19 Oct 2026).
+            you agree." (together_ready_email; owner, 19 Oct 2026). Those are
+            the subjects; the body is the title image ("See how you fit." or
+            "See where you agree.") over "{name} has answered." or "{name}
+            has finished." (Email titles for phones, owner, 19 Oct 2026).
   summary   the checklist summary (emails/marriage_checklist.py, stored
             wording) to a checklist player once they have finished and
             saved (together_summary_email; owner decision 12).
@@ -26,7 +29,7 @@ import traceback
 from typing import Callable, Optional
 
 from antiabuse.antispam.signupemail import normalize_email
-from emails.base import INK, SANS, button, is_suppressed_send, render
+from emails.base import INK, MUTED, SANS, button, chip, is_suppressed_send, render, title_image
 from service.campaigns import campaign_unsubscribed, held, outbox
 from service.config import EMAIL_DOMAIN, WEB_BASE_URL
 from service.unsubscribe import make_url as unsub_url
@@ -38,14 +41,35 @@ UNSUB_SCOPE = 'notifications'
 FROM_ADDR = f'support@{EMAIL_DOMAIN}'
 REPLY_TO = 'support@ahavah.app'
 
-# Taken from the second player's start screens (export 4.5 and 6.4). The
-# game's line avoids 4.5's "hers": the app does not know the sender's
-# pronoun, so it uses the mode card's "Neither of you sees the other's
-# answers" (2.1). Proofed to the owner before together_invite_email is on.
-GAME_INVITE_LINE = ('About 2 minutes. No account needed. Neither of you sees the other’s '
-                    'answers. You both see the score.')
-CHECKLIST_INVITE_LINE = ('Your answers stay private until you have both finished. Then you each '
-                         'see where you agree and what to talk about.')
+# The invite email (Together follow-ups, section 3). The frame draws its
+# heading live in Ultra; display type in email is always a title image, so
+# the title is one ("How well do you fit?", "The marriage checklist.") and
+# the name moves into the line under it (Email titles for phones, owner,
+# 19 Oct 2026). The checklist keeps its own privacy line: it shows each
+# person's answers to the other once both finish, so the game's would be
+# untrue there.
+INVITE = {
+    'game': dict(title=('title-together-invite', 'How well do you fit?', 250),
+                 overline='How well do we fit?', lead='{name} invited you to play.',
+                 preheader='A 2 minute game from Ahavah. Neither of you sees the other’s answers.',
+                 line='A 2 minute game from Ahavah for people preparing for marriage. '
+                      'No account needed.',
+                 privacy='Neither of you sees the other’s answers. You both see the score.',
+                 button='Start the game'),
+    'checklist': dict(title=('title-checklist-invite', 'The marriage checklist.', 329),
+                      overline='The marriage checklist', lead='{name} invited you.',
+                      preheader='Answer on your own, then see where you agree.',
+                      line='A free checklist for couples preparing for marriage: Scripture, your '
+                           'own hopes and the hard questions.',
+                      privacy='Your answers stay private until you have both finished.',
+                      button='Start the checklist'),
+}
+# The answered email's title and the line under it. The subject stays the
+# whole sentence.
+ANSWERED = {
+    'game': (('title-together-answered', 'See how you fit.', 195), '{name} has answered.'),
+    'checklist': (('title-checklist-ready', 'See where you agree.', 248), '{name} has finished.'),
+}
 _PROOF_SESSION = '00000000-0000-0000-0000-000000000000'
 
 
@@ -58,9 +82,16 @@ def invite_url(invite_token: str) -> str:
     return f'{WEB_BASE_URL}/tools/i/{invite_token}'
 
 
-def _heading(text: str) -> str:
-    return (f'<h2 class="e-text" style="margin:0 0 22px;font-family:{SANS};font-size:22px;'
-            f'font-weight:800;line-height:1.3;color:{INK};">{text}</h2>')
+def _title(stem: str, alt: str, width: int) -> str:
+    """`width` is the image's natural CSS width (titles.json), so the title
+    keeps its size on a phone instead of shrinking to fit."""
+    return title_image(f'{stem}.png', f'{stem}-wht.png', alt, width)
+
+
+def _lead(text: str) -> str:
+    """The line under the title that carries the name: body size, bold."""
+    return (f'<p class="e-strong" style="margin:0 0 18px;font-family:{SANS};font-size:17px;'
+            f'font-weight:700;line-height:1.55;color:{INK};">{text}</p>')
 
 
 def answered_subject(name: str, kind: str = 'game') -> str:
@@ -75,7 +106,8 @@ def answered_html(name: str, cta: str, unsubscribe_url: str, seat: str = 'owner'
     n = html.escape(name)
     why = (f'You get this because you invited {n} from ahavah.app/together.' if seat == 'owner'
            else f'You get this because {n} invited you from ahavah.app/together.')
-    body = _heading(html.escape(answered_subject(name, kind))) + button('See your comparison', cta)
+    title, lead = ANSWERED['checklist' if kind == 'checklist' else 'game']
+    body = _title(*title) + _lead(lead.format(name=n)) + button('See your comparison', cta)
     return render(title=html.escape(answered_subject(name, kind)),
                   preheader=f'{n} has finished the checklist.' if kind == 'checklist' else f'{n} has answered.',
                   body_html=body, footer_html=held.footer(why, unsubscribe_url))
@@ -88,20 +120,25 @@ def invite_subject(kind: str) -> str:
             else 'You are invited to the Ahavah marriage checklist')
 
 
-def invite_heading(kind: str, name: str) -> str:
-    return (f'{name} wants to see how well you fit' if kind == 'game'
-            else f'{name} invited you to the Ahavah marriage checklist')
-
-
 def invite_html(kind: str, name: str, cta: str) -> str:
     n = html.escape(name)
-    line = GAME_INVITE_LINE if kind == 'game' else CHECKLIST_INVITE_LINE
-    body = (_heading(html.escape(invite_heading(kind, name))) + held.para(line)
-            + button('Start', cta))
+    m = INVITE['game' if kind == 'game' else 'checklist']
+    body = (chip(m['overline']) + _title(*m['title']) + _lead(m['lead'].format(name=n))
+            + held.para(m['line']) + held.para(m['privacy'], size=15, bottom=26, muted=True)
+            + button(m['button'], cta)
+            + f'<p class="e-text" style="margin:14px 0 0;font-family:{SANS};font-size:13px;'
+              f'line-height:1.55;color:{MUTED};">We have not added you to any list.</p>')
+    link = f'color:{MUTED};font-weight:600;text-decoration:underline;'
     footer = ('Ahavah &middot; Matchmaking for Torah-observant believers.<br/>'
-              f'You get this because {n} sent you a link from ahavah.app/together. '
-              'We have not added you to any list.')
-    return render(title=html.escape(invite_subject(kind)), preheader=html.escape(line),
+              f'You’re receiving this because {n} asked us to send you this invite.'
+              '<div style="margin-top:14px;">'
+              f'<a href="https://ahavah.app/faq" style="{link}">Help</a>'
+              '&nbsp;&nbsp;&middot;&nbsp;&nbsp;'
+              f'<a href="https://ahavah.app/privacy" style="{link}">Privacy</a>'
+              '&nbsp;&nbsp;&middot;&nbsp;&nbsp;'
+              f'<a href="https://ahavah.app/terms" style="{link}">Terms</a>'
+              '</div>')
+    return render(title=html.escape(invite_subject(kind)), preheader=html.escape(m['preheader']),
                   body_html=body, footer_html=footer)
 
 

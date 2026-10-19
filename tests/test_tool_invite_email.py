@@ -97,7 +97,7 @@ def test_one_invite_goes_with_the_players_name_and_link(client, tool_visitor, ou
     [msg] = outbox['sent']
     assert msg['to'] == 'rivka@ahavah-test.invalid'
     assert msg['subject'] == 'You are invited to play Together on Ahavah'
-    assert 'Daniel wants to see how well you fit' in msg['html']
+    assert 'Daniel invited you to play.' in msg['html'] and 'title-together-invite' in msg['html']
     assert f'/tools/i/{invite}' in msg['html'] and 'You both see the score.' in msg['html']
     assert _count(sid) == 1
     assert outbox['asked'][0]['stamp'] == 'stamp-1' and outbox['asked'][0]['email'] == 'rivka@ahavah-test.invalid'
@@ -125,7 +125,7 @@ def test_the_checklist_invite_names_the_checklist(client, tool_visitor, outbox):
     _send(client, sid, token, headers)
     [msg] = outbox['sent']
     assert msg['subject'] == 'You are invited to the Ahavah marriage checklist'
-    assert 'Daniel invited you to the Ahavah marriage checklist' in msg['html']
+    assert 'Daniel invited you.' in msg['html'] and 'title-checklist-invite' in msg['html']
     assert 'Your answers stay private until you have both finished.' in msg['html']
     assert f'/tools/i/{invite}' in msg['html']
 
@@ -144,7 +144,7 @@ def test_the_typed_name_stays_out_of_the_subject(client, tool_visitor, outbox):
     _send(client, sid, token, headers)
     [msg] = outbox['sent']
     assert 'prize' not in msg['subject']
-    assert 'Win a prize &amp; more wants to see how well you fit' in msg['html']
+    assert 'Win a prize &amp; more invited you to play.' in msg['html']
 
 
 def test_a_suppressed_address_is_sent_nothing(monkeypatch):

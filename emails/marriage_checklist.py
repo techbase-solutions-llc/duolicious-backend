@@ -25,6 +25,7 @@ from emails.base import (
     INDIGO,
     MUTED,
     SANS,
+    title_image,
 )
 
 SITE = "https://ahavah.app"
@@ -131,7 +132,7 @@ def checklist_results_html(role: str | None, answers: list[dict], stored: bool =
     body_html = f"""
 {chip("Marriage Checklist")}
 
-<h1 class="e-title" style="margin:16px 0 12px;font-family:{SANS};font-size:30px;font-weight:800;letter-spacing:-0.02em;line-height:1.1;color:{INK};">What matters most to you<span style="color:{INDIGO};">.</span></h1>
+{title_image("title-checklist-summary.png", "title-checklist-summary-wht.png", "What matters most to you.", 328)}
 
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK_SOFT};">{lede}</p>
 
