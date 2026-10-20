@@ -39,6 +39,7 @@ from service.hard_delete import (
     Q_DELETE_LEADS_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
 )
@@ -48,7 +49,7 @@ from service.referrals import Q_FORGET_CLICK_INVITER, Q_PURGE_REFERRALS_OF
 # ----- helpers -------------------------------------------------------------
 
 _Q_PERSON_BY_UUID = """
-    SELECT id, email, COALESCE(roles, ARRAY[]::text[]) AS roles
+    SELECT id, uuid::text AS uuid, email, COALESCE(roles, ARRAY[]::text[]) AS roles
       FROM person WHERE uuid = %(uuid)s::uuid
 """
 
@@ -313,6 +314,11 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         person_ids = [int(row['id'])]
         tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
         tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
+        # Unmatch (TEC-1845): both sides of any held conversation, before the
+        # cascade, as the deletion cron does. Bound with the stored uuid, not
+        # the path: ::uuid finds a uuid typed without hyphens or in capitals,
+        # and the held rows name the person by its canonical text.
+        tx.execute(Q_PURGE_HELD_MESSAGES_OF, dict(ids=person_ids, uuids=[row['uuid']]))
         # Together (TEC-1845), before the person delete: a guest's seat
         # cascades off person, and the shared game is found by it.
         tx.execute(Q_DELETE_TOOL_DATA_OF, dict(

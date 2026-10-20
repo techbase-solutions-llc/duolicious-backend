@@ -7,7 +7,8 @@ day after its confirm link lapsed: anyone can type an address into a form,
 and anyone retyping it moves last_seen_at, so only created_at counts for
 it. Mail queued for a deleted lead goes with it (email_outbox.lead_id
 cascades). The feature plans add their own tables' sweeps here (tool
-sessions, RSVPs, alerts), on the same clock. Daily.
+sessions, RSVPs, alerts), on the same clock. Unmatched conversations are
+held 30 days for a report, then deleted here (TEC-1845). Daily.
 """
 from __future__ import annotations
 
@@ -34,15 +35,20 @@ def purge_stale_leads(tx) -> int:
 
 
 def _purge_once() -> None:
+    from service.decisions.unmatch import HOLD_DAYS, purge_held_messages
     from service.tools.retention import purge_stale_tool_sessions
     with api_tx() as tx:
         n = purge_stale_leads(tx)
         n_tools = purge_stale_tool_sessions(tx)
+        n_held = purge_held_messages(tx)
     if n:
         print(f'lead_retention: {n} lead(s) deleted after {RETENTION_DAYS} days without a visit')
     if n_tools:
         print(f'lead_retention: {n_tools} Together session(s) deleted (12 months without a visit, '
               f'30 days unsaved, or 30 days after a delete)')
+    if n_held:
+        print(f'lead_retention: {n_held} held message(s) of unmatched conversations deleted '
+              f'after {HOLD_DAYS} days')
 
 
 async def lead_retention_forever() -> None:

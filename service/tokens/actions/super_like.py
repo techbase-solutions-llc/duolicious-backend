@@ -24,6 +24,16 @@ from service.decisions.locking import lock_like_members
 COST = 2
 
 
+class NotAvailable(Exception):
+    """The two are unmatched (TEC-1845, migration 0070). Raised before the
+    debit, so nothing is charged; the route answers 404."""
+
+
+_Q_UNMATCHED = """
+  SELECT is_unmatched_pair(%(a)s, %(b)s) AS unmatched
+"""
+
+
 _Q_RESOLVE_UUID_TO_ID = """
   SELECT id FROM person WHERE uuid = %(uuid)s::uuid
 """
@@ -85,6 +95,11 @@ def perform(tx, viewer_uuid: Union[UUID, str], target_uuid: Union[UUID, str]) ->
     viewer_id = viewer_row['id']
     target_id = target_row['id']
     lock_like_members(tx, viewer_id, str(target_uuid))
+
+    # Both likes outlive an unmatch, so without this a super-like would make
+    # the match again and charge for it. After the lock, before the debit.
+    if tx.execute(_Q_UNMATCHED, dict(a=viewer_id, b=target_id)).fetchone()['unmatched']:
+        raise NotAvailable()
 
     debit(
         tx, str(viewer_uuid), COST,

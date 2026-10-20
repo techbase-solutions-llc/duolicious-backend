@@ -666,6 +666,19 @@ def post_take_back_like(req: t.PostTakeBackLike, s: t.SessionInfo):
     discover deck. 404 when there's nothing to take back."""
     return decisions.take_back_like(req, s)
 
+# Unmatch (TEC-1845, migration 0070): the chat menu's Unmatch, and the people
+# a member is unmatched from, so the web can drop those conversations from
+# the device's own cache. See service/decisions/unmatch.py.
+@apost('/unmatch/by-uuid/<prospect_uuid>')
+def post_unmatch_by_uuid(s: t.SessionInfo, prospect_uuid: str):
+    from service.decisions.unmatch import unmatch
+    return unmatch(s, prospect_uuid)
+
+@aget('/unmatched')
+def get_unmatched(s: t.SessionInfo):
+    from service.decisions.unmatch import unmatched_people
+    return unmatched_people(s)
+
 @apost('/inbox-info')
 @validate(t.PostInboxInfo)
 def post_inbox_info(req: t.PostInboxInfo, s: t.SessionInfo):
@@ -1112,7 +1125,10 @@ def post_tokens_day_pass(s: t.SessionInfo):
 # liked.is_super=TRUE; if the target had previously liked the viewer
 # (mutual), also creates an ahavah_match row and returns its match_id
 # so the frontend can navigate straight into the match-celebration view.
-from service.tokens.actions.super_like import perform as _perform_super_like
+from service.tokens.actions.super_like import (
+    perform as _perform_super_like,
+    NotAvailable as _SuperLikeNotAvailable,
+)
 
 @apost('/tokens/super-like')
 def post_tokens_super_like(s: t.SessionInfo):
@@ -1126,6 +1142,8 @@ def post_tokens_super_like(s: t.SessionInfo):
             return _perform_super_like(tx, s.person_uuid, target_id)
     except _InsufficientTokens:
         return {'error': 'insufficient_tokens'}, 402
+    except _SuperLikeNotAvailable:
+        return {'error': 'not_available'}, 404
 
 
 @apost('/tokens/see-passes')

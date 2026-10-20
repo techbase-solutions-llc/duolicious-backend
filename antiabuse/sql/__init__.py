@@ -2,31 +2,38 @@ from service.config import API_BASE_URL, USER_IMAGES_BASE_URL
 
 
 Q_LAST_MESSAGES = """
-WITH last_messages AS (
+WITH archive AS (
+    SELECT mam_message.id, mam_message.direction, mam_message.message,
+           mam_message.search_body
+      FROM mam_message
+      JOIN person
+        ON person.id = mam_message.person_id
+       AND person.uuid = %(subject_uuid)s
+     WHERE mam_message.remote_bare_jid IN (%(subject_uuid)s::TEXT, %(object_uuid)s::TEXT)
+    UNION ALL
+    -- An unmatched conversation (TEC-1845, migration 0070) is held out of
+    -- sight for exactly this: a report made after the unmatch.
+    SELECT unmatched_message.id, unmatched_message.direction, unmatched_message.message,
+           unmatched_message.search_body
+      FROM unmatched_message
+      JOIN person
+        ON person.id = unmatched_message.person_id
+       AND person.uuid = %(subject_uuid)s
+     WHERE unmatched_message.remote_bare_jid IN (%(subject_uuid)s::TEXT, %(object_uuid)s::TEXT)
+), last_messages AS (
     SELECT
-        mam_message.id AS id,
+        id,
         CASE
-        WHEN mam_message.direction = 'O'
+        WHEN direction = 'O'
             THEN 'reporter'
             ELSE 'accused'
         END AS sent_by,
         message,
         search_body
     FROM
-        mam_message
-    JOIN
-        person
-    ON
-        person.id = mam_message.person_id
-    AND
-        person.uuid = %(subject_uuid)s
-    WHERE
-        mam_message.remote_bare_jid IN (
-            %(subject_uuid)s::TEXT,
-            %(object_uuid)s::TEXT
-        )
+        archive
     ORDER BY
-        mam_message.id DESC
+        id DESC
     LIMIT 25
 )
 SELECT

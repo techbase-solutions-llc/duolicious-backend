@@ -23,7 +23,7 @@ import redis as _redis
 import duotypes as t
 from service.api.decorators import aget, apost
 from database import api_tx
-from service.reactions import toggle, list_for_conversation, UnknownPeer
+from service.reactions import toggle, list_for_conversation, NotAllowed, UnknownPeer
 
 XMPP_DOMAIN = 'ahavah.app'
 
@@ -76,13 +76,16 @@ def post_message_reaction(s: t.SessionInfo, stanza_id: str):
     if kind != 'heart':
         return {'error': 'unsupported_kind'}, 400
     try:
-        with api_tx() as tx:
+        # READ COMMITTED: toggle waits on a racing unmatch, then must see it.
+        with api_tx('READ COMMITTED') as tx:
             result = toggle(
                 tx, s.person_uuid, s.person_id, peer_uuid, kind,
                 stanza_id=stanza_id,
             )
     except UnknownPeer:
         return {'error': 'unknown_peer'}, 400
+    except NotAllowed:
+        return {'error': 'not_allowed'}, 403
 
     _publish_reaction(
         reactor_uuid=s.person_uuid,

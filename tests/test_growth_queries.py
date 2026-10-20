@@ -203,3 +203,30 @@ def test_a_staff_account_is_not_a_newcomer(make_person):
     assert matched_after == matched - 1
     assert everyone_after == everyone - 1
     assert women_after == women - 1
+
+
+def test_an_ended_match_still_counts_as_a_match(make_person):
+    """An unmatch (TEC-1845, migration 0070) deletes the match row and keeps
+    when it was made, so Matches still counts it. One snapshot, as in
+    test_totals_and_by_gender_exclude_test_accounts, so only this test's
+    rows can move the figures."""
+    a = make_person(name='EndedA', gender='Woman')
+    b = make_person(name='EndedB', gender='Man')
+    pair = dict(a=a['id'], b=b['id'])
+    with api_tx() as tx:
+        made = tx.execute(
+            """INSERT INTO ahavah_match (user_a_id, user_b_id)
+               VALUES (LEAST(%(a)s, %(b)s), GREATEST(%(a)s, %(b)s)) RETURNING created_at""",
+            pair).fetchone()['created_at']
+        before = growth_stats(tx)
+        tx.execute(
+            """DELETE FROM ahavah_match
+                WHERE user_a_id = LEAST(%(a)s, %(b)s) AND user_b_id = GREATEST(%(a)s, %(b)s)""", pair)
+        tx.execute(
+            """INSERT INTO unmatched_pair (user_a_id, user_b_id, unmatched_by, matched_at)
+               VALUES (LEAST(%(a)s, %(b)s), GREATEST(%(a)s, %(b)s), %(a)s, %(t)s)""",
+            dict(pair, t=made))
+        after = growth_stats(tx)
+
+    assert after['matches'] == before['matches']
+    assert after['matches_30d'] == before['matches_30d']

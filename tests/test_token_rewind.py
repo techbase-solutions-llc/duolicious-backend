@@ -138,3 +138,101 @@ def test_rewind_insufficient_tokens_keeps_skip(pair):
         # Debit raises before the deletes, so the skip survives.
         assert _skip_exists(tx, me, prospect)
         assert get_balance(tx, me['uuid']) == 0
+
+
+# A report is permanent (migration 0035): a rewind undoes a pass, never a
+# report, from either side of the pair, and spends nothing when refused.
+
+def _report(tx, subject, obj):
+    tx.execute(
+        "INSERT INTO skipped (subject_person_id, object_person_id, "
+        "reported, report_reason) VALUES (%(s)s, %(o)s, TRUE, 'test') "
+        "ON CONFLICT (subject_person_id, object_person_id) "
+        "DO UPDATE SET reported = TRUE, report_reason = 'test'",
+        dict(s=subject['id'], o=obj['id']),
+    )
+
+
+def _is_reported(tx, subject, obj) -> bool:
+    return bool(tx.execute(
+        "SELECT 1 FROM skipped WHERE subject_person_id = %(s)s "
+        "AND object_person_id = %(o)s AND reported",
+        dict(s=subject['id'], o=obj['id']),
+    ).fetchone())
+
+
+def test_rewind_never_undoes_my_own_report(pair):
+    from database import api_tx
+    me, prospect = pair['me'], pair['prospect']
+    with api_tx() as tx:
+        credit(tx, me['uuid'], 5, reason='purchase', metadata={})
+        _report(tx, me, prospect)
+        _cache_row(tx, me, prospect)
+        with pytest.raises(NothingToRewind):
+            perform_rewind(tx, me['uuid'], me['id'], prospect['uuid'])
+        assert _is_reported(tx, me, prospect)
+        assert get_balance(tx, me['uuid']) == 5
+
+
+def test_rewind_never_undoes_a_pass_i_later_reported(pair):
+    """A pass escalated to a report is the same row, now reported."""
+    from database import api_tx
+    me, prospect = pair['me'], pair['prospect']
+    with api_tx() as tx:
+        credit(tx, me['uuid'], 5, reason='purchase', metadata={})
+        _skip(tx, me, prospect)
+        _report(tx, me, prospect)
+        with pytest.raises(NothingToRewind):
+            perform_rewind(tx, me['uuid'], me['id'], prospect['uuid'])
+        assert _is_reported(tx, me, prospect)
+        assert get_balance(tx, me['uuid']) == 5
+
+
+def test_rewind_refused_when_they_reported_me(pair):
+    """My pass of someone who reported me: the report hides the pair for
+    good, so a rewind could not bring them back. Refused before the debit,
+    and both rows stay."""
+    from database import api_tx
+    me, prospect = pair['me'], pair['prospect']
+    with api_tx() as tx:
+        credit(tx, me['uuid'], 5, reason='purchase', metadata={})
+        _skip(tx, me, prospect)
+        _report(tx, prospect, me)
+        with pytest.raises(NothingToRewind):
+            perform_rewind(tx, me['uuid'], me['id'], prospect['uuid'])
+        assert _skip_exists(tx, me, prospect)
+        assert _is_reported(tx, prospect, me)
+        assert get_balance(tx, me['uuid']) == 5
+
+
+def test_reported_person_cannot_rewind_the_report_against_them(pair):
+    """The reported person has no pass of their own: nothing to rewind,
+    and the reporter's row is untouched."""
+    from database import api_tx
+    me, prospect = pair['me'], pair['prospect']
+    with api_tx() as tx:
+        credit(tx, prospect['uuid'], 5, reason='purchase', metadata={})
+        _report(tx, me, prospect)
+        with pytest.raises(NothingToRewind):
+            perform_rewind(tx, prospect['uuid'], prospect['id'], me['uuid'])
+        assert _is_reported(tx, me, prospect)
+        assert get_balance(tx, prospect['uuid']) == 5
+
+
+def test_rewind_route_refuses_a_report(pair, client, sign_in):
+    """POST /tokens/rewind answers 409 nothing_to_rewind for a report,
+    the same answer as no pass at all, and spends nothing."""
+    from database import api_tx
+    me, prospect = pair['me'], pair['prospect']
+    with api_tx() as tx:
+        credit(tx, me['uuid'], 5, reason='purchase', metadata={})
+        _report(tx, me, prospect)
+    res = client.post(
+        '/tokens/rewind', headers=sign_in(me),
+        json={'profile_uuid': prospect['uuid']},
+    )
+    assert res.status_code == 409
+    assert res.get_json() == {'error': 'nothing_to_rewind'}
+    with api_tx() as tx:
+        assert _is_reported(tx, me, prospect)
+        assert get_balance(tx, me['uuid']) == 5

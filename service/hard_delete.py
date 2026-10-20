@@ -25,6 +25,23 @@ Q_STAGE_AUDIO_FOR_REMOVAL = """
     ON CONFLICT DO NOTHING
 """
 
+# Unmatch (TEC-1845, migration 0070): a held conversation, both sides. The
+# leaver's copies would cascade, but the other person's copies name the
+# leaver only by uuid, and a cascade loses the voice note uuids the CDN
+# cleaner reads. The caller binds `ids` (person ids) and `uuids` (their
+# uuids, lower case). Runs BEFORE the person delete.
+Q_PURGE_HELD_MESSAGES_OF = """
+    WITH gone AS (
+        DELETE FROM unmatched_message
+         WHERE person_id = ANY(%(ids)s::int[])
+            OR split_part(remote_bare_jid, '@', 1) = ANY(%(uuids)s::text[])
+        RETURNING audio_uuid
+    )
+    INSERT INTO undeleted_audio (uuid)
+    SELECT DISTINCT audio_uuid FROM gone WHERE audio_uuid IS NOT NULL
+    ON CONFLICT DO NOTHING
+"""
+
 # Tables with no cascading key to person (audit Privacy #1, #2).
 
 # inbox: the chat server's last-message store, keyed on the member's JID

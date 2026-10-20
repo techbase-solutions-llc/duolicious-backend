@@ -136,23 +136,63 @@ def _push_chat_message(from_id: int, to_id: int, body: str, is_audio: bool):
     )
 
 
+# Unmatch (TEC-1845, migration 0070). The chat gate caches "matched" for 5
+# seconds (service/chat/chatutil), so a message sent as the other person
+# unmatches can pass it. It is never stored, or the conversation would come
+# back in both archives and both inboxes. FOR KEY SHARE, in id order as the
+# like lock takes them, waits for an unmatch in progress (it holds both
+# people FOR UPDATE, service/decisions/locking.py) and lets the check below
+# see it, without waiting on ordinary updates to the person row.
+_Q_LOCK_PEOPLE = """
+    SELECT id FROM person WHERE id = ANY(%(ids)s::int[]) ORDER BY id FOR KEY SHARE
+"""
+
+_Q_UNMATCHED_PAIRS = """
+    SELECT pair.a, pair.b
+      FROM unnest(%(a)s::int[], %(b)s::int[]) AS pair(a, b)
+     WHERE is_unmatched_pair(pair.a, pair.b)
+"""
+
+# The store callback still uploads a dropped voice note (its live delivery,
+# decision 8 of the plan), and no message would ever name that file again,
+# so it goes to the CDN cleaner's queue as the unmatch sends the held ones.
+_Q_FORGET_AUDIO = """
+    INSERT INTO undeleted_audio (uuid)
+    SELECT DISTINCT unnest(%(uuids)s::text[])
+    ON CONFLICT DO NOTHING
+"""
+
+
+def _without_unmatched(tx, batch: list[StoreMessageJob]) -> list[StoreMessageJob]:
+    pairs = [(job.messaged_job.from_id, job.messaged_job.to_id) for job in batch]
+    tx.execute(_Q_LOCK_PEOPLE, dict(ids=sorted({i for pair in pairs for i in pair}))).fetchall()
+    gone = {
+        (r['a'], r['b'])
+        for r in tx.execute(_Q_UNMATCHED_PAIRS, dict(
+            a=[a for a, _ in pairs], b=[b for _, b in pairs])).fetchall()
+    }
+    audio = [
+        job.store_mam_message_job.audio_uuid
+        for job, pair in zip(batch, pairs)
+        if pair in gone and job.store_mam_message_job.audio_uuid
+    ]
+    if audio:
+        tx.execute(_Q_FORGET_AUDIO, dict(uuids=audio))
+    return [job for job, pair in zip(batch, pairs) if pair not in gone]
+
+
 def _process_store_message_batch(batch: list[StoreMessageJob]):
-    store_mam_message_jobs = [
-            job.store_mam_message_job
-            for job in batch]
-
-    upsert_conversation_jobs = [
-            job.upsert_conversation_job
-            for job in batch]
-
-    messaged_jobs = [
-            job.messaged_job
-            for job in batch]
-
     with api_tx('read committed') as tx:
-        process_store_mam_message_batch(tx, store_mam_message_jobs)
-        process_upsert_conversation_batch(tx, upsert_conversation_jobs)
-        process_set_messaged_batch(tx, messaged_jobs)
+        batch = _without_unmatched(tx, batch)
+        if not batch:
+            return
+
+        process_store_mam_message_batch(
+            tx, [job.store_mam_message_job for job in batch])
+        process_upsert_conversation_batch(
+            tx, [job.upsert_conversation_job for job in batch])
+        process_set_messaged_batch(
+            tx, [job.messaged_job for job in batch])
 
 
 _store_message_batcher = Batcher[StoreMessageJob](
