@@ -23,6 +23,7 @@ from service.hard_delete import (
     Q_DELETE_LEADS_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
 )
@@ -143,6 +144,9 @@ async def hard_delete_expired_once():
             # (service/hard_delete).
             await tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
             await tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
+            # Unmatch (TEC-1845): both sides of any held conversation.
+            await tx.execute(Q_PURGE_HELD_MESSAGES_OF,
+                             dict(ids=person_ids, uuids=[str(u).lower() for u in uuids]))
 
             # F12 (0037 regression): referral emails have no FK anymore;
             # purge both directions so deleted members' addresses do not

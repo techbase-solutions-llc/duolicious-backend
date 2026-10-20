@@ -39,6 +39,7 @@ from service.hard_delete import (
     Q_DELETE_LEADS_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
 )
@@ -313,6 +314,9 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         person_ids = [int(row['id'])]
         tx.execute(Q_STAGE_PHOTOS_FOR_REMOVAL, dict(ids=person_ids))
         tx.execute(Q_STAGE_AUDIO_FOR_REMOVAL, dict(ids=person_ids))
+        # Unmatch (TEC-1845): both sides of any held conversation, before the
+        # cascade, as the deletion cron does.
+        tx.execute(Q_PURGE_HELD_MESSAGES_OF, dict(ids=person_ids, uuids=[uuid.lower()]))
         # Together (TEC-1845), before the person delete: a guest's seat
         # cascades off person, and the shared game is found by it.
         tx.execute(Q_DELETE_TOOL_DATA_OF, dict(
