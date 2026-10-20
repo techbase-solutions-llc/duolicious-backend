@@ -219,6 +219,13 @@ _STYLE = f"""
     .e-title-light {{ display:none !important; }}
     .e-title-dark  {{ display:block !important; }}
   }}
+  /* Phone padding is inline (22px at the sides, as the design's phone frame);
+     wider screens get the design's 36px back (owner, 19 Oct 2026). */
+  @media (min-width:621px) {{
+    .e-head {{ padding:30px 36px 24px !important; }}
+    .e-body {{ padding:36px !important; }}
+    .e-foot {{ padding:28px 36px !important; }}
+  }}
   .e-logo-dark {{ display:none; }}
   .e-title-dark {{ display:none; }}
 """
@@ -262,10 +269,13 @@ def _phone_type_sizes(fragment: str) -> tuple[str, set[int]]:
     return _SIZED_TAG.sub(one, fragment), sizes
 
 
+_MSO_PADDING = '.e-head{padding:30px 36px 24px !important;}.e-body{padding:36px !important;}.e-foot{padding:28px 36px !important;}'
+
+
 def _desktop_type_css(sizes: set[int]) -> tuple[str, str]:
     rules = ''.join(f'.fs{px}{{font-size:{px}px !important;}}' for px in sorted(sizes))
     return (f'@media (min-width:621px) {{ {rules} }}' if rules else '',
-            f'<!--[if mso]><style>{rules}</style><![endif]-->' if rules else '')
+            f'<!--[if mso]><style>{rules}{_MSO_PADDING}</style><![endif]-->' if rules else f'<!--[if mso]><style>{_MSO_PADDING}</style><![endif]-->')
 
 
 def render(
@@ -284,7 +294,7 @@ def render(
         # (invisible wordmark). A dark band survives both Gmail modes and
         # needs no light/dark image swap (Gmail ignores the <style> swap
         # anyway).
-        header_row = f"""<tr><td class="e-head" bgcolor="#1A1340" style="padding:30px 36px 24px;background:#1A1340;">
+        header_row = f"""<tr><td class="e-head" bgcolor="#1A1340" style="padding:24px 22px 20px;background:#1A1340;">
         <img src="{LOGO_WHITE_URL}" alt="Ahavah" height="40" style="height:40px;width:auto;display:block;border:0;outline:none;text-decoration:none;"/>
       </td></tr>"""
     else:
@@ -317,10 +327,10 @@ def render(
       <tr><td class="e-card" style="background:#ffffff;border-radius:14px;overflow:hidden;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{SANS};color:{INK};line-height:1.5;-webkit-text-size-adjust:100%;text-size-adjust:100%;">
           {header_row}
-          <tr><td class="e-body" style="padding:36px;">
+          <tr><td class="e-body" style="padding:28px 22px;">
             {body_html}
           </td></tr>
-          <tr><td class="e-foot" style="padding:28px 36px;background:{PANEL};border-top:1px solid rgba(15,11,31,0.06);font-family:{SANS};font-size:13px;line-height:1.55;color:{MUTED};text-align:center;">
+          <tr><td class="e-foot" style="padding:24px 22px;background:{PANEL};border-top:1px solid rgba(15,11,31,0.06);font-family:{SANS};font-size:13px;line-height:1.55;color:{MUTED};text-align:center;">
             {footer_html}
           </td></tr>
         </table>

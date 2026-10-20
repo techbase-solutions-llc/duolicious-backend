@@ -141,3 +141,19 @@ def test_no_phone_text_below_the_floor(sample):
     body = sample['html'].split('</head>', 1)[1]
     small = [int(px) for px in re.findall(r'font-size:\s*(\d+)px', body) if int(px) < 10]
     assert not small, f"{sample['name']} has text below 10px on a phone: {sorted(set(small))}"
+
+
+def test_phone_padding_is_22px_and_wider_screens_get_36px_back():
+    # Owner, 19 Oct 2026: the design's phone frame uses 22px at the sides, so
+    # the widest titles (329px) keep their full size on a 375px phone.
+    html = next(x for x in SAMPLES if x['name'] == 'questions_launch')['html']
+    assert 'class="e-body" style="padding:28px 22px;' in html
+    assert '.e-body {{ padding:36px !important; }}'.replace('{{', '{').replace('}}', '}') in html
+    assert '.e-body{padding:36px !important;}' in html  # desktop Outlook
+
+
+def test_the_checklist_invite_has_no_label_repeating_its_title():
+    html = next(x for x in SAMPLES if x['name'] == 'together_invite_checklist')['html']
+    assert not re.search(r'class="[^"]*\be-chip\b', html)
+    game = next(x for x in SAMPLES if x['name'] == 'together_invite_game')['html']
+    assert re.search(r'class="[^"]*\be-chip\b', game)

@@ -57,7 +57,7 @@ INVITE = {
                  privacy='Neither of you sees the other’s answers. You both see the score.',
                  button='Start the game'),
     'checklist': dict(title=('title-checklist-invite', 'The marriage checklist.', 329),
-                      overline='The marriage checklist', lead='{name} invited you.',
+                      overline=None, lead='{name} invited you.',  # no label: it repeated the title (owner, 19 Oct)
                       preheader='Answer on your own, then see where you agree.',
                       line='A free checklist for couples preparing for marriage: Scripture, your '
                            'own hopes and the hard questions.',
@@ -123,7 +123,7 @@ def invite_subject(kind: str) -> str:
 def invite_html(kind: str, name: str, cta: str) -> str:
     n = html.escape(name)
     m = INVITE['game' if kind == 'game' else 'checklist']
-    body = (chip(m['overline']) + _title(*m['title']) + _lead(m['lead'].format(name=n))
+    body = ((chip(m['overline']) if m['overline'] else '') + _title(*m['title']) + _lead(m['lead'].format(name=n))
             + held.para(m['line']) + held.para(m['privacy'], size=15, bottom=26, muted=True)
             + button(m['button'], cta)
             + f'<p class="e-text" style="margin:14px 0 0;font-family:{SANS};font-size:13px;'
