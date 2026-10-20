@@ -845,3 +845,38 @@ def tool_visitor():
             tx.execute('DELETE FROM duo_session WHERE email = %(e)s', dict(e=address))
             tx.execute('DELETE FROM onboardee WHERE email = %(e)s', dict(e=address))
             tx.execute('DELETE FROM lead WHERE email = %(e)s', dict(e=address))
+
+
+# ---------------------------------------------------------------------------
+# Unmatch (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0070 is idempotent, so applying it here is what the deploy does.
+# Autouse: from 0070 on, is_blocked_pair and is_deck_suppressed read
+# unmatched_pair, and every visibility query in the API calls one of them.
+
+@pytest.fixture(scope='session', autouse=True)
+def unmatch_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0070_unmatch.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
+# unmatch_pair: two members with their sign-in headers. The inbox has no key
+# to person, so the inbox rows a test wrote for them are deleted afterwards;
+# everything else keyed to them goes with make_person's delete.
+
+@pytest.fixture
+def unmatch_pair(make_person, sign_in):
+    from types import SimpleNamespace
+
+    from database import api_tx
+
+    a = make_person(name='Hadassah', gender='Woman')
+    b = make_person(name='Samuel', gender='Man')
+    yield SimpleNamespace(a=a, b=b, a_headers=sign_in(a), b_headers=sign_in(b))
+    with api_tx() as tx:
+        tx.execute('DELETE FROM inbox WHERE luser = ANY(%(u)s)', dict(u=[a['uuid'], b['uuid']]))
