@@ -1,7 +1,12 @@
 """Spend 1 token to undo the last pass (skip) and re-show a profile.
 
 Scope: passes only. Likes are not rewindable (a like may have created a
-match + sent a push). The /profile/tokens copy says "Undo your last pass
+match + sent a push). A report is never rewindable: it is permanent
+(migration 0035), so a rewind refuses, before any debit, when the caller
+reported the prospect (including a pass later escalated to a report, the
+same row) and when the prospect reported the caller, since the report
+hides the pair for good and the token would buy nothing. The check asks
+is_blocked_pair, so anything that predicate later covers is refused too. The /profile/tokens copy says "Undo your last pass
 and reconsider." Caller owns the transaction so the debit + the skip
 deletion commit atomically (rolled back together if the debit raises
 InsufficientTokens).
@@ -13,9 +18,12 @@ COST = 1
 
 
 class NothingToRewind(Exception):
-    """Raised when there is no skip to undo for (me, prospect)."""
+    """Raised when there is no pass to undo for (me, prospect), or a
+    report stands between them."""
 
 
+# The caller's own pass, and only when no report stands between the pair
+# in either direction.
 _Q_SKIP_EXISTS = """
   SELECT 1
     FROM skipped s
@@ -23,15 +31,20 @@ _Q_SKIP_EXISTS = """
      AND s.object_person_id = (
        SELECT id FROM person WHERE uuid = uuid_or_null(%(prospect_uuid)s)
      )
+     AND NOT s.reported
+     AND NOT is_blocked_pair(s.subject_person_id, s.object_person_id)
    LIMIT 1
 """
 
+# NOT reported again here, so the delete can never remove a report even
+# if the check above changes.
 _Q_DELETE_SKIP = """
   DELETE FROM skipped
    WHERE subject_person_id = %(me_id)s
      AND object_person_id = (
        SELECT id FROM person WHERE uuid = uuid_or_null(%(prospect_uuid)s)
      )
+     AND NOT reported
 """
 
 # The paid-back profile must reappear inside the CURRENT cached deck
@@ -51,9 +64,10 @@ def perform(tx, person_uuid: str, person_id: int, prospect_uuid: str) -> dict:
     """Debit COST tokens and delete the skip for the prospect.
 
     Raises:
-        NothingToRewind  if no skip exists for (me, prospect) — caller maps
-                         to 409 and does NOT debit (the existence check runs
-                         before the debit).
+        NothingToRewind  if no un-reported pass exists for (me, prospect),
+                         or a report stands either way between them. The
+                         caller maps it to 409 and does NOT debit (the
+                         check runs before the debit).
         service.tokens.InsufficientTokens if balance < COST.
 
     Returns:
