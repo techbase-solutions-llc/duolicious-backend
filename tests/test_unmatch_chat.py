@@ -45,13 +45,14 @@ def _send(monkeypatch, sender: dict, recipient: dict, body: str) -> tuple[list[s
     return published, stored
 
 
-def _job(sender: dict, recipient: dict, body: str, at_us: int) -> StoreMessageJob:
+def _job(sender: dict, recipient: dict, body: str, at_us: int,
+         audio_uuid: str | None = None) -> StoreMessageJob:
     """What service/chat/messagestorage.store_message enqueues for one message."""
     msg_id = uuid4().hex
     return StoreMessageJob(
         store_mam_message_job=StoreMamMessageJob(
             timestamp_microseconds=at_us, from_username=sender['uuid'],
-            to_username=recipient['uuid'], id=msg_id, message_body=body, audio_uuid=None),
+            to_username=recipient['uuid'], id=msg_id, message_body=body, audio_uuid=audio_uuid),
         upsert_conversation_job=UpsertConversationJob(
             from_username=sender['uuid'], to_username=recipient['uuid'], msg_id=msg_id,
             content=b'<message/>'),
@@ -108,4 +109,69 @@ def test_a_message_that_passed_the_gate_is_never_stored(client, unmatch_pair, ma
         assert (kept['archive'], kept['inbox'], kept['messaged']) == (2, 2, 1)
     finally:
         with api_tx() as tx:
+            tx.execute('DELETE FROM inbox WHERE luser = %(c)s', dict(c=control['uuid']))
+
+
+def test_a_message_racing_the_unmatch_waits_for_it(client, unmatch_pair):
+    """The unmatch holds both people in the like order while it commits. A
+    store batch flushed in that moment must wait for it and then drop the
+    message, or it reads no pair record and writes the conversation back
+    after the unmatch has moved it out."""
+    import threading
+
+    import psycopg
+
+    import database
+
+    p = unmatch_pair
+    match(p.a, p.b)
+    other = psycopg.connect(database._api_conninfo)
+    other.execute('SELECT id FROM person WHERE id IN (%s, %s) ORDER BY id FOR UPDATE',
+                  (p.a['id'], p.b['id']))
+    other.execute("""INSERT INTO unmatched_pair (user_a_id, user_b_id, unmatched_by)
+                     VALUES (LEAST(%s, %s), GREATEST(%s, %s), %s)""",
+                  (p.a['id'], p.b['id'], p.a['id'], p.b['id'], p.a['id']))
+    other.execute('DELETE FROM ahavah_match WHERE user_a_id = LEAST(%s, %s) AND user_b_id = GREATEST(%s, %s)',
+                  (p.a['id'], p.b['id'], p.a['id'], p.b['id']))
+
+    def commit_soon():
+        time.sleep(1)
+        other.commit()
+        other.close()
+
+    t = threading.Thread(target=commit_soon)
+    t.start()
+    try:
+        _process_store_message_batch([_job(p.b, p.a, 'Still there?', time.time_ns() // 1000)])
+    finally:
+        t.join()
+
+    assert counts(p.a, p.b) == dict(archive=0, held=0, inbox=0, messaged=0, matches=0)
+
+
+def test_a_voice_note_that_passed_the_gate_goes_to_the_cleaner(client, unmatch_pair, make_person):
+    """The store callback still uploads the voice note of a dropped message
+    (its live delivery, decision 8), and nothing would ever name that file
+    again. It goes to the CDN cleaner's queue, as the unmatch sends the held
+    ones; a kept voice note does not."""
+    p = unmatch_pair
+    control = make_person(name='Control', gender='Woman')
+    match(p.a, p.b)
+    match(p.b, control)
+    _unmatch(client, p)
+    dropped, kept = uuid4().hex, uuid4().hex
+    now_us = time.time_ns() // 1000
+    try:
+        _process_store_message_batch([
+            _job(p.b, p.a, '', now_us, audio_uuid=dropped),
+            _job(p.b, control, '', now_us + 1, audio_uuid=kept),
+        ])
+        with api_tx('read committed') as tx:
+            queued = {r['uuid'] for r in tx.execute(
+                'SELECT uuid FROM undeleted_audio WHERE uuid = ANY(%(u)s)',
+                dict(u=[dropped, kept])).fetchall()}
+        assert queued == {dropped}
+    finally:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM undeleted_audio WHERE uuid = ANY(%(u)s)', dict(u=[dropped, kept]))
             tx.execute('DELETE FROM inbox WHERE luser = %(c)s', dict(c=control['uuid']))

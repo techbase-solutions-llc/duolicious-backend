@@ -153,6 +153,15 @@ _Q_UNMATCHED_PAIRS = """
      WHERE is_unmatched_pair(pair.a, pair.b)
 """
 
+# The store callback still uploads a dropped voice note (its live delivery,
+# decision 8 of the plan), and no message would ever name that file again,
+# so it goes to the CDN cleaner's queue as the unmatch sends the held ones.
+_Q_FORGET_AUDIO = """
+    INSERT INTO undeleted_audio (uuid)
+    SELECT DISTINCT unnest(%(uuids)s::text[])
+    ON CONFLICT DO NOTHING
+"""
+
 
 def _without_unmatched(tx, batch: list[StoreMessageJob]) -> list[StoreMessageJob]:
     pairs = [(job.messaged_job.from_id, job.messaged_job.to_id) for job in batch]
@@ -162,6 +171,13 @@ def _without_unmatched(tx, batch: list[StoreMessageJob]) -> list[StoreMessageJob
         for r in tx.execute(_Q_UNMATCHED_PAIRS, dict(
             a=[a for a, _ in pairs], b=[b for _, b in pairs])).fetchall()
     }
+    audio = [
+        job.store_mam_message_job.audio_uuid
+        for job, pair in zip(batch, pairs)
+        if pair in gone and job.store_mam_message_job.audio_uuid
+    ]
+    if audio:
+        tx.execute(_Q_FORGET_AUDIO, dict(uuids=audio))
     return [job for job, pair in zip(batch, pairs) if pair not in gone]
 
 
