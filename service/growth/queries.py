@@ -96,6 +96,16 @@ _Q_STATS_BY_GENDER = f"""
       FROM act GROUP BY gender ORDER BY gender
 """
 
+# A match counts once it was made, whether or not it is still current. An
+# unmatch (TEC-1845, migration 0070) deletes the match row and keeps when it
+# was made in unmatched_pair.matched_at, so Matches keeps counting what
+# happened, as the Overview's mutual-like figure does.
+_MATCHES_MADE = """
+    SELECT user_a_id, user_b_id, created_at FROM ahavah_match
+    UNION ALL
+    SELECT user_a_id, user_b_id, matched_at FROM unmatched_pair WHERE matched_at IS NOT NULL
+"""
+
 # Messages are messages: one per message sent, read from mam_message through
 # the same _SENT_MESSAGES the Overview's "Messages 7d" uses, so one label has
 # one measure. These rows used to count `messaged`, which holds one row per
@@ -104,12 +114,12 @@ _Q_STATS_BY_GENDER = f"""
 _Q_TOTALS = f"""
     WITH sent AS ({_SENT_MESSAGES})
     SELECT
-      (SELECT count(*) FROM ahavah_match m
+      (SELECT count(*) FROM ({_MATCHES_MADE}) m
         WHERE NOT EXISTS (
           SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND {_not_member_or_test('x')}
         )
       ) AS matches,
-      (SELECT count(*) FROM ahavah_match m
+      (SELECT count(*) FROM ({_MATCHES_MADE}) m
         WHERE m.created_at > NOW() - interval '30 days'
           AND NOT EXISTS (
             SELECT 1 FROM person x WHERE x.id IN (m.user_a_id, m.user_b_id) AND {_not_member_or_test('x')}
