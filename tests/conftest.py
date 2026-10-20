@@ -798,6 +798,24 @@ def together_schema(growth_schema):
         tx.execute(path.read_text(encoding='utf-8'))
 
 
+# ---------------------------------------------------------------------------
+# Gatherings (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0071 is idempotent, so applying it here is what the deploy does.
+# A module that reads the gathering tables asks for it with
+#     pytestmark = pytest.mark.usefixtures('events_schema')
+
+@pytest.fixture(scope='session')
+def events_schema(together_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0071_events.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
 @pytest.fixture
 def together_live(monkeypatch):
     """The master switch on (AHAVAH_TOGETHER_LIVE_ENABLED): Together as
