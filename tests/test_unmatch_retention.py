@@ -69,3 +69,59 @@ def test_both_deletion_paths_purge_the_hold():
 
 def test_the_daily_retention_cron_purges_the_hold():
     assert 'purge_held_messages' in Path('/app/service/cron/leadretention/__init__.py').read_text()
+
+
+def _hold_with_a_voice_note(client, p) -> str:
+    voice = f'test-voice-{uuid4().hex}'
+    match(p.a, p.b)
+    converse(p.a, p.b, 'A voice note', audio_uuid=voice)
+    converse(p.b, p.a, 'A reply')
+    _unmatch(client, p)
+    assert counts(p.a, p.b)['held'] == 4
+    return voice
+
+
+def test_the_deletion_cron_takes_both_sides_of_the_held_conversation(client, unmatch_pair):
+    import asyncio
+
+    from service.cron.pendingdeletion import hard_delete_expired_once
+
+    p = unmatch_pair
+    voice = _hold_with_a_voice_note(client, p)
+    with api_tx() as tx:
+        tx.execute("""UPDATE person SET activated = FALSE,
+                             deletion_requested_at = NOW() - interval '8 days',
+                             sign_in_time = NOW() - interval '9 days'
+                       WHERE id = %(p)s""", dict(p=p.a['id']))
+
+    asyncio.run(hard_delete_expired_once())
+
+    with api_tx() as tx:
+        staged = _staged(tx, voice)
+    assert counts(p.a, p.b)['held'] == 0
+    assert staged
+
+
+def test_the_admin_hard_delete_takes_both_sides_however_the_uuid_is_typed(
+        client, make_person, sign_in, unmatch_pair):
+    """The route finds the person through ::uuid, which reads a uuid without
+    hyphens or in capitals; the held rows name the person by its canonical
+    text, so the statement must be bound with that, not the path as typed."""
+    p = unmatch_pair
+    voice = _hold_with_a_voice_note(client, p)
+    admin = make_person(name='UnmatchAdmin')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=admin['id']))
+        email = tx.execute('SELECT email FROM person WHERE id = %(i)s',
+                           dict(i=p.a['id'])).fetchone()['email']
+    typed = p.a['uuid'].replace('-', '').upper()
+
+    resp = client.delete(f'/admin/users/{typed}', headers=sign_in(admin),
+                         json={'confirm_email': email, 'reason': 'test'})
+
+    with api_tx() as tx:
+        staged = _staged(tx, voice)
+    assert resp.status_code == 200
+    assert counts(p.a, p.b)['held'] == 0
+    assert staged
