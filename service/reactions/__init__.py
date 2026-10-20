@@ -18,6 +18,17 @@ class UnknownPeer(Exception):
     """Raised when peer_uuid does not resolve to a person row."""
 
 
+class NotAllowed(Exception):
+    """Raised when a report or an unmatch stands between the two
+    (is_blocked_pair, migration 0070). A reaction is published to the other
+    person's open chat, so it would reach someone they no longer see."""
+
+
+_Q_BARRIER = """
+  SELECT is_blocked_pair(%(me)s, %(peer)s) AS blocked
+"""
+
+
 _Q_PEER_ID = """
   SELECT id FROM person WHERE uuid = uuid_or_null(%(peer_uuid)s)
 """
@@ -69,10 +80,12 @@ def toggle(
     """Add the reaction if absent, else remove it. Returns
     {action: 'add'|'remove', kind, message_stanza_id, peer_id}.
 
-    Raises UnknownPeer if peer_uuid is unknown.
+    Raises UnknownPeer if peer_uuid is unknown, NotAllowed across a report or an unmatch.
     """
     sid = stanza_id or str(uuid4())
     peer_id = _resolve_peer_id(tx, peer_uuid)
+    if tx.execute(_Q_BARRIER, dict(me=reactor_id, peer=peer_id)).fetchone()['blocked']:
+        raise NotAllowed()
 
     exists = tx.execute(
         _Q_EXISTS, dict(sid=sid, reactor_id=reactor_id)

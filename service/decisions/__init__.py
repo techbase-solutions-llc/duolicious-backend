@@ -101,12 +101,17 @@ WITH new_like AS (
         person.uuid = uuid_or_null(%(prospect_uuid)s)
     AND
         person.id <> %(me_id)s
+    AND
+        -- An unmatch is for good (TEC-1845, migration 0070). Both likes
+        -- outlive it, so without this the next like would match them again.
+        NOT is_unmatched_pair(%(me_id)s, person.id)
     ON CONFLICT DO NOTHING
     RETURNING liker_id, liked_id
 ), prospect AS (
     SELECT id FROM person
     WHERE uuid = uuid_or_null(%(prospect_uuid)s)
       AND id <> %(me_id)s
+      AND NOT is_unmatched_pair(%(me_id)s, id)
 ), reciprocal AS (
     -- Derived from CURRENT state, not from whether new_like won.
     SELECT 1 FROM liked rev, prospect p

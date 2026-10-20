@@ -23,7 +23,7 @@ import redis as _redis
 import duotypes as t
 from service.api.decorators import aget, apost
 from database import api_tx
-from service.reactions import toggle, list_for_conversation, UnknownPeer
+from service.reactions import toggle, list_for_conversation, NotAllowed, UnknownPeer
 
 XMPP_DOMAIN = 'ahavah.app'
 
@@ -83,6 +83,8 @@ def post_message_reaction(s: t.SessionInfo, stanza_id: str):
             )
     except UnknownPeer:
         return {'error': 'unknown_peer'}, 400
+    except NotAllowed:
+        return {'error': 'not_allowed'}, 403
 
     _publish_reaction(
         reactor_uuid=s.person_uuid,

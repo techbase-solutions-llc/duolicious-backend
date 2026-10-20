@@ -1125,7 +1125,10 @@ def post_tokens_day_pass(s: t.SessionInfo):
 # liked.is_super=TRUE; if the target had previously liked the viewer
 # (mutual), also creates an ahavah_match row and returns its match_id
 # so the frontend can navigate straight into the match-celebration view.
-from service.tokens.actions.super_like import perform as _perform_super_like
+from service.tokens.actions.super_like import (
+    perform as _perform_super_like,
+    NotAvailable as _SuperLikeNotAvailable,
+)
 
 @apost('/tokens/super-like')
 def post_tokens_super_like(s: t.SessionInfo):
@@ -1139,6 +1142,8 @@ def post_tokens_super_like(s: t.SessionInfo):
             return _perform_super_like(tx, s.person_uuid, target_id)
     except _InsufficientTokens:
         return {'error': 'insufficient_tokens'}, 402
+    except _SuperLikeNotAvailable:
+        return {'error': 'not_available'}, 404
 
 
 @apost('/tokens/see-passes')
