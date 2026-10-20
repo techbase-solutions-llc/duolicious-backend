@@ -27,7 +27,11 @@ from flask import abort, request
 from service.api.decorators import apost, apatch, adelete, validate
 from service.admin import require_admin, record_audit
 from service import entitlements
-from service.tokens import credit as tokens_credit, debit as tokens_debit
+from service.tokens import (
+    InsufficientTokens,
+    credit as tokens_credit,
+    debit as tokens_debit,
+)
 from database import api_tx
 from duohash import sha512
 from antiabuse.antispam.signupemail import normalize_email
@@ -185,29 +189,34 @@ def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
     require_admin(s)
     if req.delta == 0:
         abort(400)
-    with api_tx() as tx:
-        row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
-        if row is None:
-            abort(404)
-        target_email = row['email']
-        amount = abs(req.delta)
-        if req.delta > 0:
-            tokens_credit(
-                tx, uuid, amount,
-                reason='admin_credit',
-                metadata={'admin': s.email, 'reason': req.reason},
+    try:
+        with api_tx() as tx:
+            row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
+            if row is None:
+                abort(404)
+            target_email = row['email']
+            amount = abs(req.delta)
+            if req.delta > 0:
+                tokens_credit(
+                    tx, uuid, amount,
+                    reason='admin_credit',
+                    metadata={'admin': s.email, 'reason': req.reason},
+                )
+            else:
+                tokens_debit(
+                    tx, uuid, amount,
+                    reason='admin_debit',
+                    metadata={'admin': s.email, 'reason': req.reason},
+                )
+            record_audit(
+                tx, s, 'token_adjust',
+                target_email=target_email, target_uuid=uuid,
+                metadata={'delta': req.delta, 'reason': req.reason},
             )
-        else:
-            tokens_debit(
-                tx, uuid, amount,
-                reason='admin_debit',
-                metadata={'admin': s.email, 'reason': req.reason},
-            )
-        record_audit(
-            tx, s, 'token_adjust',
-            target_email=target_email, target_uuid=uuid,
-            metadata={'delta': req.delta, 'reason': req.reason},
-        )
+    except InsufficientTokens:
+        # Raised before the ledger insert; leaving the with block by the
+        # exception rolls the transaction back, so nothing is written.
+        return dict(error='insufficient_tokens'), 409
     return {'ok': True, 'delta': req.delta}
 
 
