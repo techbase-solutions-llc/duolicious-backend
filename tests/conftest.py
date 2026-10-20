@@ -816,6 +816,62 @@ def events_schema(together_schema):
         tx.execute(path.read_text(encoding='utf-8'))
 
 
+_EVENT_SWITCH_VARS = (
+    'AHAVAH_EVENTS_LIVE_ENABLED', 'AHAVAH_EVENTS_HOSTING_ENABLED',
+    'AHAVAH_EVENTS_LIST_ENABLED', 'AHAVAH_EVENTS_INVITE_ENABLED',
+    'AHAVAH_EVENTS_CONFIRM_EMAIL_ENABLED', 'AHAVAH_EVENTS_REMINDER_EMAIL_ENABLED',
+    'AHAVAH_EVENTS_CHANGE_EMAIL_ENABLED', 'AHAVAH_EVENTS_CANCEL_EMAIL_ENABLED',
+    'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED',
+)
+
+
+@pytest.fixture
+def events_live(monkeypatch):
+    """Every gathering switch on: the release as it is after launch. A test
+    of a dark or closed state deletes the one variable it is about."""
+    for env in _EVENT_SWITCH_VARS:
+        monkeypatch.setenv(env, '1')
+
+
+@pytest.fixture
+def organiser(events_schema):
+    """organiser(kind='fellowship_leader', approved=True) -> dict(id, email,
+    token, headers): a verified organiser (approved now when asked) with a
+    fresh magic link. Its rows go afterwards (gatherings, links and outbox
+    rows cascade)."""
+    from uuid import uuid4
+
+    from database import api_tx
+    from service.leads import new_token
+
+    made: list[int] = []
+
+    def _make(kind: str = 'fellowship_leader', approved: bool = True,
+              name: str = 'Grace Fellowship') -> dict:
+        email = f'organiser-{uuid4().hex[:12]}@ahavah-test.invalid'
+        with api_tx() as tx:
+            oid = tx.execute(
+                """INSERT INTO organiser (name, kind, email, normalized_email,
+                                          verified_at, approved_at)
+                   VALUES (%(n)s, %(k)s, %(e)s, %(e)s, NOW(),
+                           CASE WHEN %(a)s::boolean THEN NOW() END)
+                   RETURNING id""",
+                dict(n=name, k=kind, e=email, a=approved)).fetchone()['id']
+            token, hashed = new_token()
+            tx.execute(
+                """INSERT INTO organiser_link (organiser_id, token_hash, expires_at)
+                   VALUES (%(o)s, %(h)s, NOW() + interval '7 days')""",
+                dict(o=oid, h=hashed))
+        made.append(oid)
+        return dict(id=oid, email=email, token=token,
+                    headers={'X-Organiser-Token': token})
+
+    yield _make
+
+    with api_tx() as tx:
+        tx.execute('DELETE FROM organiser WHERE id = ANY(%(i)s)', dict(i=made))
+
+
 @pytest.fixture
 def together_live(monkeypatch):
     """The master switch on (AHAVAH_TOGETHER_LIVE_ENABLED): Together as

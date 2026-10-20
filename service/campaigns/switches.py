@@ -69,6 +69,28 @@ SWITCHES = {
     'together_answered_email': 'AHAVAH_TOGETHER_ANSWERED_EMAIL_ENABLED',
     'together_ready_email': 'AHAVAH_TOGETHER_READY_EMAIL_ENABLED',
     'together_summary_email': 'AHAVAH_TOGETHER_SUMMARY_EMAIL_ENABLED',
+    # Gatherings (TEC-1845), the master switch: until launch every /events,
+    # /e, /rsvp, /organiser, /host-requests and /invite-ahavah route but
+    # /events/status answers 404, and nothing below opens or sends,
+    # whichever way its own switch is set (service.events.switch_on).
+    # Admin > Events works either way, so the owner can prepare.
+    'events_live': 'AHAVAH_EVENTS_LIVE_ENABLED',
+    # The surfaces opened after launch, in the spec's rollout order: the
+    # public request to host, the /events list and the landing section, and
+    # the leaders' /invite-ahavah page. Each needs events_live.
+    'events_hosting': 'AHAVAH_EVENTS_HOSTING_ENABLED',
+    'events_list': 'AHAVAH_EVENTS_LIST_ENABLED',
+    'events_invite': 'AHAVAH_EVENTS_INVITE_ENABLED',
+    # The gathering emails, each off until the owner has seen its proof
+    # (scripts/send_event_proofs.py): the guest's confirm link, the reminder
+    # the day before, a change, a cancellation, the organiser's daily digest
+    # and the organiser's manage link (with its approved and live notes).
+    'events_confirm_email': 'AHAVAH_EVENTS_CONFIRM_EMAIL_ENABLED',
+    'events_reminder_email': 'AHAVAH_EVENTS_REMINDER_EMAIL_ENABLED',
+    'events_change_email': 'AHAVAH_EVENTS_CHANGE_EMAIL_ENABLED',
+    'events_cancel_email': 'AHAVAH_EVENTS_CANCEL_EMAIL_ENABLED',
+    'events_digest_email': 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED',
+    'events_manage_email': 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})
