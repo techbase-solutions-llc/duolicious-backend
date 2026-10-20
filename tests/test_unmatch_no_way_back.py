@@ -129,3 +129,44 @@ def test_a_reaction_cannot_reach_across(client, unmatch_pair):
         n = tx.execute('SELECT count(*) AS n FROM message_reactions WHERE reactor_id = %(b)s',
                        dict(b=p.b['id'])).fetchone()['n']
     assert n == 0
+
+
+def test_a_reaction_racing_the_unmatch_waits_and_is_refused(client, unmatch_pair):
+    """The unmatch holds both people in the like order while it commits. A
+    reaction sent in that moment must wait for it and then meet the pair
+    record, as a like does, or it lands after the unmatch cleared the pair's
+    reactions and its frame reaches the other person's chat."""
+    import threading
+    import time
+
+    import psycopg
+
+    import database
+
+    p = unmatch_pair
+    match(p.a, p.b)
+    other = psycopg.connect(database._api_conninfo)
+    other.execute('SELECT id FROM person WHERE id IN (%s, %s) ORDER BY id FOR UPDATE',
+                  (p.a['id'], p.b['id']))
+    other.execute("""INSERT INTO unmatched_pair (user_a_id, user_b_id, unmatched_by)
+                     VALUES (LEAST(%s, %s), GREATEST(%s, %s), %s)""",
+                  (p.a['id'], p.b['id'], p.a['id'], p.b['id'], p.a['id']))
+
+    def commit_soon():
+        time.sleep(1)
+        other.commit()
+        other.close()
+
+    t = threading.Thread(target=commit_soon)
+    t.start()
+    try:
+        r = client.post('/messages/stanza-race/reactions', json={'peer_uuid': p.a['uuid']},
+                        headers=p.b_headers)
+    finally:
+        t.join()
+
+    assert (r.status_code, r.get_json()) == (403, {'error': 'not_allowed'})
+    with api_tx('read committed') as tx:
+        n = tx.execute('SELECT count(*) AS n FROM message_reactions WHERE reactor_id = %(b)s',
+                       dict(b=p.b['id'])).fetchone()['n']
+    assert n == 0

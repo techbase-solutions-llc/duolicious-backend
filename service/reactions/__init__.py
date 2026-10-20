@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from service.decisions.locking import lock_like_members
+
 
 class UnknownPeer(Exception):
     """Raised when peer_uuid does not resolve to a person row."""
@@ -81,9 +83,15 @@ def toggle(
     {action: 'add'|'remove', kind, message_stanza_id, peer_id}.
 
     Raises UnknownPeer if peer_uuid is unknown, NotAllowed across a report or an unmatch.
+
+    Call inside READ COMMITTED. The unmatch holds both people in the like
+    order (service/decisions/locking.py) while it clears the pair's
+    reactions, so a reaction racing it waits here and then meets the pair
+    record, instead of landing after the clear-up.
     """
     sid = stanza_id or str(uuid4())
     peer_id = _resolve_peer_id(tx, peer_uuid)
+    lock_like_members(tx, reactor_id, peer_uuid)
     if tx.execute(_Q_BARRIER, dict(me=reactor_id, peer=peer_id)).fetchone()['blocked']:
         raise NotAllowed()
 
