@@ -6063,6 +6063,15 @@ On the owner's phone at 390 and on a desktop: each Needs you tile opens its list
 
 ---
 
+## Owner's answers (20 Oct 2026)
+
+These override the defaults below where they differ.
+
+- **Items 1, 2, 3 and 25:** as described. Outcomes (Dismissed, Warned, Deactivated) are recorded only, and choosing "Deactivated" does not deactivate. Only the admin role resolves. The "Email me when a report arrives" alert is built. **Change from the plan:** the setting is the owner's alone. Only the owner's account (the person whose email is `OWNER_TO`'s account, or admin id 18 if that is the owner; confirm in the code) can switch it, other admins see it read-only, and it mails only the owner.
+- **Item 4:** owner alerts go to `harrigan.tennyson@gmail.com`, as the plan has it.
+- **Item 6:** "Came back" counts within 7 days. Build `member_online_day` (120 days); runs before the deploy read "Not measured" in that view.
+- **All other items:** accepted as written. Every new line in item 13 goes through `/copy-pass` and back to the owner before launch.
+
 ## Spec conflicts and decisions needing the owner
 
 Each item says what the design or brief asks, what the database can honestly give, what this plan does by default and what it needs from the owner.
