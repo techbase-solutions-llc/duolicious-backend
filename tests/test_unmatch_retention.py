@@ -63,7 +63,8 @@ def test_a_hard_delete_takes_both_sides_of_the_held_conversation(client, unmatch
 
 def test_both_deletion_paths_purge_the_hold():
     for path in ('service/cron/pendingdeletion/__init__.py',
-                 'service/api/admin/users_action_routes.py'):
+                 'service/api/admin/users_action_routes.py',
+                 'service/person/__init__.py'):
         assert 'Q_PURGE_HELD_MESSAGES_OF' in Path(f'/app/{path}').read_text(), path
 
 
@@ -123,5 +124,26 @@ def test_the_admin_hard_delete_takes_both_sides_however_the_uuid_is_typed(
     with api_tx() as tx:
         staged = _staged(tx, voice)
     assert resp.status_code == 200
+    assert counts(p.a, p.b)['held'] == 0
+    assert staged
+
+
+def test_a_ban_takes_both_sides_of_the_held_conversation(client, unmatch_pair):
+    """The ban link in a report email hard-deletes at once (Q_DELETE_ACCOUNT,
+    service/person delete_or_ban_account), the likeliest delete after an
+    unmatch and a report. It must take the other person's held copies too."""
+    from service.person import delete_or_ban_account
+
+    p = unmatch_pair
+    voice = _hold_with_a_voice_note(client, p)
+    with api_tx() as tx:
+        token = tx.execute(
+            """INSERT INTO banned_person_admin_token (person_id) VALUES (%(p)s)
+               RETURNING token::text AS token""", dict(p=p.a['id'])).fetchone()['token']
+
+    assert delete_or_ban_account(s=None, admin_ban_token=token)
+
+    with api_tx() as tx:
+        staged = _staged(tx, voice)
     assert counts(p.a, p.b)['held'] == 0
     assert staged

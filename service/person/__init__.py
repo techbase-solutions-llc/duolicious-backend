@@ -1366,6 +1366,13 @@ def delete_or_ban_account(
             # are the only surviving record of who it is for.
             for r in rows:
                 withdraw_member(tx, r['person_id'], 'ban')
+            # Unmatch (TEC-1845): both sides of any held conversation, before
+            # the cascade, as the deletion cron and the admin delete do.
+            if rows:
+                from service.hard_delete import Q_PURGE_HELD_MESSAGES_OF
+                tx.execute(Q_PURGE_HELD_MESSAGES_OF, dict(
+                    ids=[int(r['person_id']) for r in rows],
+                    uuids=[str(r['person_uuid']).lower() for r in rows]))
             # Admin path: immediate hard-delete, no grace.
             tx.executemany(Q_DELETE_ACCOUNT, params_seq=rows)
         elif s:
