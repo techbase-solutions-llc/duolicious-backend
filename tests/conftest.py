@@ -656,8 +656,22 @@ def growth_schema():
         if tx.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'email_outbox' "
                       "AND column_name = 'organiser_id'").fetchone():
             sql = sql.replace('CHECK (num_nonnulls(person_id, lead_id) = 1)',
-                              'CHECK (num_nonnulls(person_id, lead_id, organiser_id) = 1)')
+                              f'CHECK (num_nonnulls({_outbox_recipients(tx)}) = 1)')
         tx.execute(sql)
+
+
+def _outbox_recipients(tx) -> str:
+    """The recipient columns the shared test database's outbox has now:
+    0071 adds organiser_id and 0073 recommendation_id and mentor_link_id.
+    Re-running an older migration's check must keep the newer columns, or
+    its ADD CONSTRAINT refuses a row another branch's test left behind
+    (TEC-1845)."""
+    cols = ['person_id', 'lead_id']
+    for c in ('organiser_id', 'recommendation_id', 'mentor_link_id'):
+        if tx.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'email_outbox' "
+                      "AND column_name = %(c)s", dict(c=c)).fetchone():
+            cols.append(c)
+    return ', '.join(cols)
 
 
 # ---------------------------------------------------------------------------
@@ -821,7 +835,14 @@ def events_schema(together_schema):
 
     path = Path(__file__).resolve().parent.parent / 'migrations' / '0071_events.sql'
     with api_tx() as tx:
-        tx.execute(path.read_text(encoding='utf-8'))
+        # Once 0073 has run, keep its five-recipient check (TEC-1845).
+        cols = _outbox_recipients(tx)
+        if 'organiser_id' not in cols:
+            cols += ', organiser_id'
+        sql = path.read_text(encoding='utf-8').replace(
+            'CHECK (num_nonnulls(person_id, lead_id, organiser_id) = 1)',
+            f'CHECK (num_nonnulls({cols}) = 1)')
+        tx.execute(sql)
 
 
 _EVENT_SWITCH_VARS = (
@@ -1150,5 +1171,24 @@ def admin_fixes_schema():
     from database import api_tx
 
     path = Path(__file__).resolve().parent.parent / 'migrations' / '0072_admin_serious_fixes.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Matchmaker (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0073 is idempotent, so applying it here is what the deploy does.
+# It needs 0066 (lead) and 0071 (email_outbox.organiser_id) first. A module
+# that reads the matchmaker tables asks for it with
+#     pytestmark = pytest.mark.usefixtures('matchmaker_schema')
+
+@pytest.fixture(scope='session')
+def matchmaker_schema(events_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0073_matchmaker.sql'
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
