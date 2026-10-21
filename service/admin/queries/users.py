@@ -116,6 +116,8 @@ Q_USER_PROFILE = """
         p.name,
         p.about,
         p.date_of_birth,
+        -- The drawer's Identity card (TEC-1845 admin audit, Minor 3).
+        (SELECT g.name FROM gender g WHERE g.id = p.gender_id) AS gender,
         p.country,
         p.region,
         p.languages_spoken,
