@@ -4,8 +4,9 @@ service.moderation - admin/mod-gated abuse-report listing.
 Phase W cutover (2026-05-15) closes the gap that DUO_REPORT_EMAIL
 points at placeholder bouncing addresses (ahavah@example.com etc).
 Until that env points at a real mailbox, abuse reports persist only
-in the `skipped` table with `reported = TRUE` + `report_reason`. This
-module surfaces those rows to operators with `admin` or `mod` in
+in the database: the `skipped` row with `reported = TRUE` (which is also
+the block) and, since migration 0072, a `person_report` row per report
+filed, which outlives an unblock. This module surfaces those reports to operators with `admin` or `mod` in
 person.roles via GET /admin/reports.
 
 Auth model:
@@ -39,33 +40,33 @@ SELECT 1
 # Q_LIST_REPORTS - reporter + reported user info + reason + age
 # ---------------------------------------------------------------------------
 #
-# Joins skipped twice: once to the REPORTER (subject_person_id) and once
-# to the REPORTED (object_person_id). Filters on reported = TRUE because
-# `skipped` rows without a report_reason are just regular blocks/passes
-# that aren't moderator-actionable.
+# Reads person_report (migration 0072), one row per report filed, joined
+# to the REPORTER and the REPORTED. It used to read `skipped` WHERE
+# reported, which is also the block, so a reporter who unblocked deleted
+# the report from this list (TEC-1845 admin audit). An unblock now lifts the
+# block and leaves the report here.
 #
 # Limit 200 - if you have more than 200 outstanding moderation actions,
 # you need a real ticketing tool, not a SQL view.
 
 Q_LIST_REPORTS = """
 SELECT
-    s.created_at::text                          AS created_at,
-    s.subject_person_id                          AS reporter_id,
+    r.reported_at::text                          AS created_at,
+    r.reporter_id                                AS reporter_id,
     reporter.uuid::text                          AS reporter_uuid,
     reporter.name                                AS reporter_name,
     reporter.email                               AS reporter_email,
-    s.object_person_id                           AS reported_id,
+    r.reported_id                                AS reported_id,
     reported.uuid::text                          AS reported_uuid,
     reported.name                                AS reported_name,
     reported.email                               AS reported_email,
     reported.activated                           AS reported_active,
     reported.verification_required               AS reported_verification_required,
-    s.report_reason                              AS reason
-FROM   skipped s
-JOIN   person reporter ON reporter.id = s.subject_person_id
-JOIN   person reported ON reported.id = s.object_person_id
-WHERE  s.reported = TRUE
-ORDER BY s.created_at DESC
+    r.reason                                     AS reason
+FROM   person_report r
+JOIN   person reporter ON reporter.id = r.reporter_id
+JOIN   person reported ON reported.id = r.reported_id
+ORDER BY r.reported_at DESC
 LIMIT 200
 """
 

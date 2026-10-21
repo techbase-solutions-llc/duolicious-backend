@@ -251,8 +251,15 @@ WITH subject_person_id AS (
     -- this zombie state). Reports stay permanent: reported only ever
     -- escalates (OR), and a plain re-pass never overwrites a report's
     -- reason.
+    -- A plain pass on a pair already reported keeps the report's time: the
+    -- pair is blocked both ways, so there is no pass window to restart, and
+    -- a moved created_at would read as a fresh report (migration 0072's
+    -- person_report trigger files one whenever it moves).
     ON CONFLICT (subject_person_id, object_person_id) DO UPDATE SET
-        created_at = NOW(),
+        created_at = CASE
+            WHEN skipped.reported AND NOT EXCLUDED.reported THEN skipped.created_at
+            ELSE NOW()
+        END,
         reported = skipped.reported OR EXCLUDED.reported,
         report_reason = CASE
             WHEN EXCLUDED.reported THEN EXCLUDED.report_reason

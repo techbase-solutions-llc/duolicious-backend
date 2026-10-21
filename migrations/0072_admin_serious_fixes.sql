@@ -36,4 +36,54 @@ ALTER TABLE token_ledger ADD CONSTRAINT token_ledger_reason_check
 --    rewrite the table.
 ALTER TABLE person ADD COLUMN IF NOT EXISTS admin_deactivated_at TIMESTAMPTZ;
 
+-- 3. Reports. A report was only the reporter's skipped row with reported =
+--    TRUE, and the block is that same row, so Unblock (DELETE from skipped)
+--    took the report out of the admin. person_report keeps every report
+--    filed, whatever later happens to the block. A trigger writes it, so
+--    every writer of skipped is covered, including an API still running
+--    the old code while this deploys. A report is keyed by its pair and the
+--    skipped row's created_at at the time (the key TEC-1897's
+--    report_resolution plans to use), so a later report on the same pair is
+--    a second record. The person rows cascade, as skipped does.
+CREATE TABLE IF NOT EXISTS person_report (
+  reporter_id  INT       NOT NULL REFERENCES person(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  reported_id  INT       NOT NULL REFERENCES person(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  reported_at  TIMESTAMP NOT NULL,
+  reason       TEXT      NOT NULL DEFAULT '',
+  PRIMARY KEY (reporter_id, reported_id, reported_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx__person_report__reported_at
+  ON person_report (reported_at DESC);
+
+-- A row becomes a report when it is inserted reported, when a pass is
+-- escalated, or when a report is made again (the skip upsert moves
+-- created_at). A plain pass on a reported pair keeps created_at (antiabuse
+-- Q_INSERT_SKIPPED), so it files nothing.
+CREATE OR REPLACE FUNCTION trg_skipped_keep_report() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.reported AND (
+       TG_OP = 'INSERT'
+       OR NOT OLD.reported
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at) THEN
+    INSERT INTO person_report (reporter_id, reported_id, reported_at, reason)
+    VALUES (NEW.subject_person_id, NEW.object_person_id, NEW.created_at, NEW.report_reason)
+    ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER skipped_keep_report
+  AFTER INSERT OR UPDATE ON skipped
+  FOR EACH ROW EXECUTE FUNCTION trg_skipped_keep_report();
+
+-- Every report already on file.
+INSERT INTO person_report (reporter_id, reported_id, reported_at, reason)
+SELECT subject_person_id, object_person_id, created_at, report_reason
+  FROM skipped
+ WHERE reported
+ON CONFLICT DO NOTHING;
+
 COMMIT;

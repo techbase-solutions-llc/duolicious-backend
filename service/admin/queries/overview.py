@@ -68,7 +68,9 @@ Q_OVERVIEW_KPIS = f"""
             AND EXISTS (SELECT 1 FROM entitlement_event e
                          WHERE e.app_user_id = p.id::text
                            AND {live_stripe_event('e')})) AS paying_members,
-        (SELECT COUNT(*) FROM skipped WHERE reported = TRUE) AS pending_reports,
+        -- Every report filed (migration 0072), including one whose block
+        -- the reporter has since lifted.
+        (SELECT COUNT(*) FROM person_report) AS pending_reports,
         (SELECT COUNT(*) FROM referral WHERE created_at > NOW() - INTERVAL '7 days') AS referral_signups_7d
 """
 
