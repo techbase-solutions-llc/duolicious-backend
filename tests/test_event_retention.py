@@ -39,6 +39,25 @@ def test_names_and_emails_go_90_days_after_the_gathering_and_the_counts_stay(pub
     assert _rsvp(g_recent['id'])['name'] == 'Hannah Okafor'
 
 
+def test_the_digests_naming_the_guests_go_with_the_names(published):
+    from service.campaigns.outbox import enqueue_for_organiser
+    old = published(starts_at=NOW - timedelta(days=91, hours=3))
+    recent = published(starts_at=NOW - timedelta(days=89))
+    ids = {}
+    with api_tx() as tx:
+        for slug in (old, recent):
+            ev = tx.execute('SELECT id, organiser_id FROM event WHERE slug = %(s)s', dict(s=slug)).fetchone()
+            ids[slug] = enqueue_for_organiser(
+                tx, campaign='event_digest', campaign_id=f"{ev['id']}:2026-01-01",
+                organiser_id=ev['organiser_id'], email='digest@ahavah-test.invalid',
+                subject='1 new RSVP', html='<p>Hannah Okafor</p>', from_addr=None)
+    assert _purge()['digests'] >= 1
+    with api_tx('read committed') as tx:
+        left = {r['id'] for r in tx.execute('SELECT id FROM email_outbox WHERE id = ANY(%(i)s)',
+                                            dict(i=list(ids.values()))).fetchall()}
+    assert left == {ids[recent]}
+
+
 def test_an_rsvp_never_confirmed_goes_a_day_after_its_window(published, confirmed_guest):
     slug = published()
     lapsed = confirmed_guest(slug)
@@ -131,4 +150,4 @@ def test_a_guest_who_joins_is_linked_and_credited_to_the_gathering(published, co
 def test_purge_counts_each_kind():
     with api_tx() as tx:
         out = retention.purge_event_data(tx)
-    assert set(out) == {'erased', 'unconfirmed', 'links', 'requests'}
+    assert set(out) == {'erased', 'digests', 'unconfirmed', 'links', 'requests'}

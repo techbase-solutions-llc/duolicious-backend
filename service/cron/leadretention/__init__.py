@@ -56,6 +56,8 @@ def _purge_once() -> None:
     if n_events['erased']:
         print(f"lead_retention: {n_events['erased']} RSVP name(s) and email(s) erased "
               f"90 days after their gathering")
+    if n_events['digests']:
+        print(f"lead_retention: {n_events['digests']} organiser digest(s) naming those guests deleted")
     if n_events['unconfirmed']:
         print(f"lead_retention: {n_events['unconfirmed']} RSVP(s) never confirmed deleted")
     if n_events['links']:

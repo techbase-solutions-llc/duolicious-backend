@@ -4,6 +4,8 @@
   - A guest's name and email are erased ERASE_AFTER_END after the
     gathering ends; the row stays, so the counts do (party size, confirmed,
     attended).
+    The organiser's digests (email_outbox, campaign event_digest) list
+    guests by name, so they go with the names.
   - An RSVP never confirmed goes a day after its confirm window closes.
   - An organiser's magic link goes a day after it lapses.
   - A leader's invite request goes INVITE_RETENTION after its last change.
@@ -31,6 +33,15 @@ _Q_ERASE = """
      WHERE e.id = r.event_id AND r.erased_at IS NULL AND e.ends_at < %(now)s - %(after)s
 """
 
+# A digest's campaign_id is {event_id}:{day} (service/events/mail.py).
+_Q_DIGESTS = """
+    DELETE FROM email_outbox o
+     USING event e
+     WHERE o.campaign = 'event_digest'
+       AND o.campaign_id LIKE e.id::text || ':%%'
+       AND e.ends_at < %(now)s - %(after)s
+"""
+
 _Q_UNCONFIRMED = """
     DELETE FROM event_rsvp
      WHERE confirmed_at IS NULL AND erased_at IS NULL AND confirm_by < %(now)s - %(grace)s
@@ -45,6 +56,7 @@ def purge_event_data(tx, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     return dict(
         erased=tx.execute(_Q_ERASE, dict(now=now, after=ERASE_AFTER_END)).rowcount,
+        digests=tx.execute(_Q_DIGESTS, dict(now=now, after=ERASE_AFTER_END)).rowcount,
         unconfirmed=tx.execute(_Q_UNCONFIRMED, dict(now=now, grace=UNCONFIRMED_GRACE)).rowcount,
         links=tx.execute(_Q_LINKS, dict(now=now, grace=LINK_GRACE)).rowcount,
         requests=tx.execute(_Q_REQUESTS, dict(now=now, keep=INVITE_RETENTION)).rowcount)
