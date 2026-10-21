@@ -521,6 +521,12 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
         tx.execute(Q_MAYBE_SIGN_IN, params)
         row = tx.fetchone()
 
+        if not row and tx.execute(
+                Q_ADMIN_DEACTIVATED_CODE, params).fetchone():
+            # The right code, but an admin deactivated the account. The
+            # session stays signed out; the attempt counter is untouched.
+            return 'Account deactivated', 403
+
         if not row:
             # Wrong OTP. Increment the per-session attempt counter and
             # null the OTP after 5 failures so it cannot be brute-forced

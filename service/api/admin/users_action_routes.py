@@ -59,7 +59,11 @@ _Q_PERSON_BY_UUID = """
 
 _Q_SOFT_DELETE = """
     WITH deactivated AS (
-        UPDATE person SET activated = FALSE WHERE uuid = %(uuid)s::uuid
+        -- admin_deactivated_at is what keeps the member out: the sign-in
+        -- queries refuse it, while activated alone is set back to TRUE by
+        -- the next sign-in.
+        UPDATE person SET activated = FALSE, admin_deactivated_at = NOW()
+         WHERE uuid = %(uuid)s::uuid
         RETURNING id, email
     ),
     del_session AS (
@@ -76,6 +80,7 @@ _Q_REACTIVATE = """
     reactivated AS (
         UPDATE person SET
             activated = TRUE,
+            admin_deactivated_at = NULL,
             -- Pull them out of autodeactivate2's 30-50 day window, or the
             -- cron reverts this within one 300s poll (F14).
             last_online_time = NOW()
