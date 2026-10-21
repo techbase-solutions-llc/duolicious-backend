@@ -433,8 +433,11 @@ class PostReferralClick(BaseModel):
 
 
 class PostGrantEntitlement(BaseModel):
-    """Admin POST /admin/users/:uuid/entitlements body."""
-    name: str = Field(min_length=1, max_length=64)
+    """Admin POST /admin/users/:uuid/entitlements body. `name` is one of the
+    names the drawer offers: free text stored any typo as an entitlement
+    (TEC-1845 admin audit). Revoke still takes any name, so a bogus one can
+    be removed."""
+    name: Literal['premium', 'founding_member', 'boost_pack']
     expires_at: Optional[datetime] = None
     reason: str = Field(min_length=1, max_length=512)
 

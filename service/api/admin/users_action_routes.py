@@ -19,7 +19,7 @@ trade-off because entitlements grant/revoke is idempotent.
 from __future__ import annotations
 
 import duotypes as t
-from flask import abort
+from flask import abort, request
 
 from service.api.decorators import apost, apatch, adelete, validate
 from service.admin import require_admin, record_audit
@@ -166,7 +166,12 @@ def post_grant_entitlement(req: t.PostGrantEntitlement, s: t.SessionInfo, uuid: 
 
 @adelete('/admin/users/<uuid>/entitlements/<name>')
 def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
+    """Body `{reason}` is optional: the live admin sends none. When given it
+    is written to the audit row (TEC-1845 admin audit)."""
     require_admin(s)
+    body = request.get_json(silent=True)
+    reason = body.get('reason') if isinstance(body, dict) else None
+    reason = reason.strip()[:512] or None if isinstance(reason, str) else None
     with api_tx('read committed') as tx:
         row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
     if row is None:
@@ -179,7 +184,7 @@ def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
         record_audit(
             tx, s, 'revoke_entitlement',
             target_email=target_email, target_uuid=uuid,
-            metadata={'name': name, 'changed': changed},
+            metadata={'name': name, 'changed': changed, 'reason': reason},
         )
     return {'ok': True, 'changed': changed}
 
