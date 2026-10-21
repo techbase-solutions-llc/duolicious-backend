@@ -92,3 +92,10 @@ Q_DELETE_TOOL_DATA_OF = """
                  AND (p.normalized_email = ANY(%(nes)s::text[])
                       OR p.person_id = ANY(%(ids)s::int[]))))
 """
+
+# Gatherings (TEC-1845): every RSVP the address or the account made. Defined
+# beside the sweep in service/events/retention.py; named here with the other
+# queries every deletion runs. Runs before the person delete, beside
+# Q_DELETE_TOOL_DATA_OF, binding `nes` and `ids` the same way.
+from service.events.retention import Q_DELETE_EVENT_DATA_OF  # noqa: E402,F401
+

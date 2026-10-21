@@ -19,6 +19,7 @@ from database import api_tx as _sync_api_tx
 from service.cron.cronutil import env_int, print_stacktrace, MAX_RANDOM_START_DELAY
 from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
+    Q_DELETE_EVENT_DATA_OF,
     Q_DELETE_INBOX_OF,
     Q_DELETE_LEADS_OF,
     Q_DELETE_TOOL_DATA_OF,
@@ -163,6 +164,10 @@ async def hard_delete_expired_once():
             # account (TEC-1845). Before the person delete: a guest's seat
             # cascades off person, and the shared game is found by it.
             await tx.execute(Q_DELETE_TOOL_DATA_OF,
+                             dict(nes=[normalize_email(e) for e in emails], ids=person_ids))
+            # Gatherings (TEC-1845): the accounts' RSVPs, before the person
+            # delete sets their person_id to NULL.
+            await tx.execute(Q_DELETE_EVENT_DATA_OF,
                              dict(nes=[normalize_email(e) for e in emails], ids=person_ids))
 
             await tx.execute(

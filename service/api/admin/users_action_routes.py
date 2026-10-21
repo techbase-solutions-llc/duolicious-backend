@@ -35,6 +35,7 @@ from service.person.sql import Q_INSERT_DUO_SESSION
 from service.spotlight.withdrawal import withdraw_member
 from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
+    Q_DELETE_EVENT_DATA_OF,
     Q_DELETE_INBOX_OF,
     Q_DELETE_LEADS_OF,
     Q_DELETE_TOOL_DATA_OF,
@@ -322,6 +323,10 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         # Together (TEC-1845), before the person delete: a guest's seat
         # cascades off person, and the shared game is found by it.
         tx.execute(Q_DELETE_TOOL_DATA_OF, dict(
+            nes=[normalize_email(row['email'])] if row['email'] else [], ids=person_ids))
+        # Gatherings (TEC-1845): the account's RSVPs, before the person
+        # delete sets their person_id to NULL.
+        tx.execute(Q_DELETE_EVENT_DATA_OF, dict(
             nes=[normalize_email(row['email'])] if row['email'] else [], ids=person_ids))
         del_row = tx.execute(_Q_HARD_DELETE, dict(uuid=uuid)).fetchone()
         tx.execute(Q_DELETE_INBOX_OF, dict(uuids=[del_row['uuid']]))

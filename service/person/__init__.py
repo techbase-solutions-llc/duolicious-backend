@@ -958,6 +958,10 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # sign-up.
         from service.tools.sessions import link_tool_sessions_to_person
         link_tool_sessions_to_person(tx, row['person_id'])
+        # A guest's confirmed RSVPs become the member's, so they go with the
+        # account (TEC-1845). Never fails the sign-up.
+        from service.events.retention import link_rsvps_to_person
+        link_rsvps_to_person(tx, row['person_id'])
 
         # Where the member came from (finding 42): the first touch and the
         # "How did you hear about Ahavah?" answer the web sends, cleaned,

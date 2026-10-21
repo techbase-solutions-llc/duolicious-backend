@@ -7,7 +7,8 @@ day after its confirm link lapsed: anyone can type an address into a form,
 and anyone retyping it moves last_seen_at, so only created_at counts for
 it. Mail queued for a deleted lead goes with it (email_outbox.lead_id
 cascades). The feature plans add their own tables' sweeps here (tool
-sessions, RSVPs, alerts), on the same clock. Unmatched conversations are
+sessions, RSVPs, alerts), on the same clock; gatherings' RSVPs, organiser
+links and invite requests are swept here too (service/events/retention.py). Unmatched conversations are
 held 30 days for a report, then deleted here (TEC-1845). Daily.
 """
 from __future__ import annotations
@@ -36,11 +37,13 @@ def purge_stale_leads(tx) -> int:
 
 def _purge_once() -> None:
     from service.decisions.unmatch import HOLD_DAYS, purge_held_messages
+    from service.events.retention import purge_event_data
     from service.tools.retention import purge_stale_tool_sessions
     with api_tx() as tx:
         n = purge_stale_leads(tx)
         n_tools = purge_stale_tool_sessions(tx)
         n_held = purge_held_messages(tx)
+        n_events = purge_event_data(tx)
     if n:
         print(f'lead_retention: {n} lead(s) deleted after {RETENTION_DAYS} days without a visit')
     if n_tools:
@@ -49,6 +52,16 @@ def _purge_once() -> None:
     if n_held:
         print(f'lead_retention: {n_held} held message(s) of unmatched conversations deleted '
               f'after {HOLD_DAYS} days')
+    # Gatherings (TEC-1845).
+    if n_events['erased']:
+        print(f"lead_retention: {n_events['erased']} RSVP name(s) and email(s) erased "
+              f"90 days after their gathering")
+    if n_events['unconfirmed']:
+        print(f"lead_retention: {n_events['unconfirmed']} RSVP(s) never confirmed deleted")
+    if n_events['links']:
+        print(f"lead_retention: {n_events['links']} lapsed organiser link(s) deleted")
+    if n_events['requests']:
+        print(f"lead_retention: {n_events['requests']} invite request(s) deleted after 12 months")
 
 
 async def lead_retention_forever() -> None:
