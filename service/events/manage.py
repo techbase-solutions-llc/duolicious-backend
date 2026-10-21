@@ -317,12 +317,14 @@ def _draft_json(row: dict) -> dict:
 
 
 def organiser_preview(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> dict:
-    """The organiser's own gathering in any state (export 1.12): the fields
-    for the form, its state and preview: True."""
+    """The organiser's own gathering in any state (export 1.12): the page as
+    the public would see it, with preview: True, and under `draft` the
+    fields for the form (their own venue and call link included)."""
+    from service.events import public
     row = _event(tx, organiser, slug)
-    return dict(_draft_json(row), slug=slug, status=row['status'],
-                paused=row['paused_at'] is not None, flag_reason=row['flag_reason'],
-                preview=True)
+    view = public.view_of(public.event_row(tx, slug), _now(now))
+    return dict(view, preview=True, status=row['status'], paused=row['paused_at'] is not None,
+                flag_reason=row['flag_reason'], draft=_draft_json(row))
 
 
 # ---------------------------------------------------------------------------

@@ -215,3 +215,66 @@ def delete_organiser_event_cover(slug: str):
         manage.remove_cover(tx, o, slug)
         return '', 204
     return _organiser_call(remove)
+
+
+# ---------------------------------------------------------------------------
+# The public read
+# ---------------------------------------------------------------------------
+
+@get('/events')
+def get_events():
+    from service.events import EventError, live, public, surface_on
+    if not live() or not surface_on('events_list'):
+        return _off()
+    region = request.args.get('region') or None
+    try:
+        limit = int(request.args.get('limit') or 20)
+    except ValueError:
+        limit = 20
+    try:
+        with api_tx('read committed') as tx:
+            events = public.list_events(tx, region=region, limit=limit)
+    except EventError as e:
+        return _refused(e)
+    return dict(events=events), 200, {'Cache-Control': 'public, max-age=60'}
+
+
+@get('/events/countries')
+def get_event_countries():
+    from service.events import fields, live
+    if not live():
+        return _off()
+    return dict(countries=fields.countries()), 200, {'Cache-Control': 'public, max-age=86400'}
+
+
+@get('/events/<slug>')
+def get_event(slug: str):
+    from service.events import EventError, live, public
+    if not live():
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            view = public.event_view(tx, slug)
+    except EventError as e:
+        return dict(error=e.reason), e.status, {'Cache-Control': 'no-store'}
+    return view, 200, {'Cache-Control': 'no-store'}
+
+
+_view_limit = limiter.shared_limit('60 per hour', scope='event_view')
+_NOT_A_READER = ('bot', 'crawler', 'spider', 'preview')
+
+
+@post('/events/<slug>/view', limiter=_view_limit)
+def post_event_view(slug: str):
+    """The page's beacon, once per browser tab session. Link previews and
+    crawlers are not counted."""
+    from datetime import datetime, timezone
+
+    from service.events import live, public
+    if not live():
+        return _off()
+    agent = (request.headers.get('User-Agent') or '').lower()
+    if not any(word in agent for word in _NOT_A_READER):
+        with api_tx() as tx:
+            public.count_view(tx, slug, datetime.now(timezone.utc).date())
+    return '', 204

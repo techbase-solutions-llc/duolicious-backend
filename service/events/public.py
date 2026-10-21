@@ -1,0 +1,122 @@
+"""The public read (TEC-1845): gatherings by region, one gathering, page
+views.
+
+Never in a public response, a share image, schema.org data or a post: the
+venue (unless the organiser made it public) and the call link. Only what
+card() and event_view() build leaves here.
+
+Every function takes the caller's transaction and never opens one.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
+
+from service.events import EventError
+from service.events import fields as f
+
+LIST_MAX = 50
+CHANGE_SHOWN = timedelta(days=14)
+
+_SELECT = """
+    SELECT e.*, o.name AS organiser_name, o.kind AS organiser_kind,
+           COALESCE((SELECT SUM(r.party_size) FROM event_rsvp r
+                      WHERE r.event_id = e.id AND r.status = 'going'
+                        AND r.confirmed_at IS NOT NULL), 0)::int AS going_now
+      FROM event e JOIN organiser o ON o.id = e.organiser_id
+"""
+
+# What the public may find: published (or cancelled after it was), never
+# paused. Drafts and gatherings waiting for approval do not exist to them.
+_VISIBLE = "e.published_at IS NOT NULL AND e.status IN ('published', 'cancelled') AND e.paused_at IS NULL"
+
+
+def _iso(t: Optional[datetime]) -> Optional[str]:
+    return t.astimezone(timezone.utc).isoformat() if t else None
+
+
+def card(row: dict) -> dict:
+    """One gathering on a list or a page. Never the venue or the call link."""
+    from service.events.manage import cover_url
+    out = dict(
+        slug=row['slug'], title=row['title'], starts_at=_iso(row['starts_at']),
+        ends_at=_iso(row['ends_at']), tz=row['tz'], tz_label=row['tz_label'], mode=row['mode'],
+        city=row['city'], country=row['country'], region=row['region'],
+        organiser=dict(name=row['organiser_name'], kind=row['organiser_kind']),
+        tags=list(row['tags']), feast=row['feast'],
+        feast_label=f.FEASTS.get(row['feast']) if row['feast'] else None,
+        cover_url=cover_url(row['cover_key']), ahavah_attending=bool(row['ahavah_attending']))
+    if row['show_going']:
+        out['going'] = row['going_now']
+    return out
+
+
+def _public_facts(facts: Optional[dict]) -> Optional[dict]:
+    if not facts:
+        return None
+    return {k: facts.get(k) for k in ('date', 'time', 'place')}
+
+
+def view_of(row: dict, now: datetime) -> dict:
+    """The page's view of a gathering row (with going_now)."""
+    out = card(row)
+    places_left = None
+    if row['capacity'] is not None:
+        places_left = max(row['capacity'] - row['going_now'], 0)
+    if row['status'] == 'cancelled':
+        state = 'cancelled'
+    elif row['ends_at'] <= now:
+        state = 'ended'
+    elif places_left == 0:
+        state = 'full'
+    else:
+        state = 'open'
+    out.update(description=row['description'], capacity=row['capacity'],
+               places_left=places_left, state=state, cancel_note=row['cancel_note'],
+               changed=None)
+    if (row['changed_at'] is not None and now - row['changed_at'] <= CHANGE_SHOWN
+            and row['starts_at'] > now and row['status'] == 'published'):
+        out['changed'] = dict(before=_public_facts(row['change_before']),
+                              after=_public_facts(row['change_after']))
+    if row['mode'] == 'in_person' and row['venue_visibility'] == 'public' and row['venue']:
+        out['venue'] = row['venue']
+    return out
+
+
+def list_events(tx, *, region: Optional[str], limit: int = 20,
+                now: Optional[datetime] = None) -> list[dict]:
+    """Published, not paused, not ended, by start. A region shows its own
+    and every online gathering (decision 6); no region shows them all."""
+    now = now or datetime.now(timezone.utc)
+    if region is not None and region not in f.REGIONS:
+        raise EventError('bad_region', 400)
+    limit = max(1, min(int(limit), LIST_MAX))
+    where = f"{_VISIBLE} AND e.status = 'published' AND e.ends_at > %(now)s"
+    if region is not None:
+        where += " AND (e.region = %(r)s OR e.region = 'online')"
+    rows = tx.execute(f'{_SELECT} WHERE {where} ORDER BY e.starts_at, e.id LIMIT %(n)s',
+                      dict(now=now, r=region, n=limit)).fetchall()
+    return [card(dict(r)) for r in rows]
+
+
+def event_row(tx, slug: str) -> Optional[dict]:
+    """Any gathering's row with its going count, visible or not."""
+    row = tx.execute(f'{_SELECT} WHERE e.slug = %(s)s', dict(s=slug)).fetchone()
+    return dict(row) if row else None
+
+
+def event_view(tx, slug: str, now: Optional[datetime] = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    row = tx.execute(f'{_SELECT} WHERE e.slug = %(s)s AND {_VISIBLE}', dict(s=slug)).fetchone()
+    if row is None:
+        raise EventError('not_found', 404)
+    return view_of(dict(row), now)
+
+
+def count_view(tx, slug: str, day: date) -> None:
+    """One page view, on a visible gathering only."""
+    tx.execute(
+        f"""INSERT INTO event_view_day (event_id, day, views)
+            SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
+            ON CONFLICT (event_id, day) DO UPDATE SET views = event_view_day.views + 1""",
+        dict(s=slug, d=day))
