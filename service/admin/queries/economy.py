@@ -6,6 +6,7 @@ on 13 Oct 2026 the tab read 60 Premium holders for 58 members, and 2 of its
 every account and stays whole."""
 from service.admin.queries.days import BARBADOS_TODAY, barbados_day
 from service.admin.queries.members import member_sql
+from service.admin.queries.overview import _subscription_checkout, live_stripe_event
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
@@ -59,6 +60,32 @@ Q_LEDGER_KPIS = f"""
           WHERE {barbados_day('created_at')} = {BARBADOS_TODAY}) AS today
 """
 
+def _ever_subscribed(alias: str) -> str:
+    """The person aliased `alias` has a LIVE Stripe subscription event on
+    file: the checkout, a paid renewal, or an update or cancellation of the
+    subscription (service/checkout). Test-mode events are not sales
+    (overview.live_stripe_event)."""
+    return f"""EXISTS (
+        SELECT 1 FROM entitlement_event e
+         WHERE e.app_user_id = {alias}.id::text
+           AND {live_stripe_event('e')}
+           AND (({_subscription_checkout('e')})
+                OR e.event_type IN ('invoice.payment_succeeded',
+                                    'customer.subscription.updated',
+                                    'customer.subscription.deleted')))"""
+
+
+# The early-member Premium every new member gets at sign-up
+# (entitlements.grant_founding_member_if_eligible), known by its starter
+# stipend, or the founding_member entitlement itself.
+def _founding(alias: str) -> str:
+    return f"""('founding_member' = ANY(COALESCE({alias}.entitlements, ARRAY[]::text[]))
+        OR EXISTS (SELECT 1 FROM token_ledger fl
+                    WHERE fl.person_id = {alias}.uuid
+                      AND fl.reason = 'subscription_stipend'
+                      AND fl.metadata->>'source' = 'founding_member_starter'))"""
+
+
 # Entitlement holders.
 #
 # time_left is whole SECONDS, negative once lapsed, NULL with no expiry. It
@@ -71,7 +98,21 @@ Q_ENTITLEMENT_HOLDERS = f"""
         p.uuid::text AS person_uuid,
         p.subscription_expires_at,
         EXTRACT(EPOCH FROM (p.subscription_expires_at - NOW()))::bigint AS time_left,
-        COALESCE(p.entitlements, ARRAY[]::text[]) AS entitlements
+        COALESCE(p.entitlements, ARRAY[]::text[]) AS entitlements,
+        -- The design's Founding toggle and Source column (TEC-1845 admin
+        -- audit). Source is where this entitlement most likely came from:
+        -- a live Stripe subscription (Premium only), a grant from the
+        -- drawer, the early-member grant at sign-up, else unknown.
+        {_founding('p')} AS founding,
+        CASE
+            WHEN %(name)s = 'premium' AND {_ever_subscribed('p')} THEN 'stripe'
+            WHEN EXISTS (SELECT 1 FROM admin_audit_log a
+                          WHERE a.action = 'grant_entitlement'
+                            AND a.target_uuid = p.uuid
+                            AND a.metadata->>'name' = %(name)s) THEN 'admin'
+            WHEN %(name)s = 'premium' AND {_founding('p')} THEN 'signup'
+            ELSE 'unknown'
+        END AS source
       FROM person p
      WHERE {_MEMBER_P}
        AND %(name)s = ANY(p.entitlements)
@@ -92,11 +133,21 @@ Q_ENTITLEMENT_KPIS = f"""
 
 # Subscriptions — keyed on person.stripe_customer_id + subscription_expires_at.
 # No separate Stripe subs table exists in this codebase, so we infer state from person.
+#
+# Expired (TEC-1845 admin audit): expire_stale nulls subscription_expires_at
+# once it passes, so `expires < NOW()` could only catch a row in the gap
+# before the nightly cron, and a lapsed subscriber read 'never'. A member
+# with a live subscription event on file who is not active now is expired;
+# the old rule is kept alongside it for that gap.
+_EXPIRED = (f"((person.subscription_expires_at < NOW() AND person.stripe_customer_id IS NOT NULL)"
+            f" OR ({_ever_subscribed('person')}"
+            f" AND (person.subscription_expires_at IS NULL OR person.subscription_expires_at <= NOW())))")
+
 Q_SUBSCRIPTIONS_KPIS = f"""
     SELECT
         COUNT(*) FILTER (WHERE stripe_customer_id IS NOT NULL) AS total_stripe_customers,
         COUNT(*) FILTER (WHERE subscription_expires_at > NOW()) AS active,
-        COUNT(*) FILTER (WHERE subscription_expires_at < NOW() AND stripe_customer_id IS NOT NULL) AS expired
+        COUNT(*) FILTER (WHERE {_EXPIRED}) AS expired
       FROM person
      WHERE {_MEMBER}
 """
@@ -108,10 +159,12 @@ Q_SUBSCRIPTIONS_ROWS = f"""
         p.stripe_customer_id,
         p.subscription_expires_at,
         COALESCE(p.entitlements, ARRAY[]::text[]) AS entitlements,
+        {_ever_subscribed('p')} AS ever_subscribed,
         CASE
-            WHEN p.subscription_expires_at IS NULL THEN 'never'
             WHEN p.subscription_expires_at > NOW() THEN 'active'
-            ELSE 'expired'
+            WHEN p.subscription_expires_at IS NOT NULL THEN 'expired'
+            WHEN {_ever_subscribed('p')} THEN 'expired'
+            ELSE 'never'
         END AS status
       FROM person p
      WHERE {_MEMBER_P}
