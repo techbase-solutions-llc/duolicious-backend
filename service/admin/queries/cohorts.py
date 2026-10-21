@@ -5,6 +5,7 @@ Waitlist and beta rows are pre-account records and are counted as rows. A
 from service.admin.queries.days import (
     BARBADOS_TODAY, barbados_day, barbados_day_of_naive_utc, barbados_days)
 from service.admin.queries.members import member_sql
+from service.referrals import REFERRAL_REWARD_TOKENS
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
@@ -85,21 +86,33 @@ Q_WAITLIST_SOURCE = """
 
 # ---- BETA ---------------------------------------------------------------
 
+# A tester has had the intro when the beta row says so, or when the
+# referralintro cron sent it to their member account: the cron records its
+# sends in email_send_log and never sets referral_intro_sent_at, so a
+# tester it reached read "Never emailed" (TEC-1845 admin audit, Minor 28).
+# The per-inviter query below already reads both.
+_CRON_INTRO_AT = """(SELECT MIN(l.sent_at)
+                       FROM person ip
+                       JOIN email_send_log l ON l.person_id = ip.id AND l.campaign = 'referral'
+                      WHERE lower(ip.email) = lower(b.email))"""
+_INTRO_SENT = f"(b.referral_intro_sent_at IS NOT NULL OR {_CRON_INTRO_AT} IS NOT NULL)"
+
 Q_BETA_KPIS = f"""
     SELECT
         (SELECT COUNT(*) FROM beta_signup) AS cohort_size,
         (SELECT COUNT(*) FROM beta_signup b
             WHERE EXISTS (SELECT 1 FROM person p WHERE p.email = b.email AND {_MEMBER_P})) AS completed_onboarding,
         (SELECT COUNT(*) FROM beta_signup WHERE referral_code IS NOT NULL) AS codes_minted,
-        (SELECT COUNT(*) FROM beta_signup WHERE referral_intro_sent_at IS NOT NULL) AS intro_sent,
-        (SELECT COUNT(*) FROM beta_signup WHERE referral_intro_sent_at IS NULL) AS never_emailed
+        (SELECT COUNT(*) FROM beta_signup b WHERE {_INTRO_SENT}) AS intro_sent,
+        (SELECT COUNT(*) FROM beta_signup b WHERE NOT {_INTRO_SENT}) AS never_emailed
 """
 
-Q_BETA_ROWS = """
+# referral_intro_sent_at is the beta send, or failing that the cron's first.
+Q_BETA_ROWS = f"""
     SELECT
         b.email,
         b.referral_code,
-        b.referral_intro_sent_at,
+        COALESCE(b.referral_intro_sent_at, {_CRON_INTRO_AT}) AS referral_intro_sent_at,
         b.unsubscribed_at,
         (p.uuid IS NOT NULL) AS has_person,
         p.sign_in_time
@@ -183,6 +196,9 @@ Q_REFERRALS_CLICK_STREAM_7D = f"""
 # clicks were counted against nobody. Clicks are now counted on the code, so
 # the figure does not wait on the logger or its backfill.
 #
+# The pending balance is the reward per pending or graduated referral, in
+# tokens. It multiplied by a literal 5 (TEC-1845 admin audit, Minor 31).
+#
 # A holder is listed once the intro has gone to them (either kind) or their
 # link has a click or a sign-up. Clicks are well-formed and not bots, as the
 # logger only resolves well-formed codes. Staff accounts are listed like
@@ -222,7 +238,8 @@ Q_REFERRALS_PER_INVITER = f"""
                    AND r.status = 'credited') AS credited,
                (SELECT COUNT(*) FROM referral r
                  WHERE lower(r.inviter_email) = i.email
-                   AND r.status IN ('pending','graduated')) * 5 AS pending_token_balance
+                   AND r.status IN ('pending','graduated')) * {REFERRAL_REWARD_TOKENS}
+                   AS pending_token_balance
           FROM inviter i
     )
     SELECT inviter, referral_code, clicks, signups, credited, pending_token_balance
