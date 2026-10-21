@@ -9,8 +9,10 @@ from flask import request, abort
 
 from service.api.decorators import aget, apost
 from service.admin import require_admin, record_audit
+from service.admin.jsonrow import iso_row
 from service.admin.queries import (
     Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES, Q_PHOTO_GATE_KPIS,
+    Q_APPROVED_NO_FACE_KPIS,
 )
 from service.photo_gate import photo_gate_enabled
 from emails.photo_removed import send_photo_removed
@@ -22,13 +24,14 @@ def get_moderation_photos(s: t.SessionInfo):
     require_admin(s)
     state = (request.args.get('state') or 'pending').strip()
     with api_tx('read committed') as tx:
-        rows = [dict(r) for r in tx.execute(Q_PHOTOS_LIST, dict(state=state)).fetchall()]
+        rows = [iso_row(r) for r in tx.execute(Q_PHOTOS_LIST, dict(state=state)).fetchall()]
         kpis = tx.execute(Q_PHOTOS_KPIS).fetchone() or {}
         gate = dict(tx.execute(Q_PHOTO_GATE_KPIS).fetchone() or {})
+        no_face = dict(tx.execute(Q_APPROVED_NO_FACE_KPIS).fetchone())
     # The photo gate (findings 91, 99): whether it is on, and how many
     # members it holds or would hold.
     gate['enabled'] = photo_gate_enabled()
-    return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate}
+    return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate, 'approved_no_face': no_face}
 
 
 @apost('/admin/moderation/photos/<photo_uuid>/approve')
@@ -246,3 +249,28 @@ def post_report_alert(s: t.SessionInfo):
             dict(v=value, by=s.email))
         record_audit(tx, s, 'set_report_alert', metadata={'enabled': value})
         return _report_alert(tx, s)
+
+
+@aget('/admin/moderation/profile-gaps')
+def get_moderation_profile_gaps(s: t.SessionInfo):
+    """Members with no photo, only declined or pending photos, or no approved
+    photo showing a face, and the not verified count (frame P.2)."""
+    require_admin(s)
+    from service.admin.queries.profiles import Q_PROFILE_GAP_KPIS, Q_PROFILE_GAPS
+    from service.growth.queries import _excluded
+    params = dict(ex=_excluded())
+    with api_tx('read committed') as tx:
+        kpis = dict(tx.execute(Q_PROFILE_GAP_KPIS, params).fetchone())
+        rows = [dict(r) for r in tx.execute(Q_PROFILE_GAPS, params).fetchall()]
+    return dict(kpis=kpis, rows=rows)
+
+
+@aget('/admin/moderation/photo-gate')
+def get_moderation_photo_gate(s: t.SessionInfo):
+    """The members the photo gate holds or would hold, with their last 30
+    days (frame P.1). Counts only."""
+    require_admin(s)
+    from service.admin.queries.profiles import Q_PHOTO_GATE_MEMBERS
+    with api_tx('read committed') as tx:
+        members = [iso_row(r) for r in tx.execute(Q_PHOTO_GATE_MEMBERS).fetchall()]
+    return dict(enabled=photo_gate_enabled(), members=members)
