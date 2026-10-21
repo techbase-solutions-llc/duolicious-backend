@@ -28,6 +28,7 @@ from service.questions import pushes as question_pushes
 from service.campaigns import held
 from service.campaigns.runner import audit_send
 from service.events import jobs as event_jobs
+from service.matchmaker import introductions as mm_introductions
 from service.matchmaker import notices as mm_notices
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
@@ -41,6 +42,8 @@ JOBS = [
     # and that week's likes email skips the member.
     ('mm_member_alerts', mm_notices.queue_member_notices),
     ('mm_visitor_alerts', mm_notices.queue_visitor_notices),
+    # Introductions past their date close, silently (5c.4).
+    ('mm_intro_close', mm_introductions.close_lapsed),
     ('likes_waiting', likes_waiting_weekly.queue_due),
     ('match_reminder', reminders.queue_match_reminders),
     ('message_reminder', reminders.queue_message_reminders),

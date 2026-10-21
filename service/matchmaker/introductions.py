@@ -266,3 +266,175 @@ def notify_both(tx, intro_id: int) -> None:
         mail.guarded(tx, f'mm_intro_{side}', lambda: mail.queue_member(
             tx, campaign=mail.CAMPAIGN_INTRO, campaign_id=f'{intro_id}:{side}', person_id=pid,
             subject=subject, html_=body))
+
+
+# ---------------------------------------------------------------------------
+# The accept-or-decline card (5c)
+# ---------------------------------------------------------------------------
+
+def _closes_on(at: datetime) -> str:
+    """5c.1's date: "30 October"."""
+    d = at.astimezone(timezone.utc)
+    return f'{d.day} {d:%B}'
+
+
+_Q_CARDS = """
+    SELECT i.id, i.note, i.closes_at, i.a_person_id, i.b_person_id, i.a_response, i.b_response,
+           ip.name AS introducer_name,
+           o.id AS other_id, o.uuid::text AS other_uuid, o.name AS other_name, o.about,
+           (SELECT EXTRACT(YEAR FROM AGE(o.date_of_birth))::int WHERE o.show_my_age) AS age,
+           (SELECT o.location_short_friendly WHERE o.show_my_location) AS place,
+           COALESCE((SELECT json_agg(ph.uuid ORDER BY ph.position) FROM photo ph
+                      WHERE ph.person_id = o.id AND ph.moderation_status = 'approved'
+                        AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(me)s, o.id))),
+                    '[]'::json)::jsonb AS photo_uuids
+      FROM introduction i
+      JOIN person ip ON ip.id = i.introducer_person_id
+      JOIN person o ON o.id = CASE WHEN i.a_person_id = %(me)s THEN i.b_person_id ELSE i.a_person_id END
+     WHERE i.status = 'open' AND i.closes_at > %(now)s
+       AND %(me)s IN (i.a_person_id, i.b_person_id)
+       AND o.activated
+       AND NOT is_blocked_pair(%(me)s, o.id)
+     ORDER BY i.opened_at DESC NULLS LAST, i.id DESC
+"""
+
+
+def _mine(row: dict, me: int) -> tuple[Optional[str], Optional[str]]:
+    """(my answer, the other's answer)."""
+    if row['a_person_id'] == me:
+        return row['a_response'], row['b_response']
+    return row['b_response'], row['a_response']
+
+
+def pending(tx, person_id: int, now: Optional[datetime] = None) -> dict:
+    """{pending, waiting}: the open introductions the member has not
+    answered (5c.1) and the ones they accepted that wait for the other
+    person (5c.2). A viewer the photo gate holds gets no photos and the
+    seed of the name gradient (owner decision 9)."""
+    from service.photo_gate import gate_params
+    now = now or datetime.now(timezone.utc)
+    rows = tx.execute(_Q_CARDS, dict(me=person_id, now=now, **gate_params())).fetchall()
+    out: dict = dict(pending=[], waiting=[])
+    for r in rows:
+        mine, _theirs = _mine(r, person_id)
+        other_first = first_name(r['other_name'])
+        if mine is None:
+            other = dict(uuid=r['other_uuid'], first_name=other_first, place=r['place'],
+                         photo_uuids=r['photo_uuids'], about=r['about'], gradient_seed=other_first)
+            if r['age'] is not None:
+                other['age'] = r['age']
+            out['pending'].append(dict(id=r['id'], introducer_first_name=first_name(r['introducer_name']),
+                                       other=other, note=r['note'], closes_on=_closes_on(r['closes_at'])))
+        elif mine == 'accepted':
+            out['waiting'].append(dict(id=r['id'], other_first_name=other_first,
+                                       closes_on=_closes_on(r['closes_at'])))
+    return out
+
+
+def respond(tx, person_id: int, intro_id: int, answer: str, now: Optional[datetime] = None) -> dict:
+    """Accept or not for me. Under the introduction's row lock, so two
+    acceptances at once make one match. A no tells nobody."""
+    from service.matchmaker import mail
+    now = now or datetime.now(timezone.utc)
+    if answer not in ('accept', 'decline'):
+        raise MatchmakerError('bad_answer', 400)
+    row = tx.execute('SELECT * FROM introduction WHERE id = %(i)s FOR UPDATE', dict(i=intro_id)).fetchone()
+    if row is None or person_id not in (row['a_person_id'], row['b_person_id']) or row['status'] in ('held', 'rejected'):
+        raise MatchmakerError('not_found', 404)
+    side = 'a' if row['a_person_id'] == person_id else 'b'
+    other_id = row['b_person_id'] if side == 'a' else row['a_person_id']
+    mine, theirs = _mine(row, person_id)
+    if row['status'] == 'matched' and mine == 'accepted':
+        return _matched_answer(tx, person_id, other_id)
+    if mine == 'declined':
+        return dict(state='gone')
+    blocked = tx.execute('SELECT is_blocked_pair(%(a)s, %(b)s) AS b', dict(a=person_id, b=other_id)).fetchone()['b']
+    if row['status'] != 'open' or row['closes_at'] <= now or blocked:
+        raise MatchmakerError('closed', 410)
+    if mine == 'accepted' and answer == 'accept':
+        return dict(state='waiting')
+    if answer == 'decline':
+        tx.execute(f"""UPDATE introduction SET {side}_response = 'declined', {side}_responded_at = %(now)s,
+                              status = 'closed' WHERE id = %(i)s""", dict(now=now, i=intro_id))
+        return dict(state='gone')
+    tx.execute(f"""UPDATE introduction SET {side}_response = 'accepted', {side}_responded_at = %(now)s
+                    WHERE id = %(i)s""", dict(now=now, i=intro_id))
+    if theirs != 'accepted':
+        return dict(state='waiting')
+    # Both said yes: likes both ways and the match, in this transaction.
+    tx.execute("""INSERT INTO liked (liker_id, liked_id) VALUES (%(a)s, %(b)s), (%(b)s, %(a)s)
+                  ON CONFLICT DO NOTHING""", dict(a=person_id, b=other_id))
+    created = tx.execute(
+        """INSERT INTO ahavah_match (user_a_id, user_b_id)
+           VALUES (LEAST(%(a)s::int, %(b)s::int), GREATEST(%(a)s::int, %(b)s::int))
+           ON CONFLICT (user_a_id, user_b_id) DO NOTHING RETURNING match_id::text AS match_id""",
+        dict(a=person_id, b=other_id)).fetchone()
+    tx.execute("UPDATE introduction SET status = 'matched', matched_at = %(now)s WHERE id = %(i)s",
+               dict(now=now, i=intro_id))
+    answer_ = _matched_answer(tx, person_id, other_id)
+    names = {r['id']: first_name(r['name']) for r in tx.execute(
+        'SELECT id, name FROM person WHERE id IN (%(a)s, %(b)s, %(c)s)',
+        dict(a=person_id, b=other_id, c=row['introducer_person_id'])).fetchall()}
+    if created is not None:
+        match_id = created['match_id']
+        my_name = names.get(person_id, 'Someone')
+        mail.after_commit(lambda: _match_notice(other_id, my_name, match_id))
+    a_name, b_name = names.get(row['a_person_id'], 'Someone'), names.get(row['b_person_id'], 'Someone')
+    mail.push_after_commit(row['introducer_person_id'], mail.introducer_push(intro_id, a_name, b_name),
+                           'matchmaker_intro_push', event_kind='match')
+    return answer_
+
+
+def _matched_answer(tx, person_id: int, other_id: int) -> dict:
+    m = tx.execute("""SELECT m.match_id::text AS match_id, p.uuid::text AS uuid FROM ahavah_match m
+                        JOIN person p ON p.id = %(o)s
+                       WHERE m.user_a_id = LEAST(%(a)s::int, %(o)s::int)
+                         AND m.user_b_id = GREATEST(%(a)s::int, %(o)s::int)""",
+                   dict(a=person_id, o=other_id)).fetchone()
+    return dict(state='matched', match_id=m['match_id'] if m else None,
+                other_uuid=m['uuid'] if m else None)
+
+
+def _match_notice(person_id: int, other_first_name: str, match_id: str) -> None:
+    """The usual match notice, to the one who accepted first."""
+    from emails.notification import new_match_email
+    from service.notifications import notify
+    notify(person_id, 'match', title="It's a match!", body=f'{other_first_name} likes you back',
+           url='/matches', tag=f'match:{match_id}', email_subject='You have a new match on Ahavah',
+           email_html_factory=new_match_email, email_event_id=f'match-{match_id}')
+
+
+def close_lapsed(tx, now: datetime) -> int:
+    """Open introductions past their date close, silently."""
+    return tx.execute("UPDATE introduction SET status = 'closed' WHERE status = 'open' AND closes_at <= %(now)s",
+                      dict(now=now)).rowcount
+
+
+def told(tx, person_id: int) -> list[dict]:
+    """5c.8: the matches this introducer has not been shown, marked shown."""
+    rows = tx.execute(
+        """UPDATE introduction i SET introducer_told_at = NOW()
+             FROM person a, person b
+            WHERE i.introducer_person_id = %(p)s AND i.status = 'matched' AND i.introducer_told_at IS NULL
+              AND a.id = i.a_person_id AND b.id = i.b_person_id
+        RETURNING i.id, a.name AS a_name, b.name AS b_name""", dict(p=person_id)).fetchall()
+    return [dict(id=r['id'], a_first_name=first_name(r['a_name']), b_first_name=first_name(r['b_name']))
+            for r in sorted(rows, key=lambda r: r['id'])]
+
+
+def context(tx, person_id: int, other_uuid: str) -> Optional[dict]:
+    """5c.7: the introducer and the note, for the top of the pair's chat."""
+    if not is_uuid(other_uuid):
+        return None
+    row = tx.execute(
+        """SELECT ip.name, i.note FROM introduction i
+             JOIN person o ON o.uuid = %(u)s::uuid
+             JOIN person ip ON ip.id = i.introducer_person_id
+            WHERE i.status = 'matched' AND i.note_erased_at IS NULL AND i.note IS NOT NULL
+              AND ((i.a_person_id = %(me)s AND i.b_person_id = o.id)
+                OR (i.b_person_id = %(me)s AND i.a_person_id = o.id))
+              AND NOT is_blocked_pair(%(me)s, o.id)
+            ORDER BY i.matched_at DESC LIMIT 1""", dict(me=person_id, u=other_uuid)).fetchone()
+    if row is None:
+        return None
+    return dict(introducer_first_name=first_name(row['name']), note=row['note'])

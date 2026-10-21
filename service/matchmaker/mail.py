@@ -310,12 +310,18 @@ def push_after_commit(person_id: int, push: dict, switch: str,
     from service.matchmaker import switch_on
     if not switch_on(switch):
         return
-    send = lambda: _send_push(person_id, push, event_kind)  # noqa: E731
+    after_commit(lambda: _send_push(person_id, push, event_kind))
+
+
+def after_commit(fn) -> None:
+    """Run fn once the caller's transaction has committed: inside a
+    collect_pushes() block at its end, otherwise through held.after_commit
+    (the returnmail cron runs those after each job)."""
     pending = _PENDING.get()
     if pending is not None:
-        pending.append(send)
+        pending.append(fn)
     else:
-        held.after_commit(send)
+        held.after_commit(fn)
 
 
 @contextmanager

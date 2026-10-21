@@ -307,3 +307,43 @@ def get_introductions_allowance(s: t.SessionInfo):
     from service.matchmaker import introductions
     return _member_call('matchmaker_introductions',
                         lambda tx: introductions.allowance(tx, s.person_id), isolation='read committed')
+
+
+@aget('/introductions/pending')
+def get_introductions_pending(s: t.SessionInfo):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions', lambda tx: introductions.pending(tx, s.person_id),
+                        isolation='read committed')
+
+
+@apost('/introductions/<int:iid>/accept')
+def post_introduction_accept(s: t.SessionInfo, iid: int):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions', lambda tx: introductions.respond(
+        tx, s.person_id, iid, 'accept'), isolation='read committed')
+
+
+@apost('/introductions/<int:iid>/decline')
+def post_introduction_decline(s: t.SessionInfo, iid: int):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions', lambda tx: introductions.respond(
+        tx, s.person_id, iid, 'decline'), isolation='read committed')
+
+
+@aget('/introductions/told')
+def get_introductions_told(s: t.SessionInfo):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions',
+                        lambda tx: dict(told=introductions.told(tx, s.person_id)))
+
+
+@aget('/introductions/with/<uuid>')
+def get_introduction_with(s: t.SessionInfo, uuid: str):
+    from service.matchmaker import MatchmakerError, introductions
+
+    def go(tx):
+        out = introductions.context(tx, s.person_id, uuid)
+        if out is None:
+            raise MatchmakerError('not_found', 404)
+        return out
+    return _member_call('matchmaker_introductions', go, isolation='read committed')

@@ -182,7 +182,17 @@ SELECT
         '[]'::json
     )::jsonb AS peer_photo_uuids,
     EXTRACT(EPOCH FROM NOW() - peer.last_online_time)::int AS peer_seconds_since_last_online,
-    m.created_at::text AS created_at
+    m.created_at::text AS created_at,
+    -- Matchmaker (TEC-1845, 5c.6): "Introduced by Hannah" when two yeses to
+    -- an introduction made this match. The introducer's first name only.
+    (SELECT json_build_object('first_name', split_part(btrim(ip.name), ' ', 1))
+       FROM introduction i
+       JOIN person ip ON ip.id = i.introducer_person_id
+      WHERE i.status = 'matched'
+        AND ((i.a_person_id = %(me_id)s AND i.b_person_id = peer.id)
+          OR (i.b_person_id = %(me_id)s AND i.a_person_id = peer.id))
+      ORDER BY i.matched_at DESC
+      LIMIT 1) AS introduced_by
 FROM
     ahavah_match m
 JOIN person peer
@@ -568,6 +578,7 @@ def get_matches(s: t.SessionInfo):
                 "seconds_since_last_online": r["peer_seconds_since_last_online"],
             },
             "created_at": r["created_at"],
+            "introduced_by": r["introduced_by"],
         }
         for r in rows
     ]
