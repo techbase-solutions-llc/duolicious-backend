@@ -278,3 +278,32 @@ def get_recommendations_allowance(s: t.SessionInfo):
             ne = cleaned[1] if cleaned else s.email
         out = recommend.allowance(tx, address_key(ne))
     return out, 200, _NO_STORE
+
+
+# ---------------------------------------------------------------------------
+# Suggest two members (5b) and answer an introduction (5c). Member session;
+# 404 until matchmaker_introductions.
+# ---------------------------------------------------------------------------
+
+@aget('/introductions/candidates')
+def get_introduction_candidates(s: t.SessionInfo):
+    from service.matchmaker import introductions
+    for_uuid = request.args.get('for') or ''
+    q = request.args.get('q') or ''
+    return _member_call('matchmaker_introductions', lambda tx: introductions.candidates(
+        tx, s.person_id, for_uuid, q), isolation='read committed')
+
+
+@apost('/introductions')
+@validate(t.PostIntroduction)
+def post_introductions(req: t.PostIntroduction, s: t.SessionInfo):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions', lambda tx: introductions.suggest(
+        tx, s.person_id, req.a_uuid, req.b_uuid, req.note), status=201, isolation='read committed')
+
+
+@aget('/introductions/allowance')
+def get_introductions_allowance(s: t.SessionInfo):
+    from service.matchmaker import introductions
+    return _member_call('matchmaker_introductions',
+                        lambda tx: introductions.allowance(tx, s.person_id), isolation='read committed')

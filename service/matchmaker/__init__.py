@@ -112,3 +112,16 @@ def clean_first_name(value: object, max_len: int = 40) -> Optional[str]:
     if len(text) > max_len:
         raise MatchmakerError('bad_first_name', 400)
     return text
+
+
+def is_uuid(value: object) -> bool:
+    """A well-formed uuid, checked before it reaches SQL: a bad cast would
+    abort the caller's transaction."""
+    import uuid as _uuid
+    if not isinstance(value, str) or len(value) > 64:
+        return False
+    try:
+        _uuid.UUID(value)
+    except ValueError:
+        return False
+    return True

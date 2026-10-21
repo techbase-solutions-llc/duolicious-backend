@@ -1236,3 +1236,43 @@ def member_pair(make_person, add_photo):
         return a, b
 
     return _make
+
+
+@pytest.fixture
+def introducer_with_two(make_person, add_photo, sign_in):
+    """introducer_with_two() -> (headers, miriam, daniel, hannah): Hannah,
+    signed in, is matched with Miriam (a woman looking for men) and with
+    Daniel (a man looking for women). All three are activated members with
+    an approved photo. Rows go with make_person."""
+    from database import api_tx
+
+    def _member(name, gender, looks_for):
+        from uuid import uuid4
+        p = make_person(name=name, gender=gender,
+                        email=f"{name.split()[0].lower()}-{uuid4().hex[:8]}@ahavah-test.invalid")
+        with api_tx() as tx:
+            tx.execute('UPDATE person SET activated = TRUE, last_online_time = NOW() WHERE id = %(i)s',
+                       dict(i=p['id']))
+            if looks_for:
+                tx.execute("""INSERT INTO search_preference_gender (person_id, gender_id)
+                              SELECT %(i)s, id FROM gender WHERE name = %(g)s""", dict(i=p['id'], g=looks_for))
+        add_photo(p['id'])
+        return p
+
+    def _match(a, b):
+        with api_tx() as tx:
+            tx.execute('INSERT INTO ahavah_match (user_a_id, user_b_id) '
+                       'VALUES (LEAST(%(a)s::int, %(b)s::int), GREATEST(%(a)s::int, %(b)s::int))',
+                       dict(a=a['id'], b=b['id']))
+
+    def _make(introducer_name: str = 'Hannah Levi'):
+        hannah = _member(introducer_name, 'Woman', 'Man')
+        miriam = _member('Miriam Cohen', 'Woman', 'Man')
+        daniel = _member('Daniel Stone', 'Man', 'Woman')
+        _match(hannah, miriam)
+        _match(hannah, daniel)
+        return sign_in(hannah), miriam, daniel, hannah
+
+    _make.member = _member
+    _make.match = _match
+    return _make

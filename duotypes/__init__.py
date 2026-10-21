@@ -1314,3 +1314,11 @@ class PostRecommendation(BaseModel):
     first_name: Optional[str] = Field(default=None, max_length=200)
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostIntroduction(BaseModel):
+    """POST /introductions: suggest two members to each other (5b). The
+    note is checked in service.matchmaker (1 to 500 characters)."""
+    a_uuid: str = Field(max_length=64)
+    b_uuid: str = Field(max_length=64)
+    note: str = Field(max_length=2000)
