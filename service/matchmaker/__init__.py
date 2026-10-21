@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import unicodedata
 from typing import Literal, Optional
 
 from service.campaigns.switches import enabled
@@ -93,3 +94,21 @@ def first_name(name: Optional[str]) -> str:
     """The first word of a name, or 'Someone' when there is none."""
     words = (name or '').split()
     return words[0] if words else 'Someone'  # NEW LINE
+
+
+def clean_first_name(value: object, max_len: int = 40) -> Optional[str]:
+    """A first name as typed: control characters out, runs of space to one,
+    trimmed. None when empty; MatchmakerError('bad_first_name') when it is
+    not text or longer than max_len."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise MatchmakerError('bad_first_name', 400)
+    text = ''.join(ch if ch.isspace() or unicodedata.category(ch) not in ('Cc', 'Cf', 'Cs', 'Co')
+                   else '' for ch in value)
+    text = ' '.join(text.split())
+    if not text:
+        return None
+    if len(text) > max_len:
+        raise MatchmakerError('bad_first_name', 400)
+    return text

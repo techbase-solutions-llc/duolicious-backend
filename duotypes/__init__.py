@@ -1287,3 +1287,20 @@ class PutMemberAlert(BaseModel):
     criteria: dict
     notify_push: bool = True
     notify_email: bool = True
+
+
+class PostVisitorAlert(BaseModel):
+    """POST /alerts: a visitor asks to be told when someone who fits joins."""
+    email: str = Field(max_length=254)
+    looking_for: Literal['man', 'woman']
+    age_min: int
+    age_max: int
+    region: Optional[str] = Field(default=None, max_length=40)
+    first_name: Optional[str] = Field(default=None, max_length=200)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostAlertToken(BaseModel):
+    """POST /alerts/confirm and /alerts/stop: the token from the link."""
+    token: str = Field(min_length=1, max_length=200)

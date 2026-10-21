@@ -13,7 +13,18 @@ import re
 from flask import request
 
 import duotypes as t
-from service.api.decorators import adelete, aget, apost, aput, app, get, validate
+from service.api.decorators import (
+    adelete,
+    aget,
+    apost,
+    aput,
+    app,
+    get,
+    limiter,
+    post,
+    shared_recipient_limit,
+    validate,
+)
 
 _NO_STORE = {'Cache-Control': 'no-store'}
 
@@ -112,3 +123,77 @@ def post_matchmaker_alert_resume(s: t.SessionInfo):
 def delete_matchmaker_alert(s: t.SessionInfo):
     from service.matchmaker import alerts
     return _member_call('matchmaker_alerts', lambda tx: alerts.delete_member_alert(tx, s.person_id))
+
+
+# ---------------------------------------------------------------------------
+# A visitor's alert (3.1 to 3.9). No account; 404 until matchmaker_visitor_
+# alerts, except the stop link, which works while live whatever the
+# surfaces, so a link in an email always stops it.
+# ---------------------------------------------------------------------------
+
+_visitor_ip_limit = limiter.shared_limit('10 per hour; 30 per day', scope='mm_visitor_alert')
+
+
+@post('/alerts', limiter=[_visitor_ip_limit, shared_recipient_limit])
+@validate(t.PostVisitorAlert)
+def post_alerts(req: t.PostVisitorAlert):
+    """The landing's "Not ready to join?" form. A refused address (the free
+    defences) and a member's address get the same answer as a sent one."""
+    from database import api_tx
+    from service import leads, signupguard
+    from service.matchmaker import MatchmakerError, alerts, clean_first_name, surface_on
+    if not surface_on('matchmaker_visitor_alerts'):
+        return _off()
+    cleaned = leads.clean_email(req.email)
+    if cleaned is None:
+        return dict(error='bad_email'), 400, _NO_STORE
+    try:
+        first = clean_first_name(req.first_name)
+        criteria = dict(looking_for=req.looking_for, age_min=req.age_min, age_max=req.age_max,
+                        region=req.region)
+        from service.matchmaker.criteria import clean_visitor_criteria
+        clean_visitor_criteria(criteria)
+    except MatchmakerError as e:
+        return _refused(e)
+    # mail_refusal opens its own read, so it runs before the transaction.
+    refusal = leads.mail_refusal(email=cleaned[0], ip=request.remote_addr,
+                                 stamp=req.signup_stamp, website=req.website)
+    if refusal:
+        signupguard.record_refusal(refusal, new_address=True, email=cleaned[0],
+                                   ip=request.remote_addr)
+        return dict(state='check_email', email=cleaned[0]), 201, _NO_STORE
+    try:
+        with api_tx() as tx:
+            out = alerts.ask(tx, email=cleaned[0], criteria=criteria, first_name=first)
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, 201, _NO_STORE
+
+
+@post('/alerts/confirm')
+@validate(t.PostAlertToken)
+def post_alerts_confirm(req: t.PostAlertToken):
+    """Called by the web page's script, never by the emailed link itself,
+    so a mail scanner opening the link confirms nothing."""
+    from database import api_tx
+    from service.matchmaker import MatchmakerError, alerts, surface_on
+    if not surface_on('matchmaker_visitor_alerts'):
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            out = alerts.confirm(tx, req.token)
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, 200, _NO_STORE
+
+
+@post('/alerts/stop')
+@validate(t.PostAlertToken)
+def post_alerts_stop(req: t.PostAlertToken):
+    from database import api_tx
+    from service.matchmaker import alerts, live
+    if not live():
+        return _off()
+    with api_tx() as tx:
+        out = alerts.stop(tx, req.token)
+    return out, 200, _NO_STORE

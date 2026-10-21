@@ -974,6 +974,11 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # account (TEC-1845). Never fails the sign-up.
         from service.events.retention import link_rsvps_to_person
         link_rsvps_to_person(tx, row['person_id'])
+        # A visitor's confirmed alert becomes the member's, with what they
+        # were looking for carried over (TEC-1845, matchmaker 3.8). Never
+        # fails the sign-up.
+        from service.matchmaker.alerts import adopt_visitor_alert
+        adopt_visitor_alert(tx, row['person_id'])
 
         # Where the member came from (finding 42): the first touch and the
         # "How did you hear about Ahavah?" answer the web sends, cleaned,

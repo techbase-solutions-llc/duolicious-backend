@@ -117,3 +117,148 @@ def resume(tx, person_id: int) -> dict:
 def delete_member_alert(tx, person_id: int) -> dict:
     tx.execute('DELETE FROM match_alert WHERE person_id = %(p)s', dict(p=person_id))
     return member_alert(tx, person_id)
+
+
+# ---------------------------------------------------------------------------
+# A visitor's alert (3.1 to 3.9): a lead with source alert:visitor
+# ---------------------------------------------------------------------------
+
+def _queue_confirm(tx, alert_id: int, lead_id: int, email: str, criteria: dict,
+                   first_name: Optional[str], resends: int, token: str) -> Optional[int]:
+    from service.campaigns import outbox
+    from service.matchmaker import mail
+    from service.matchmaker.criteria import visitor_words
+    if not mail.campaign_on(mail.CAMPAIGN_VISITOR_CONFIRM):
+        return None
+
+    def go():
+        subject, body = mail.visitor_confirm_email(visitor_words(criteria), mail.confirm_url(token),
+                                                   first_name)
+        return outbox.enqueue_for_lead(
+            tx, campaign=mail.CAMPAIGN_VISITOR_CONFIRM, campaign_id=f'{alert_id}:{resends}',
+            lead_id=lead_id, email=email, subject=subject, html=body, from_addr=mail.FROM_ADDR,
+            list_unsubscribe=None, marketing=False)
+    return mail.guarded(tx, 'mm_visitor_confirm', go)
+
+
+def ask(tx, *, email: str, criteria: dict, first_name: Optional[str],
+        now: Optional[datetime] = None) -> dict:
+    """The landing's form (3.1). Answers {state: 'check_email', email} for a
+    new or unconfirmed alert, {state: 'already_on', email} once it is on (the
+    new criteria replace the old, 3.5). Asking again while unconfirmed is
+    "Send it again": a fresh link, at most MAX_RESENDS more times (3.9). An
+    address that belongs to a member writes nothing and answers the same:
+    members set alerts in the app."""
+    from service.leads import clean_email, new_token, record_lead
+    from service.leads.sources import ALERT_VISITOR
+    from service.matchmaker.criteria import clean_visitor_criteria
+    now = _now(now)
+    cleaned = clean_email(email)
+    if cleaned is None:
+        raise MatchmakerError('bad_email', 400)
+    address = cleaned[0]
+    c = clean_visitor_criteria(criteria)
+    answer = dict(state='check_email', email=address)
+    lead_id = record_lead(tx, email=address, source=ALERT_VISITOR)
+    if lead_id is None:
+        return answer
+    row = tx.execute('SELECT * FROM match_alert WHERE lead_id = %(l)s FOR UPDATE',
+                     dict(l=lead_id)).fetchone()
+    if row is not None and row['confirmed_at'] is not None:
+        tx.execute("""UPDATE match_alert SET criteria = %(c)s::jsonb,
+                             first_name = COALESCE(%(f)s, first_name), active = TRUE,
+                             updated_at = NOW()
+                       WHERE id = %(i)s""",
+                   dict(c=json.dumps(c), f=first_name, i=row['id']))
+        return dict(state='already_on', email=address)
+    if row is not None and row['resends'] >= MAX_RESENDS:
+        raise MatchmakerError('too_many_tries', 429)
+    token, hashed = new_token()
+    if row is None:
+        row = tx.execute(
+            """INSERT INTO match_alert (lead_id, first_name, criteria, notify_push, notify_email,
+                                        confirm_token_hash, confirm_by)
+               VALUES (%(l)s, %(f)s, %(c)s::jsonb, FALSE, TRUE, %(h)s, %(by)s)
+               RETURNING id, resends""",
+            dict(l=lead_id, f=first_name, c=json.dumps(c), h=hashed,
+                 by=now + CONFIRM_WINDOW)).fetchone()
+    else:
+        row = tx.execute(
+            """UPDATE match_alert SET criteria = %(c)s::jsonb, first_name = %(f)s,
+                      confirm_token_hash = %(h)s, confirm_by = %(by)s, resends = resends + 1,
+                      updated_at = NOW()
+                WHERE id = %(i)s RETURNING id, resends""",
+            dict(c=json.dumps(c), f=first_name, h=hashed, by=now + CONFIRM_WINDOW,
+                 i=row['id'])).fetchone()
+    _queue_confirm(tx, row['id'], lead_id, address, c, first_name, row['resends'], token)
+    return answer
+
+
+def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:
+    """The confirm page's call (3.6, 3.7): {state: 'confirmed' | 'already_on',
+    stop_token}. A link past its 7 days answers 410 expired. Counting starts
+    when the alert is turned on."""
+    from service.leads import confirm_lead
+    now = _now(now)
+    if not isinstance(token, str) or not token:
+        raise MatchmakerError('not_found', 404)
+    row = tx.execute('SELECT * FROM match_alert WHERE confirm_token_hash = %(h)s FOR UPDATE',
+                     dict(h=_hash(token))).fetchone()
+    if row is None or row['lead_id'] is None:
+        raise MatchmakerError('not_found', 404)
+    stop = stop_token(row['id'])
+    if row['confirmed_at'] is not None:
+        return dict(state='already_on', stop_token=stop)
+    if row['confirm_by'] is not None and row['confirm_by'] < now:
+        raise MatchmakerError('expired', 410)
+    tx.execute("""UPDATE match_alert SET confirmed_at = NOW(), counted_since = NOW(),
+                         stop_token_hash = %(s)s, updated_at = NOW()
+                   WHERE id = %(i)s""", dict(s=_hash(stop), i=row['id']))
+    confirm_lead(tx, row['lead_id'], 'link')
+    return dict(state='confirmed', stop_token=stop)
+
+
+def stop(tx, token: str) -> dict:
+    """The "Stop these emails" link. A visitor's alert is deleted at once; a
+    member's turns its email off and keeps the rest. An unknown token
+    answers the same, so the link says nothing about who has an alert."""
+    if isinstance(token, str) and token:
+        row = tx.execute('SELECT id, person_id FROM match_alert WHERE stop_token_hash = %(h)s',
+                         dict(h=_hash(token))).fetchone()
+        if row is not None and row['person_id'] is None:
+            tx.execute('DELETE FROM match_alert WHERE id = %(i)s', dict(i=row['id']))
+        elif row is not None:
+            tx.execute('UPDATE match_alert SET notify_email = FALSE, updated_at = NOW() '
+                       'WHERE id = %(i)s', dict(i=row['id']))
+    return dict(state='stopped')
+
+
+def adopt_visitor_alert(tx, person_id: int) -> None:
+    """At finish-onboarding, after link_leads_to_person: a confirmed visitor
+    alert of a lead now linked to this member becomes the member's alert,
+    with push off and email on, unless they already have one. Behind a
+    savepoint: it never undoes the sign-up."""
+    tx.execute('SAVEPOINT mm_adopt_alert')
+    try:
+        row = tx.execute(
+            """SELECT a.id, a.criteria FROM match_alert a JOIN lead l ON l.id = a.lead_id
+                WHERE l.person_id = %(p)s AND a.confirmed_at IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM match_alert m WHERE m.person_id = %(p)s)
+                ORDER BY a.created_at DESC LIMIT 1""", dict(p=person_id)).fetchone()
+        if row is not None:
+            v = row['criteria']
+            region = v.get('region')
+            c = clean_member_criteria(dict(age_min=v['age_min'], age_max=v['age_max']))
+            c['regions'] = [region] if region else []
+            tx.execute(
+                """UPDATE match_alert SET person_id = %(p)s, lead_id = NULL, criteria = %(c)s::jsonb,
+                          notify_push = FALSE, notify_email = TRUE, active = TRUE,
+                          confirm_token_hash = NULL, updated_at = NOW()
+                    WHERE id = %(i)s""",
+                dict(p=person_id, c=json.dumps(c), i=row['id']))
+    except Exception:
+        import traceback
+        print(traceback.format_exc())
+        tx.execute('ROLLBACK TO SAVEPOINT mm_adopt_alert')
+    else:
+        tx.execute('RELEASE SAVEPOINT mm_adopt_alert')
