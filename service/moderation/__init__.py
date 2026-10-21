@@ -17,12 +17,12 @@ Auth model:
 
 Resolving (TEC-1897): POST /admin/reports/<report_key>/resolve records an
 outcome, a note, who and when on the report's own person_report row
-(migration 0074). A report made again on the same pair is a new row (the
+(migration 0075). A report made again on the same pair is a new row (the
 skip upsert moves created_at and the 0072 trigger files it), so it starts
 unresolved. The member's reason is never copied into the outcome, the
 audit row or any email.
 
-"Email me when a report arrives" (admin_alert_pref, migration 0074) is the
+"Email me when a report arrives" (admin_alert_pref, migration 0075) is the
 owner's switch for the report email antiabuse/lodgereport sends.
 """
 

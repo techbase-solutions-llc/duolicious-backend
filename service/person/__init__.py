@@ -1888,7 +1888,7 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
                 face_checked_at = NULL,
                 face_confirmed_at = NULL,
                 -- Its own upload time, not the replaced photo's (TEC-1897,
-                -- migration 0074), so "Photo waiting" dates the new photo.
+                -- migration 0075), so "Photo waiting" dates the new photo.
                 uploaded_at = NOW()
         ), updated_person AS (
             UPDATE person

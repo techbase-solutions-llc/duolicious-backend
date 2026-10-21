@@ -1327,7 +1327,7 @@ def single_with_mentor(make_person, add_photo, sign_in):
 # ---------------------------------------------------------------------------
 # Admin, acting on the community (TEC-1897)
 # ---------------------------------------------------------------------------
-# Migration 0074 is idempotent, so applying it here is what the deploy does.
+# Migration 0075 is idempotent, so applying it here is what the deploy does.
 # It needs 0072 (person_report) first. Autouse: from TEC-1897 on, every
 # presence bump writes member_online_day and the report email reads
 # admin_alert_pref, and a database without them would stop moving
@@ -1339,7 +1339,7 @@ def admin_community_schema(admin_fixes_schema):
 
     from database import api_tx
 
-    path = Path(__file__).resolve().parent.parent / 'migrations' / '0074_admin_community.sql'
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0075_admin_community.sql'
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
 

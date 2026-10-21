@@ -1,13 +1,13 @@
--- 0074_admin_community.sql
+-- 0075_admin_community.sql
 -- Admin, acting on the community (TEC-1897,
 -- docs/superpowers/plans/2026-10-18-admin-community-data.md): the records
 -- the design needs that the database did not keep. Planned as 0069; 0070
--- to 0073 shipped first, so it takes the next free number. Needs 0072
+-- to 0074 shipped first, so it takes the next free number. Needs 0072
 -- (person_report) applied first.
 --
 -- Additive. The deploy applies each file once and records its checksum
 -- (scripts/apply-deploy-migrations.sh), and stops if an applied file
--- changes: never edit this file once it has shipped; a change is 0075.
+-- changes: never edit this file once it has shipped; a change is 0076.
 -- Idempotent, because the test fixtures apply it at every session start.
 --
 -- person, photo, person_report and email_send_log are busy tables. Each

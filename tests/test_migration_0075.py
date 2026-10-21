@@ -1,4 +1,4 @@
-"""Migration 0074 (TEC-1897): the records the acting-on-the-community
+"""Migration 0075 (TEC-1897): the records the acting-on-the-community
 design needs that the database did not keep. The deploy runs each file once,
 but the test fixtures run it at every session start, so every test here runs
 it twice first."""
@@ -11,7 +11,7 @@ import pytest
 
 from database import api_tx
 
-_MIGRATION = Path(__file__).resolve().parent.parent / 'migrations' / '0074_admin_community.sql'
+_MIGRATION = Path(__file__).resolve().parent.parent / 'migrations' / '0075_admin_community.sql'
 
 
 def _apply() -> None:
