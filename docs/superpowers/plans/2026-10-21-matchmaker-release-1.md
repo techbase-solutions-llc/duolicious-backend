@@ -1672,3 +1672,8 @@ Not covered by decision, each in the list above: the chaperone (1), the other ki
 **Review Focus.** Each of the 5 lines has its test in the task named.
 
 **Proportion.** The plan writes out the schema, the titles, the copy and the tests' assertions; the rest is signatures.
+
+## Owner's answers, second round (21 Oct 2026)
+
+- **Who a member can recommend:** only people they have interacted with in the last 8 weeks, from every source: matches, likes, views, the map and Spotlight. Before this answer, the limit applied to Spotlight only.
+- **Admin drawer:** keep both Grant mod and Clear onboardee.
