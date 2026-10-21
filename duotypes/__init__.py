@@ -1334,3 +1334,14 @@ class PostMentorInvite(BaseModel):
     relation: str = Field(max_length=20)
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostMentorSession(BaseModel):
+    """POST /mentor/session: from an invitation link, or (no token) from
+    the sign-in code's session."""
+    invite_token: Optional[str] = Field(default=None, max_length=200)
+
+
+class PutMentorNote(BaseModel):
+    """PUT /mentor/singles/<uuid>/notes/<uuid>: empty deletes the note."""
+    note: Optional[str] = Field(default=None, max_length=4000)

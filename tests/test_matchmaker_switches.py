@@ -64,3 +64,34 @@ def test_the_address_key_is_keyed_not_a_plain_hash():
     from service.matchmaker import address_key
     assert address_key('hannah@example.com') != hashlib.sha256(b'hannah@example.com').hexdigest()
     assert address_key('hannah@example.com') == address_key('hannah@example.com')
+
+
+def _is_matchmaker_rule(rule: str) -> bool:
+    import re
+    return (rule.startswith(('/matchmaker', '/alerts', '/introductions', '/recommendations', '/mentor'))
+            or bool(re.match(r'^/conversations/<[^>]+>/(share|sharing)$', rule))
+            or bool(re.match(r'^/matches/<[^>]+>/mentor-note$', rule)))
+
+
+def test_every_matchmaker_route_answers_404_while_dark(app, client, monkeypatch):
+    """Global constraint: while matchmaker_live is off, every matchmaker
+    route but GET /matchmaker/status answers 404, whatever the body or
+    headers."""
+    for env in NEW.values():
+        monkeypatch.setenv(env, '1')
+    monkeypatch.delenv('AHAVAH_MATCHMAKER_LIVE_ENABLED')
+    seen = []
+    for rule in app.url_map.iter_rules():
+        if not _is_matchmaker_rule(rule.rule):
+            continue
+        path = rule.rule
+        for arg in rule.arguments:
+            path = path.replace(f'<int:{arg}>', '1').replace(f'<{arg}>', '00000000-0000-0000-0000-000000000000')
+        for method in sorted(rule.methods - {'HEAD', 'OPTIONS'}):
+            if (method, rule.rule) == ('GET', '/matchmaker/status'):
+                continue
+            r = client.open(path, method=method, json={'email': 'x@ahavah-test.invalid'},
+                            headers={'X-Mentor-Token': 'x' * 32})
+            seen.append((method, rule.rule))
+            assert r.status_code == 404, (method, rule.rule, r.status_code)
+    assert len(seen) >= 30, seen

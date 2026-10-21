@@ -18,7 +18,17 @@ from __future__ import annotations
 from flask import request
 
 import duotypes as t
-from service.api.decorators import adelete, aget, apost, delete, get, limiter, post, put, shared_recipient_limit, validate
+from service.api.decorators import (
+    adelete,
+    aget,
+    apost,
+    delete,
+    get,
+    limiter,
+    put,
+    shared_recipient_limit,
+    validate,
+)
 from service.api.matchmaker_routes import _NO_STORE, _member_call, _off, _refused
 
 
@@ -94,3 +104,122 @@ def get_conversation_sharing(s: t.SessionInfo, uuid: str):
     with api_tx('read committed') as tx:
         out = mentors.sharing(tx, s.person_id, uuid)
     return out, 200, _NO_STORE
+
+
+# ---------------------------------------------------------------------------
+# The mentor's side (section 7). Header X-Mentor-Token, except the sign-in
+# routes. 404 until matchmaker_mentors; every answer is no-store.
+# ---------------------------------------------------------------------------
+
+def _mentor_token():
+    return request.headers.get('X-Mentor-Token') or None
+
+
+def _mentor_call(fn, *, status: int = 200, isolation: str = 'read committed'):
+    """Runs fn(tx, mentor) for the token's mentor."""
+    from database import api_tx
+    from service.matchmaker import MatchmakerError, mentor_view, surface_on
+    if not surface_on('matchmaker_mentors'):
+        return _off()
+    try:
+        with api_tx(isolation) as tx:
+            out = fn(tx, mentor_view.mentor_for(tx, _mentor_token()))
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, status, _NO_STORE
+
+
+@get('/mentor/invites/<token>')
+def get_mentor_invite(token: str):
+    """The sign-in page's look at its invitation (7.1)."""
+    from database import api_tx
+    from service.matchmaker import MatchmakerError, mentor_view, surface_on
+    if not surface_on('matchmaker_mentors'):
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            out = mentor_view.invitation(tx, token)
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, 200, _NO_STORE
+
+
+@apost('/mentor/session', auth='optional', expected_onboarding_status=None)
+@validate(t.PostMentorSession)
+def post_mentor_session(req: t.PostMentorSession, s):
+    """With an invitation token, the link signs the mentor in once. Without
+    one it needs the session /check-otp leaves for the mentor's address."""
+    from database import api_tx
+    from service.matchmaker import MatchmakerError, mentor_view, surface_on
+    if not surface_on('matchmaker_mentors'):
+        return _off()
+    if not req.invite_token and (s is None or not s.signed_in):
+        return dict(error='signed_out'), 401, _NO_STORE
+    try:
+        with api_tx('read committed') as tx:
+            out = mentor_view.start_session(tx, invite_token=req.invite_token,
+                                            session_email=None if req.invite_token else s.email)
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, 201, _NO_STORE
+
+
+@delete('/mentor/session')
+def delete_mentor_session():
+    from database import api_tx
+    from service.matchmaker import mentor_view, surface_on
+    if not surface_on('matchmaker_mentors'):
+        return _off()
+    with api_tx() as tx:
+        mentor_view.end_session(tx, _mentor_token())
+    return {}, 200, _NO_STORE
+
+
+@get('/mentor/me')
+def get_mentor_me():
+    from service.matchmaker import mentor_view
+    return _mentor_call(lambda tx, m: mentor_view.singles(tx, m))
+
+
+@get('/mentor/singles/<single>/matches')
+def get_mentor_matches(single: str):
+    from service.matchmaker import mentor_view
+    return _mentor_call(lambda tx, m: dict(matches=mentor_view.matches(tx, m, single)))
+
+
+@get('/mentor/singles/<single>/matches/<match>')
+def get_mentor_match(single: str, match: str):
+    from service.matchmaker import mentor_view
+    return _mentor_call(lambda tx, m: mentor_view.match_detail(tx, m, single, match))
+
+
+@get('/mentor/singles/<single>/matches/<match>/conversation')
+def get_mentor_conversation(single: str, match: str):
+    from service.matchmaker import mentor_view
+    raw = request.args.get('before')
+    before = int(raw) if raw and raw.isdigit() else None
+    return _mentor_call(lambda tx, m: mentor_view.conversation(tx, m, single, match, before))
+
+
+@put('/mentor/singles/<single>/notes/<match>')
+@validate(t.PutMentorNote)
+def put_mentor_note(req: t.PutMentorNote, single: str, match: str):
+    from service.matchmaker import mentor_view
+
+    def go(tx, m):
+        mentor_view.save_note(tx, m, single, match, req.note)
+        return dict(saved=True)
+    return _mentor_call(go, isolation='REPEATABLE READ')
+
+
+@aget('/matches/<uuid>/mentor-note')
+def get_match_mentor_note(s: t.SessionInfo, uuid: str):
+    """8.5: the single reads their mentor's note on that match."""
+    from service.matchmaker import MatchmakerError, mentor_view
+
+    def go(tx):
+        note = mentor_view.note_for_single(tx, s.person_id, uuid)
+        if note is None:
+            raise MatchmakerError('not_found', 404)
+        return dict(note=note)
+    return _member_call('matchmaker_mentors', go, isolation='read committed')
