@@ -211,7 +211,11 @@ def rsvp_view(tx, token: str, now: Optional[datetime] = None) -> dict:
         raise EventError('not_found', 404)
     event = public.view_of(event_row, now)
     confirmed = r['confirmed_at'] is not None
-    if confirmed and r['status'] == 'going':
+    # A gathering an admin pulled (paused, or sent back for approval) keeps
+    # its venue and call link from everyone, its guests included.
+    if not public.visible(event_row):
+        event.pop('venue', None)
+    elif confirmed and r['status'] == 'going':
         if event_row['mode'] == 'in_person' and event_row['venue']:
             event['venue'] = event_row['venue']
         if event_row['mode'] == 'online':
@@ -222,7 +226,10 @@ def rsvp_view(tx, token: str, now: Optional[datetime] = None) -> dict:
 
 def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:
     """Takes the place under the event row's lock. Confirming again shows
-    the same view."""
+    the same view. A gathering the public cannot find (paused, or waiting
+    for approval) takes no place; one that has started takes none either,
+    even when it was moved earlier than the link's window."""
+    from service.events.public import visible
     from service.leads import confirm_lead
     now = _now(now)
     r = _by_token(tx, token)
@@ -233,7 +240,9 @@ def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:
         return rsvp_view(tx, token, now)
     if event['status'] == 'cancelled':
         raise EventError('cancelled_now', 409)
-    if r['confirm_by'] <= now:
+    if not visible(event):
+        raise EventError('not_found', 404)
+    if r['confirm_by'] <= now or event['starts_at'] <= now:
         raise EventError('expired', 410)
     try:
         _check_places(event, _going_others(tx, event['id'], r['id']), r['party_size'])
@@ -271,7 +280,10 @@ def calendar(tx, token: str, now: Optional[datetime] = None) -> str:
     r = _by_token(tx, token)
     e = dict(tx.execute('SELECT slug, title, starts_at, ends_at, status, mode, venue, online_url '
                         'FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone())
-    location = None
-    if view['rsvp']['confirmed'] and view['rsvp']['status'] == 'going':
-        location = e['venue'] if e['mode'] == 'in_person' else e['online_url']
+    # The view holds the venue or the call link only for a confirmed guest
+    # of a gathering the public can find.
+    ev = view['event']
+    location = ev.get('venue') if e['mode'] == 'in_person' else ev.get('online_url')
+    if not (view['rsvp']['confirmed'] and view['rsvp']['status'] == 'going'):
+        location = None
     return calendar_file(e, location=location, url=f"{WEB_BASE_URL}/e/{e['slug']}", now=now)

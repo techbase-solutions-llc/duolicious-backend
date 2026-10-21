@@ -147,6 +147,27 @@ def test_a_gathering_cancelled_before_the_guest_confirms(client, published, orga
     assert (r.status_code, r.get_json()) == (409, {'error': 'closed'})
 
 
+def test_a_gathering_moved_to_start_earlier_takes_no_place_once_it_has_started(client, published):
+    slug = published()
+    token = _rsvp_token(client, slug, 'early@ahavah-test.invalid')
+    _set_event(slug, starts_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+    r = client.get(f'/rsvp/confirm/{token}')
+    assert (r.status_code, r.get_json()) == (410, {'error': 'expired'})
+
+
+def test_a_paused_gathering_keeps_its_venue_from_its_guests_and_takes_no_place(client, published):
+    slug = published(venue='14 Elm Street', venue_visibility='confirmed')
+    going = _rsvp_token(client, slug, 'paused-a@ahavah-test.invalid')
+    assert client.get(f'/rsvp/confirm/{going}').status_code == 200
+    waiting = _rsvp_token(client, slug, 'paused-b@ahavah-test.invalid')
+    _set_event(slug, paused_at=datetime.now(timezone.utc))
+    assert 'venue' not in client.get(f'/rsvp/{going}').get_json()['event']
+    assert 'Elm Street' not in client.get(f'/rsvp/{going}/calendar.ics').get_data(as_text=True)
+    assert client.get(f'/rsvp/confirm/{waiting}').status_code == 404
+    assert _rsvp(slug, 'paused-b@ahavah-test.invalid')['confirmed_at'] is None
+    assert client.post(f'/rsvp/{going}/cancel').get_json()['rsvp']['status'] == 'cancelled'
+
+
 def test_cancelling_frees_the_place(client, published):
     slug = published(capacity=2)
     token = _rsvp_token(client, slug, 'f@ahavah-test.invalid', 2)

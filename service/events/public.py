@@ -31,6 +31,12 @@ _SELECT = """
 _VISIBLE = "e.published_at IS NOT NULL AND e.status IN ('published', 'cancelled') AND e.paused_at IS NULL"
 
 
+def visible(row: dict) -> bool:
+    """_VISIBLE for a row already read: what the public may find."""
+    return (row['published_at'] is not None and row['status'] in ('published', 'cancelled')
+            and row['paused_at'] is None)
+
+
 def _iso(t: Optional[datetime]) -> Optional[str]:
     return t.astimezone(timezone.utc).isoformat() if t else None
 
