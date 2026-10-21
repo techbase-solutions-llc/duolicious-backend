@@ -183,3 +183,66 @@ def get_report_messages(s: t.SessionInfo):
             'after_unmatch': bool(r['held']),
         })
     return {'count': len(messages), 'messages': messages}
+
+
+@apost('/admin/reports/<report_key>/resolve')
+def post_resolve_report(s: t.SessionInfo, report_key: str):
+    """Records an outcome, who resolved it and when (TEC-1897; frame R.3).
+    Recording "deactivated" does not deactivate anyone: the drawer's own
+    Deactivate action does that. The member's reason is never copied."""
+    require_admin(s)
+    from service import moderation
+    body = request.get_json(silent=True) or {}
+    outcome = body.get('outcome')
+    note = body.get('note') or ''
+    if outcome not in moderation.OUTCOMES or not isinstance(note, str) or len(note) > moderation.NOTE_MAX:
+        abort(400)
+    with api_tx() as tx:
+        result = moderation.resolve_report(tx, report_key, outcome, note.strip(),
+                                           s.person_uuid, s.email)
+        if result == 'resolved':
+            record_audit(tx, s, 'resolve_report',
+                         metadata={'report_key': report_key, 'outcome': outcome})
+    if result == 'not_found':
+        abort(404)
+    if result == 'already_resolved':
+        return {'error': 'already_resolved'}, 409
+    return {'ok': True}
+
+
+def _report_alert(tx, s: t.SessionInfo) -> dict:
+    from service.admin.owner import is_owner
+    row = tx.execute("SELECT enabled FROM admin_alert_pref WHERE alert = 'report'").fetchone()
+    # No row reads as on, as the report email itself reads it.
+    return dict(enabled=True if row is None else bool(row['enabled']),
+                can_change=is_owner(s.email))
+
+
+@aget('/admin/alerts/report')
+def get_report_alert(s: t.SessionInfo):
+    """"Email me when a report arrives" (frame R.2): the owner's switch for
+    the report email antiabuse/lodgereport sends to DUO_REPORT_EMAIL. Every
+    admin sees it; `can_change` is True on the owner's account only."""
+    require_admin(s)
+    with api_tx('read committed') as tx:
+        return _report_alert(tx, s)
+
+
+@apost('/admin/alerts/report')
+def post_report_alert(s: t.SessionInfo):
+    require_admin(s)
+    from service.admin.owner import is_owner
+    if not is_owner(s.email):
+        abort(403)
+    value = (request.get_json(silent=True) or {}).get('enabled')
+    if not isinstance(value, bool):
+        abort(400)
+    with api_tx() as tx:
+        tx.execute(
+            """INSERT INTO admin_alert_pref (alert, enabled, updated_at, updated_by)
+               VALUES ('report', %(v)s, NOW(), %(by)s)
+               ON CONFLICT (alert) DO UPDATE
+                  SET enabled = EXCLUDED.enabled, updated_at = NOW(), updated_by = EXCLUDED.updated_by""",
+            dict(v=value, by=s.email))
+        record_audit(tx, s, 'set_report_alert', metadata={'enabled': value})
+        return _report_alert(tx, s)
