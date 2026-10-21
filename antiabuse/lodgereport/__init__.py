@@ -6,7 +6,7 @@ from antiabuse.sql import (
 )
 from typing import Any
 import os
-from service.config import API_BASE_URL
+from service.config import API_BASE_URL, EMAIL_DOMAIN
 from smtp import aws_smtp
 import traceback
 import threading
@@ -173,6 +173,10 @@ def parse_email_string(email_string):
 REPORT_EMAIL = os.environ['DUO_REPORT_EMAIL']
 REPORT_EMAILS = parse_email_string(REPORT_EMAIL)
 PRIMARY_REPORT_EMAIL = REPORT_EMAILS[0].email
+# Sent FROM Ahavah's own sender, as every other email is (21 Oct 2026). It
+# used to go From: the report inbox (admin@techbaseltd.com), a domain the
+# mailer cannot send for, so reports never arrived.
+REPORT_FROM = f'support@{EMAIL_DOMAIN}'
 print(REPORT_EMAILS)
 
 
@@ -210,7 +214,7 @@ def _send_report_email(
                 last_messages=last_messages,
             ),
             to_addr=report_email,
-            from_addr=PRIMARY_REPORT_EMAIL,
+            from_addr=REPORT_FROM,
         )
     except:
         print(traceback.format_exc())
