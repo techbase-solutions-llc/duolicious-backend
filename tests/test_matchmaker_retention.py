@@ -77,10 +77,13 @@ def test_the_key_still_stops_a_second_recommendation_after_erasure(client, sent_
     rec = sent_recommendation()
     _settle(rec['id'])
     _purge()
-    other = make_person(name='Ruth', email=f'ruth-{uuid4().hex[:8]}@ahavah-test.invalid')
+    ruth = f'ruth-{uuid4().hex[:8]}@ahavah-test.invalid'
+    other = make_person(name='Ruth', email=ruth)
     r = client.post('/recommendations', headers=sign_in(other), json=dict(email=rec['single']))
     assert r.get_json() == {'state': 'sent'}
     assert [x for x in outbox_rows('mm_recommend') if x['email'] == rec['single']] == []
+    with api_tx() as tx:
+        tx.execute('DELETE FROM recommendation WHERE sender_key = %(k)s', dict(k=address_key(ruth)))
 
 
 def test_a_recommendation_row_goes_after_12_months(sent_recommendation):
@@ -195,8 +198,8 @@ def test_deleting_an_account_deletes_its_matchmaker_data(client, single_with_men
                VALUES ('k-' || md5(random()::text), 'Ruth', %(k)s, 'sent', NOW()) RETURNING id""",
             dict(k=address_key(normalize_email(email)))).fetchone()
     client.post(f"/conversations/{match['uuid']}/share", headers=h_single)
-    mine = client.post('/recommendations', headers=h_single,
-                       json=dict(email=f'friend-{uuid4().hex[:8]}@ahavah-test.invalid', note='From Rivka'))
+    friend = f'friend-{uuid4().hex[:8]}@ahavah-test.invalid'
+    mine = client.post('/recommendations', headers=h_single, json=dict(email=friend, note='From Rivka'))
     assert mine.status_code == 201
     # A mentor account with the same address as another leaving person.
     leaving_mentor = single['mentor_email']
@@ -216,6 +219,8 @@ def test_deleting_an_account_deletes_its_matchmaker_data(client, single_with_men
         gone = tx.execute('SELECT 1 FROM mentor_account WHERE id = %(i)s',
                           dict(i=single['mentor_account_id'])).fetchone() is None
     assert gone is (shape == 'pending_deletion')
+    with api_tx() as tx:
+        tx.execute('DELETE FROM recommendation WHERE recipient_key = %(k)s', dict(k=address_key(friend)))
 
 
 def test_an_account_with_no_address_binds_empty_lists():
