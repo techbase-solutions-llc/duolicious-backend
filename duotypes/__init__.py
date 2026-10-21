@@ -1277,3 +1277,13 @@ class PatchInviteRequest(BaseModel):
 
 class PostAhavahAttending(BaseModel):
     on: bool
+
+
+# Matchmaker (TEC-1845). Values are checked in service/matchmaker, which
+# answers {error, field} with the criterion that is wrong.
+
+class PutMemberAlert(BaseModel):
+    """PUT /matchmaker/alert."""
+    criteria: dict
+    notify_push: bool = True
+    notify_email: bool = True
