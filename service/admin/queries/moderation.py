@@ -26,7 +26,9 @@ Q_PHOTOS_LIST = f"""
      -- had sent for a human decision was never shown to anyone (TEC-946).
      -- 'approved_no_face' (TEC-1897, finding 9): approved photos the
      -- detector saw no face in and no moderator has confirmed.
-     WHERE (%(state)s = ''
+     -- 'all' (TEC-1845 admin audit): every status. An empty state is
+     -- read as 'pending' by the route, so the admin had no way to ask.
+     WHERE (%(state)s = '' OR %(state)s = 'all'
             OR ph.moderation_status::text = %(state)s
             OR (%(state)s = 'queue'
                 AND ph.moderation_status::text IN ('pending', 'manual_review'))
