@@ -1,5 +1,14 @@
 """SQL for GET /admin/users (list) and GET /admin/users/:uuid (detail)."""
 
+from service.admin.queries.community import waiting_likes_sql
+
+# Likes nobody has answered, per member (TEC-1897), for the Users list's
+# "Has likes waiting" filter. Binds %(ex)s.
+_WAITING = f"""
+    waiting AS (
+        SELECT person_id, count(*)::int AS n FROM ({waiting_likes_sql()}) w GROUP BY person_id
+    )"""
+
 # Unified "users" rowset across person + beta_signup + waitlist_signup.
 # Keyed on email. The same email can appear in multiple source tables;
 # we coalesce. Returns paginated rows + total count.
@@ -12,10 +21,12 @@
 #   has_premium      — person.entitlements contains 'premium'
 #   role_admin       — 'admin' = ANY(person.roles)
 #   role_mod         — 'mod' = ANY(person.roles)
+#   has_likes_waiting: likes nobody has answered (TEC-1897)
 #
 # Search q: ILIKE prefix match against email / person.name / person.uuid::text.
-Q_USERS_LIST = """
-    WITH unified AS (
+Q_USERS_LIST = f"""
+    WITH {_WAITING.strip()},
+    unified AS (
         SELECT
             COALESCE(p.email, bs.email, ws.email) AS email,
             p.uuid::text AS uuid,
@@ -27,10 +38,13 @@ Q_USERS_LIST = """
             (bs.email IS NOT NULL) AS in_beta,
             (ws.email IS NOT NULL) AS in_waitlist,
             (p.email IS NOT NULL) AS has_person,
-            COALESCE(bs.unsubscribed_at, ws.unsubscribed_at) AS unsubscribed_at
+            COALESCE(bs.unsubscribed_at, ws.unsubscribed_at) AS unsubscribed_at,
+            p.last_online_time AS last_online_at,
+            COALESCE(wt.n, 0) AS likes_waiting
           FROM person p
           FULL OUTER JOIN beta_signup bs ON bs.email = p.email
           FULL OUTER JOIN waitlist_signup ws ON ws.email = COALESCE(p.email, bs.email)
+          LEFT JOIN waiting wt ON wt.person_id = p.id
     )
     SELECT *
       FROM unified
@@ -46,12 +60,14 @@ Q_USERS_LIST = """
        AND (NOT %(has_premium)s OR 'premium' = ANY(entitlements))
        AND (NOT %(role_admin)s OR 'admin' = ANY(roles))
        AND (NOT %(role_mod)s OR 'mod' = ANY(roles))
+       AND (NOT %(has_likes_waiting)s OR likes_waiting > 0)
      ORDER BY COALESCE(sign_up_time, NOW()) DESC NULLS LAST, email
      LIMIT %(limit)s OFFSET %(offset)s
 """
 
-Q_USERS_COUNT = """
-    WITH unified AS (
+Q_USERS_COUNT = f"""
+    WITH {_WAITING.strip()},
+    unified AS (
         SELECT
             COALESCE(p.email, bs.email, ws.email) AS email,
             p.uuid::text AS uuid,
@@ -61,10 +77,12 @@ Q_USERS_COUNT = """
             (bs.email IS NOT NULL) AS in_beta,
             (ws.email IS NOT NULL) AS in_waitlist,
             (p.email IS NOT NULL) AS has_person,
-            COALESCE(bs.unsubscribed_at, ws.unsubscribed_at) AS unsubscribed_at
+            COALESCE(bs.unsubscribed_at, ws.unsubscribed_at) AS unsubscribed_at,
+            COALESCE(wt.n, 0) AS likes_waiting
           FROM person p
           FULL OUTER JOIN beta_signup bs ON bs.email = p.email
           FULL OUTER JOIN waitlist_signup ws ON ws.email = COALESCE(p.email, bs.email)
+          LEFT JOIN waiting wt ON wt.person_id = p.id
     )
     SELECT COUNT(*) AS total
       FROM unified
@@ -80,6 +98,7 @@ Q_USERS_COUNT = """
        AND (NOT %(has_premium)s OR 'premium' = ANY(entitlements))
        AND (NOT %(role_admin)s OR 'admin' = ANY(roles))
        AND (NOT %(role_mod)s OR 'mod' = ANY(roles))
+       AND (NOT %(has_likes_waiting)s OR likes_waiting > 0)
 """
 
 # Single-user blob: person row + photos + entitlements + last-20 tokens +
@@ -108,7 +127,11 @@ Q_USER_PROFILE = """
         p.ahavah_verification_tier::text AS verification_tier,
         p.deletion_requested_at,
         p.location_short_friendly AS location_short,
-        p.location_long_friendly AS location_long
+        p.location_long_friendly AS location_long,
+        -- Push on or off in the drawer (TEC-1897, frame W.5).
+        (SELECT count(*)::int FROM push_subscription ps WHERE ps.person_id = p.id) AS push_devices,
+        EXISTS (SELECT 1 FROM push_subscription ps
+                 WHERE ps.person_id = p.id AND ps.consecutive_failures > 0) AS push_failing
       FROM person p
      WHERE p.uuid = %(uuid)s::uuid
 """

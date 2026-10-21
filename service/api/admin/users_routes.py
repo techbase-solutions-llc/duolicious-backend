@@ -22,6 +22,8 @@ from service.admin.queries import (
     Q_USER_WAITLIST_ANSWERS,
 )
 from database import api_tx
+from service.admin.jsonrow import iso
+from service.growth.queries import _excluded
 
 
 _PAGE_SIZE = 20
@@ -29,6 +31,7 @@ _PAGE_SIZE = 20
 _FILTER_KEYS = (
     'has_person', 'waitlist_only', 'beta_only',
     'unsubscribed', 'has_premium', 'role_admin', 'role_mod',
+    'has_likes_waiting',
 )
 
 
@@ -48,9 +51,11 @@ def get_admin_users(s: t.SessionInfo):
         'limit': _PAGE_SIZE,
         'offset': (page - 1) * _PAGE_SIZE,
         **{k: (k in active_filters) for k in _FILTER_KEYS},
+        'ex': _excluded(),
     }
     with api_tx('read committed') as tx:
-        rows = [dict(r) for r in tx.execute(Q_USERS_LIST, params).fetchall()]
+        rows = [dict(r, last_online_at=iso(r['last_online_at']))
+                for r in tx.execute(Q_USERS_LIST, params).fetchall()]
         total_row = tx.execute(Q_USERS_COUNT, params).fetchone()
     total = int(total_row['total']) if total_row else 0
     return {
