@@ -100,10 +100,15 @@ def test_removals_halted_by_emergency_stop_only(client, make_person):
         assert body['halted'] is False and any(t['request_key'] == rk for t in body['tasks'])   # paused publication does not pause cleanup
         with api_tx() as tx: _set(tx, external_access_enabled='false')
         body = client.get('/admin/growth/removals?pending=1', headers=H).get_json()
-        # Wave 2 Task 5: the task list is withheld under the stop, but the two
-        # counts are not -- a stop that has been engaged for a while is
-        # exactly when a removal backlog must stay visible.
-        assert body['tasks'] == [] and body['halted'] is True
+        # Wave 2 Task 5: the automatic deletes are withheld under the stop, but
+        # the two counts are not -- a stop that has been engaged for a while
+        # is exactly when a removal backlog must stay visible. TEC-1845 admin
+        # audit: the tasks a person does by hand stay listed too, and the
+        # worker's own drain gets nothing.
+        assert body['halted'] is True
+        assert all(t['reason'] != 'delete_via_api' for t in body['tasks'])
+        assert {t['reason'] for t in body['tasks'] if t['request_key'] == rk} == {'manual_instagram'}
+        assert client.get('/admin/growth/removals?worker=1', headers=H).get_json()['tasks'] == []
         assert isinstance(body['overdue'], int) and isinstance(body['outstanding_cleanup'], int)
     finally:
         with api_tx() as tx: _restore_defaults(tx)

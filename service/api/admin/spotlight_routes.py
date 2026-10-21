@@ -562,9 +562,15 @@ _Q_REMOVALS = """
            t.evidence,
            q.request_key,
            q.kind,
-           q.caption
+           q.caption,
+           -- What to look for on the platform (TEC-1845 admin audit): a
+           -- member of the week key is a bare hex id that names nothing.
+           -- NULL once the member's account is gone.
+           split_part(sp.name, ' ', 1) AS subject_first_name,
+           q.post_url
       FROM spotlight_removal_task t
       LEFT JOIN publishing_queue q ON q.id = t.queue_id
+      LEFT JOIN person sp ON sp.id = q.subject_person_id
      WHERE (%(pending)s::bool IS NOT TRUE
             OR (t.done_at IS NULL AND t.next_attempt_at <= NOW()
                 AND t.reason IN ('delete_via_api', 'manual_instagram', 'investigate')))
@@ -579,6 +585,10 @@ _Q_REMOVALS = """
        AND (%(worker)s::bool IS NOT TRUE
             OR (t.done_at IS NULL AND t.next_attempt_at <= NOW()
                 AND t.reason = 'delete_via_api'))
+       -- Under the emergency stop only the worker's automatic deletes are
+       -- withheld; the tasks a person does by hand stay listed (TEC-1845
+       -- admin audit).
+       AND (%(halted)s::bool IS NOT TRUE OR t.reason <> 'delete_via_api')
      -- Wave 3d Task 4 (acceptance 8c): due tasks (`pending=1`, `worker=1`)
      -- are served closest to their removal deadline first, ties oldest task
      -- first; newest first handed out the newest 200 of 8198 due tasks and
@@ -1497,8 +1507,14 @@ def get_growth_removals():
         # tasks stay pending in the database for later, this just refuses to
         # hand them to the worker while the stop is engaged.
         halted = settings(tx).get('external_access_enabled') != 'true'
-        rows = [] if halted else tx.execute(_Q_REMOVALS, dict(pending=pending, attention=attention,
-                                                          worker=worker)).fetchall()
+        # Under the stop the worker gets nothing, and everyone else gets the
+        # tasks a person does by hand (manual_instagram, investigate,
+        # needs_attention): they call no platform, and a stop is exactly
+        # when the owner needs to see which posts members asked to have
+        # removed (TEC-1845 admin audit). They used to vanish with the rest.
+        rows = [] if halted and worker else tx.execute(
+            _Q_REMOVALS, dict(pending=pending, attention=attention, worker=worker,
+                              halted=halted)).fetchall()
         # Both counts are read even under the stop, and deliberately: they
         # are plain database reads, and a stop that has been engaged for a
         # while is exactly when a growing removal backlog or a pile of
