@@ -2,8 +2,10 @@
 
 A member's alert (1.1 to 1.10) is on as soon as it is saved: their address
 is proved. A visitor's (3.1 to 3.9) is a lead with source alert:visitor and
-waits for the link in its confirm email. Either names nobody: what is kept
-is what they are looking for and when we last told them.
+waits for the link in its confirm email. So does any later change to it:
+the form can be sent by anyone who knows the address (migration 0074).
+Either names nobody: what is kept is what they are looking for and when we
+last told them.
 
 The stop token in "Stop these emails" is derived from the alert's id with
 the unsubscribe secret, so every notice can carry the same link while only
@@ -124,7 +126,7 @@ def delete_member_alert(tx, person_id: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def _queue_confirm(tx, alert_id: int, lead_id: int, email: str, criteria: dict,
-                   first_name: Optional[str], resends: int, token: str) -> Optional[int]:
+                   first_name: Optional[str], key: str, token: str) -> Optional[int]:
     from service.campaigns import outbox
     from service.matchmaker import mail
     from service.matchmaker.criteria import visitor_words
@@ -135,7 +137,7 @@ def _queue_confirm(tx, alert_id: int, lead_id: int, email: str, criteria: dict,
         subject, body = mail.visitor_confirm_email(visitor_words(criteria), mail.confirm_url(token),
                                                    first_name)
         return outbox.enqueue_for_lead(
-            tx, campaign=mail.CAMPAIGN_VISITOR_CONFIRM, campaign_id=f'{alert_id}:{resends}',
+            tx, campaign=mail.CAMPAIGN_VISITOR_CONFIRM, campaign_id=f'{alert_id}:{key}',
             lead_id=lead_id, email=email, subject=subject, html=body, from_addr=mail.FROM_ADDR,
             list_unsubscribe=None, marketing=False)
     return mail.guarded(tx, 'mm_visitor_confirm', go)
@@ -143,12 +145,13 @@ def _queue_confirm(tx, alert_id: int, lead_id: int, email: str, criteria: dict,
 
 def ask(tx, *, email: str, criteria: dict, first_name: Optional[str],
         now: Optional[datetime] = None) -> dict:
-    """The landing's form (3.1). Answers {state: 'check_email', email} for a
-    new or unconfirmed alert, {state: 'already_on', email} once it is on (the
-    new criteria replace the old, 3.5). Asking again while unconfirmed is
-    "Send it again": a fresh link, at most MAX_RESENDS more times (3.9). An
-    address that belongs to a member writes nothing and answers the same:
-    members set alerts in the app."""
+    """The landing's form (3.1). Always answers {state: 'check_email', email},
+    the answer a new address gets, so the form never tells anyone whether an
+    address has an alert. Asking again while unconfirmed is "Send it again":
+    a fresh link, at most MAX_RESENDS more times (3.9), and past that
+    nothing is sent. Asking again once it is on changes nothing until the
+    owner taps the link it sends (_ask_to_change). An address that belongs
+    to a member writes nothing: members set alerts in the app."""
     from service.leads import clean_email, new_token, record_lead
     from service.leads.sources import ALERT_VISITOR
     from service.matchmaker.criteria import clean_visitor_criteria
@@ -165,14 +168,10 @@ def ask(tx, *, email: str, criteria: dict, first_name: Optional[str],
     row = tx.execute('SELECT * FROM match_alert WHERE lead_id = %(l)s FOR UPDATE',
                      dict(l=lead_id)).fetchone()
     if row is not None and row['confirmed_at'] is not None:
-        tx.execute("""UPDATE match_alert SET criteria = %(c)s::jsonb,
-                             first_name = COALESCE(%(f)s, first_name), active = TRUE,
-                             updated_at = NOW()
-                       WHERE id = %(i)s""",
-                   dict(c=json.dumps(c), f=first_name, i=row['id']))
-        return dict(state='already_on', email=address)
+        _ask_to_change(tx, dict(row), address, c, first_name, now)
+        return answer
     if row is not None and row['resends'] >= MAX_RESENDS:
-        raise MatchmakerError('too_many_tries', 429)
+        return answer
     token, hashed = new_token()
     if row is None:
         row = tx.execute(
@@ -190,23 +189,62 @@ def ask(tx, *, email: str, criteria: dict, first_name: Optional[str],
                 WHERE id = %(i)s RETURNING id, resends""",
             dict(c=json.dumps(c), f=first_name, h=hashed, by=now + CONFIRM_WINDOW,
                  i=row['id'])).fetchone()
-    _queue_confirm(tx, row['id'], lead_id, address, c, first_name, row['resends'], token)
+    _queue_confirm(tx, row['id'], lead_id, address, c, first_name, str(row['resends']), token)
     return answer
+
+
+def _ask_to_change(tx, row: dict, address: str, criteria: dict, first_name: Optional[str],
+                   now: datetime) -> None:
+    """The form sent again for an alert that is on. The new criteria and
+    first name wait in pending_*, and a confirm link goes to the address;
+    confirm() applies them. Only the newest link applies. A confirmed alert
+    no longer needs confirm_by and resends, so they count these links: each
+    lives CONFIRM_WINDOW, and while the newest is live at most MAX_RESENDS
+    more go. Past that nothing is sent and the caller answers the same.
+    With no change link out, confirm_by and resends still hold the first
+    confirm's, so counting starts again."""
+    from service.leads import new_token
+    lapsed = (row['change_token_hash'] is None or row['confirm_by'] is None
+              or row['confirm_by'] <= now)
+    sends = 0 if lapsed else row['resends'] + 1
+    if sends > MAX_RESENDS:
+        return
+    token, hashed = new_token()
+    tx.execute("""UPDATE match_alert SET pending_criteria = %(c)s::jsonb, pending_first_name = %(f)s,
+                         change_token_hash = %(h)s, confirm_by = %(by)s, resends = %(r)s,
+                         updated_at = NOW()
+                   WHERE id = %(i)s""",
+               dict(c=json.dumps(criteria), f=first_name, h=hashed, by=now + CONFIRM_WINDOW,
+                    r=sends, i=row['id']))
+    _queue_confirm(tx, row['id'], row['lead_id'], address, criteria, first_name,
+                   f'change:{hashed[:16]}', token)
 
 
 def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:
     """The confirm page's call (3.6, 3.7): {state: 'confirmed' | 'already_on',
     stop_token}. A link past its 7 days answers 410 expired. Counting starts
-    when the alert is turned on."""
+    when the alert is turned on. A change link (_ask_to_change) applies the
+    change it carries and answers 'confirmed'; it works once."""
     from service.leads import confirm_lead
     now = _now(now)
     if not isinstance(token, str) or not token:
         raise MatchmakerError('not_found', 404)
-    row = tx.execute('SELECT * FROM match_alert WHERE confirm_token_hash = %(h)s FOR UPDATE',
-                     dict(h=_hash(token))).fetchone()
+    hashed = _hash(token)
+    row = tx.execute('SELECT * FROM match_alert WHERE confirm_token_hash = %(h)s '
+                     'OR change_token_hash = %(h)s FOR UPDATE', dict(h=hashed)).fetchone()
     if row is None or row['lead_id'] is None:
         raise MatchmakerError('not_found', 404)
     stop = stop_token(row['id'])
+    if row['change_token_hash'] == hashed:
+        if row['confirm_by'] is not None and row['confirm_by'] < now:
+            raise MatchmakerError('expired', 410)
+        tx.execute("""UPDATE match_alert SET criteria = pending_criteria,
+                             first_name = COALESCE(pending_first_name, first_name), active = TRUE,
+                             pending_criteria = NULL, pending_first_name = NULL,
+                             change_token_hash = NULL, confirm_by = NULL, resends = 0,
+                             updated_at = NOW()
+                       WHERE id = %(i)s""", dict(i=row['id']))
+        return dict(state='confirmed', stop_token=stop)
     if row['confirmed_at'] is not None:
         return dict(state='already_on', stop_token=stop)
     if row['confirm_by'] is not None and row['confirm_by'] < now:
@@ -253,7 +291,8 @@ def adopt_visitor_alert(tx, person_id: int) -> None:
             tx.execute(
                 """UPDATE match_alert SET person_id = %(p)s, lead_id = NULL, criteria = %(c)s::jsonb,
                           notify_push = FALSE, notify_email = TRUE, active = TRUE,
-                          confirm_token_hash = NULL, updated_at = NOW()
+                          confirm_token_hash = NULL, change_token_hash = NULL,
+                          pending_criteria = NULL, pending_first_name = NULL, updated_at = NOW()
                     WHERE id = %(i)s""",
                 dict(p=person_id, c=json.dumps(c), i=row['id']))
     except Exception:

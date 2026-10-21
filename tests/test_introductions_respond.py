@@ -176,3 +176,17 @@ def test_the_chat_context_line(client, open_intro):
 def test_the_close_job_runs_in_the_cron():
     from service.cron.returnmail import JOBS
     assert 'mm_intro_close' in [n for n, _ in JOBS]
+
+
+def test_the_match_push_from_an_introduction_has_no_exclamation_mark(client, open_intro, monkeypatch):
+    """House copy has no exclamation marks; the generic match push keeps its
+    own title (review, 21 Oct)."""
+    import service.notifications as notifications
+    sent = []
+    monkeypatch.setattr(notifications, 'notify', lambda pid, kind, **kw: sent.append((pid, kind, kw)))
+    iid, ha, hb = open_intro()
+    p = open_intro.people
+    client.post(f'/introductions/{iid}/accept', headers=ha)
+    assert client.post(f'/introductions/{iid}/accept', headers=hb).get_json()['state'] == 'matched'
+    [(pid, kind, kw)] = [s for s in sent if s[1] == 'match']
+    assert pid == p['a']['id'] and kw['title'] == "It's a match" and kw['body'] == 'Daniel likes you back'

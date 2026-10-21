@@ -1178,8 +1178,9 @@ def admin_fixes_schema():
 # ---------------------------------------------------------------------------
 # Matchmaker (TEC-1845)
 # ---------------------------------------------------------------------------
-# Migration 0073 is idempotent, so applying it here is what the deploy does.
-# It needs 0066 (lead) and 0071 (email_outbox.organiser_id) first.
+# Migrations 0073 and 0074 are idempotent, so applying them here is what the
+# deploy does. 0073 needs 0066 (lead) and 0071 (email_outbox.organiser_id)
+# first.
 # Autouse, as unmatch_schema is: from 0073 on the likes email and the deck
 # read match_alert and shared_conversation, so every session needs it.
 
@@ -1189,9 +1190,10 @@ def matchmaker_schema(events_schema):
 
     from database import api_tx
 
-    path = Path(__file__).resolve().parent.parent / 'migrations' / '0073_matchmaker.sql'
-    with api_tx() as tx:
-        tx.execute(path.read_text(encoding='utf-8'))
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in ('0073_matchmaker.sql', '0074_matchmaker_alert_change.sql'):
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))
 
 
 _MATCHMAKER_SWITCH_VARS = (

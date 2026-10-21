@@ -41,12 +41,13 @@ def _refused(e):
 # they all answer 404 before anything else runs (the body check, the
 # limits, the session lookup), so a dark release says nothing about itself.
 # Each route checks again, for a call that does not come through a request.
+# The check goes first among the app's before_request functions, ahead of
+# Flask-Limiter's, so a dark call is never counted or answered 429.
 _DARK_PATHS = ('/matchmaker', '/alerts', '/introductions', '/recommendations', '/mentor')
 _DARK_PATTERNS = (re.compile(r'^/conversations/[^/]+/(share|sharing)$'),
                   re.compile(r'^/matches/[^/]+/mentor-note$'))
 
 
-@app.before_request
 def _matchmaker_dark():
     path = request.path.rstrip('/') or '/'
     if path == '/matchmaker/status':
@@ -58,6 +59,9 @@ def _matchmaker_dark():
         if not live():
             return _off()
     return None
+
+
+app.before_request_funcs.setdefault(None, []).insert(0, _matchmaker_dark)
 
 
 @get('/matchmaker/status')
@@ -138,7 +142,8 @@ _visitor_ip_limit = limiter.shared_limit('10 per hour; 30 per day', scope='mm_vi
 @validate(t.PostVisitorAlert)
 def post_alerts(req: t.PostVisitorAlert):
     """The landing's "Not ready to join?" form. A refused address (the free
-    defences) and a member's address get the same answer as a sent one."""
+    defences), a member's address, an address whose alert is on and one
+    past its resend limit all get the same answer as a sent one."""
     from database import api_tx
     from service import leads, signupguard
     from service.matchmaker import MatchmakerError, alerts, clean_first_name, surface_on
@@ -202,8 +207,14 @@ def post_alerts_stop(req: t.PostAlertToken):
 # ---------------------------------------------------------------------------
 # Recommend a single (5a). A member, or a visitor signed in with the code
 # (the onboardee session /check-otp leaves). 404 until matchmaker_
-# introductions.
+# introductions, and while the recommendation email is off: a
+# recommendation that could not be sent would keep the single's address.
 # ---------------------------------------------------------------------------
+
+def _recommending_on() -> bool:
+    from service.matchmaker import surface_on, switch_on
+    return surface_on('matchmaker_introductions') and switch_on('matchmaker_recommend_email')
+
 
 _recommend_ip_limit = limiter.shared_limit('10 per hour', scope='mm_recommend')
 
@@ -234,8 +245,8 @@ def post_recommendations(req: t.PostRecommendation, s: t.SessionInfo):
     defences) is answered the same and nothing is written."""
     from database import api_tx
     from service import leads
-    from service.matchmaker import MatchmakerError, recommend, surface_on
-    if not surface_on('matchmaker_introductions'):
+    from service.matchmaker import MatchmakerError, recommend
+    if not _recommending_on():
         return _off()
     if s.person_id is None:
         # A visitor names themselves before anything else is looked at.
@@ -266,8 +277,8 @@ def get_recommendations_allowance(s: t.SessionInfo):
     """{left, from}: the form's limit state (5a.5)."""
     from database import api_tx
     from service.leads import clean_email
-    from service.matchmaker import address_key, recommend, surface_on
-    if not surface_on('matchmaker_introductions'):
+    from service.matchmaker import address_key, recommend
+    if not _recommending_on():
         return _off()
     with api_tx('read committed') as tx:
         if s.person_id is not None:

@@ -95,3 +95,35 @@ def test_every_matchmaker_route_answers_404_while_dark(app, client, monkeypatch)
             seen.append((method, rule.rule))
             assert r.status_code == 404, (method, rule.rule, r.status_code)
     assert len(seen) >= 30, seen
+
+
+def test_a_dark_route_answers_404_before_any_rate_limit(client, monkeypatch):
+    """The dark check runs before the limiter's own before_request (the
+    app-wide 60 a minute per address), so a dark release never answers 429
+    (review, 21 Oct). 130 calls cross that limit in some minute window; the
+    limiter keeps its count in memory here, as the suite has no Redis."""
+    import random
+
+    from limits.storage import MemoryStorage
+    from limits.strategies import FixedWindowRateLimiter
+
+    from service.api import decorators
+    storage = MemoryStorage()
+    monkeypatch.setattr(decorators.limiter, '_storage', storage)
+    monkeypatch.setattr(decorators.limiter, '_limiter', FixedWindowRateLimiter(storage))
+    monkeypatch.setattr(decorators.limiter, 'enabled', True)
+    monkeypatch.setattr(decorators, 'disable_ip_rate_limit', lambda: False)
+    monkeypatch.setattr(decorators, 'mock_ip_address', lambda: None)
+    for env in NEW.values():
+        monkeypatch.delenv(env, raising=False)
+
+    def calls(method, path, ip):
+        return {client.open(path, method=method, json={'token': 'x' * 32},
+                            environ_base={'REMOTE_ADDR': ip}).status_code for _ in range(130)}
+
+    def an_ip():
+        return f'45.{random.randint(1, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}'
+    # The limiter is on: a route that answers while dark is limited.
+    assert 429 in calls('GET', '/matchmaker/status', an_ip())
+    assert calls('POST', '/alerts/confirm', an_ip()) == {404}
+    assert calls('POST', '/alerts/stop', an_ip()) == {404}
