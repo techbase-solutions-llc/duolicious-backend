@@ -1232,3 +1232,15 @@ class PostEventCover(BaseModel):
     limit is on the decoded bytes (service.events.manage.COVER_MAX_BYTES)."""
     image: str = Field(min_length=1, max_length=14_000_000)
     content_type: str = Field(min_length=1, max_length=32)
+
+
+class PostEventRsvp(BaseModel):
+    """POST /events/<slug>/rsvp. Name, party size and address are checked
+    in service.events.rsvp, which answers bad_name, bad_party, bad_email."""
+    name: str = Field(max_length=400)
+    email: Optional[str] = Field(default=None, max_length=254)
+    party_size: int
+    share_email: bool = False
+    news: bool = False
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)

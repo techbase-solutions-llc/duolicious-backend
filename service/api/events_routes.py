@@ -278,3 +278,103 @@ def post_event_view(slug: str):
         with api_tx() as tx:
             public.count_view(tx, slug, datetime.now(timezone.utc).date())
     return '', 204
+
+
+# ---------------------------------------------------------------------------
+# RSVPs. Every answer is no-store: each carries one guest's state.
+# ---------------------------------------------------------------------------
+
+_NO_STORE = {'Cache-Control': 'no-store'}
+_rsvp_ip_limit = limiter.shared_limit('10 per hour; 30 per day', scope='event_rsvp')
+
+
+@apost('/events/<slug>/rsvp', auth='optional', expected_onboarding_status=None,
+       limiter=[_rsvp_ip_limit, shared_recipient_limit])
+@validate(t.PostEventRsvp)
+def post_event_rsvp(req: t.PostEventRsvp, s: Optional[t.SessionInfo], slug: str):
+    """A visitor is asked to check their email; a signed-in member is
+    confirmed at once. A refused address (the free defences) gets the same
+    answer as a sent one, and nothing is written."""
+    from service import leads, signupguard
+    from service.events import EventError, live, rsvp
+    if not live():
+        return _off()
+    member = s if s is not None and s.person_id is not None else None
+    if member is None:
+        cleaned = leads.clean_email(req.email)
+        if cleaned is None:
+            return dict(error='bad_email'), 400, _NO_STORE
+        # mail_refusal opens its own read, so it runs before the transaction.
+        refusal = leads.mail_refusal(email=cleaned[0], ip=request.remote_addr,
+                                     stamp=req.signup_stamp, website=req.website)
+        if refusal:
+            signupguard.record_refusal(refusal, new_address=True, email=cleaned[0],
+                                       ip=request.remote_addr)
+            return dict(state='check_email', email=cleaned[0]), 201, _NO_STORE
+    try:
+        with api_tx() as tx:
+            out = rsvp.rsvp(tx, slug, name=req.name, email=req.email, party_size=req.party_size,
+                            share_email=req.share_email, news=req.news, member=member)
+    except EventError as e:
+        return dict(error=e.reason, **e.extra), e.status, _NO_STORE
+    return out, 201, _NO_STORE
+
+
+@aget('/rsvp/me')
+def get_rsvp_me(s: t.SessionInfo):
+    """The member's first name and address, for the RSVP form (export 2.3)."""
+    from service.events import live
+    if not live():
+        return _off()
+    with api_tx('read committed') as tx:
+        row = tx.execute('SELECT name, email FROM person WHERE id = %(i)s',
+                         dict(i=s.person_id)).fetchone()
+    first = (row['name'] or '').split()[0] if row and row['name'] else ''
+    return dict(name=first, email=row['email'] if row else s.email), 200, _NO_STORE
+
+
+def _rsvp_call(fn, isolation: str = 'REPEATABLE READ'):
+    from service.events import EventError, live
+    if not live():
+        return _off()
+    try:
+        with api_tx(isolation) as tx:
+            return fn(tx), 200, _NO_STORE
+    except EventError as e:
+        return dict(error=e.reason, **e.extra), e.status, _NO_STORE
+
+
+@get('/rsvp/confirm/<token>')
+def get_rsvp_confirm(token: str):
+    """Called by the web page's script; no email links here, so a mail
+    scanner opening the emailed link confirms nothing. Read committed: the
+    lock on the event row must see a place another guest has just taken."""
+    from service.events import rsvp
+    return _rsvp_call(lambda tx: rsvp.confirm(tx, token), 'read committed')
+
+
+@get('/rsvp/<token>')
+def get_rsvp(token: str):
+    from service.events import rsvp
+    return _rsvp_call(lambda tx: rsvp.rsvp_view(tx, token))
+
+
+@post('/rsvp/<token>/cancel')
+def post_rsvp_cancel(token: str):
+    from service.events import rsvp
+    return _rsvp_call(lambda tx: rsvp.cancel(tx, token))
+
+
+@get('/rsvp/<token>/calendar.ics')
+def get_rsvp_calendar(token: str):
+    from service.events import EventError, live, rsvp
+    if not live():
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            body = rsvp.calendar(tx, token)
+    except EventError as e:
+        return dict(error=e.reason), e.status, _NO_STORE
+    return body, 200, {'Content-Type': 'text/calendar; charset=utf-8',
+                       'Content-Disposition': 'attachment; filename="gathering.ics"',
+                       'Cache-Control': 'no-store'}
