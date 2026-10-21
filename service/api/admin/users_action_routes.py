@@ -8,7 +8,7 @@ Endpoints:
   POST   /admin/users/:uuid/deactivate           : soft delete
   POST   /admin/users/:uuid/reactivate           : undo soft delete
   DELETE /admin/users/:uuid                      : hard delete (requires confirm_email)
-  POST   /admin/users/:uuid/clear-onboardee      : wipe onboardee + sign-up sessions
+  POST   /admin/users/:uuid/clear-onboardee      : wipe onboardee + sessions
 
 Every mutation calls require_admin(s) FIRST, then performs the mutation
 and writes one admin_audit_log row in the same api_tx EXCEPT for the
@@ -116,11 +116,11 @@ _Q_PATCH_ROLES = """
     RETURNING email, roles
 """
 
-# Wipe the onboardee row and the sign-up sessions for the person's email.
-# Only sessions with no person behind them: a member's own sessions are
-# their signed-in devices, and wiping them made this action "sign out
-# everywhere" under a success toast (TEC-1845 admin audit). `cleared` says
-# whether there was an onboardee row at all.
+# Wipe the onboardee row and every duo_session for the person's email, which
+# signs a member out of every device. The admin's dialog says so, and
+# whether it should stay that way is the owner's call (TEC-1845 admin
+# audit, 21 Oct), so it is unchanged. `cleared` says whether there was an
+# onboardee row at all.
 _Q_CLEAR_ONBOARDEE = """
     WITH target AS (
         SELECT email FROM person WHERE uuid = %(uuid)s::uuid
@@ -128,7 +128,6 @@ _Q_CLEAR_ONBOARDEE = """
     del_session AS (
         DELETE FROM duo_session
          WHERE email IN (SELECT email FROM target)
-           AND person_id IS NULL
         RETURNING email
     ),
     del_onboardee AS (

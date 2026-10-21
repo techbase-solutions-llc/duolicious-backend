@@ -1,6 +1,8 @@
 """Clear onboardee (TEC-1845 admin audit, Medium) says whether there was
-anything to clear, and leaves a member's signed-in sessions alone: on a
-member it used to sign them out of every device and report success."""
+anything to clear: it answered ok whether or not an onboardee row existed,
+and the admin toasted Cleared. It still deletes every session for the
+address, which signs a member out of every device; the admin's dialog says
+so, and changing that is the owner's call."""
 from __future__ import annotations
 
 from uuid import uuid4
@@ -8,35 +10,24 @@ from uuid import uuid4
 from database import api_tx
 
 
-def _clean_audit(*uuids: str) -> None:
+def _clean_audit(uuid: str) -> None:
     with api_tx() as tx:
-        for u in uuids:
-            tx.execute('DELETE FROM admin_audit_log WHERE target_uuid = %(u)s::uuid', dict(u=u))
+        tx.execute('DELETE FROM admin_audit_log WHERE target_uuid = %(u)s::uuid', dict(u=uuid))
 
 
-def test_clear_onboardee_on_a_member_leaves_their_sessions_and_says_nothing_was_cleared(
+def test_clear_onboardee_with_no_onboardee_says_nothing_was_cleared(
         client, make_person, admin_headers):
     member = make_person(name='Signed in')
-    with api_tx() as tx:
-        tx.execute(
-            """INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
-               SELECT %(h)s, email, id, TRUE, '123456' FROM person WHERE id = %(i)s""",
-            dict(h=f'hash-{uuid4()}', i=member['id']))
     try:
         r = client.post(f"/admin/users/{member['uuid']}/clear-onboardee",
                         json={'reason': 'stuck'}, headers=admin_headers)
         assert r.status_code == 200
         assert r.get_json() == {'ok': True, 'cleared': False}
-        with api_tx() as tx:
-            n = tx.execute('SELECT count(*) AS n FROM duo_session WHERE person_id = %(i)s',
-                           dict(i=member['id'])).fetchone()['n']
-        assert n == 1
     finally:
         _clean_audit(member['uuid'])
 
 
-def test_clear_onboardee_clears_the_row_and_only_the_sign_up_session(
-        client, make_person, admin_headers):
+def test_clear_onboardee_clears_the_row_and_the_sessions(client, make_person, admin_headers):
     member = make_person(name='Half way')
     with api_tx() as tx:
         email = tx.execute('SELECT email FROM person WHERE id = %(i)s',
@@ -53,9 +44,8 @@ def test_clear_onboardee_clears_the_row_and_only_the_sign_up_session(
         assert r.status_code == 200
         assert r.get_json() == {'ok': True, 'cleared': True}
         with api_tx() as tx:
-            left = tx.execute('SELECT person_id FROM duo_session WHERE email = %(e)s',
-                              dict(e=email)).fetchall()
-            assert [x['person_id'] for x in left] == [member['id']]
+            assert tx.execute('SELECT 1 FROM duo_session WHERE email = %(e)s',
+                              dict(e=email)).fetchone() is None
             assert tx.execute('SELECT 1 FROM onboardee WHERE email = %(e)s',
                               dict(e=email)).fetchone() is None
     finally:
