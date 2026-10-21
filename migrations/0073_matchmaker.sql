@@ -23,6 +23,12 @@
 --   person.no_mentor_shared_matches   Privacy, Matching (owner decision 12).
 --   email_outbox         gains recommendation_id and mentor_link_id: neither
 --                        recipient is a member or a lead.
+--
+-- person and email_outbox are busy tables. Each statement waits at most 5
+-- seconds for its lock rather than queueing every later query behind it;
+-- one that times out stops the deploy before the new code starts, and a
+-- rerun picks up where it stopped, since every statement is idempotent.
+SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS match_alert (
   id                  BIGSERIAL    PRIMARY KEY,
@@ -181,3 +187,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx__email_outbox__recommendation_run
   ON email_outbox (campaign, campaign_id, recommendation_id) WHERE recommendation_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx__email_outbox__mentor_link_run
   ON email_outbox (campaign, campaign_id, mentor_link_id) WHERE mentor_link_id IS NOT NULL;
+
+RESET lock_timeout;
