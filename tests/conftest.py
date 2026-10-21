@@ -1192,3 +1192,47 @@ def matchmaker_schema(events_schema):
     path = Path(__file__).resolve().parent.parent / 'migrations' / '0073_matchmaker.sql'
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+_MATCHMAKER_SWITCH_VARS = (
+    'AHAVAH_MATCHMAKER_LIVE_ENABLED', 'AHAVAH_MATCHMAKER_ALERTS_ENABLED',
+    'AHAVAH_MATCHMAKER_VISITOR_ALERTS_ENABLED', 'AHAVAH_MATCHMAKER_INTRODUCTIONS_ENABLED',
+    'AHAVAH_MATCHMAKER_MENTORS_ENABLED', 'AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED',
+    'AHAVAH_MATCHMAKER_VISITOR_CONFIRM_EMAIL_ENABLED', 'AHAVAH_MATCHMAKER_VISITOR_ALERT_EMAIL_ENABLED',
+    'AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED', 'AHAVAH_MATCHMAKER_INTRO_EMAIL_ENABLED',
+    'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED', 'AHAVAH_MATCHMAKER_ALERT_PUSH_ENABLED',
+    'AHAVAH_MATCHMAKER_INTRO_PUSH_ENABLED',
+)
+
+
+@pytest.fixture
+def matchmaker_live(monkeypatch):
+    """Every matchmaker switch on: the release as it is after launch. A test
+    of a dark or closed state deletes the one variable it is about."""
+    for env in _MATCHMAKER_SWITCH_VARS:
+        monkeypatch.setenv(env, '1')
+
+
+@pytest.fixture
+def member_pair(make_person, add_photo):
+    """member_pair(gender_a='Woman', gender_b='Man') -> (a, b): two activated
+    members, each with an approved photo, each looking for the other's
+    gender. Their rows go with make_person."""
+    from database import api_tx
+
+    def _make(gender_a: str = 'Woman', gender_b: str = 'Man', *, name_a: str = 'Miriam',
+              name_b: str = 'Daniel') -> tuple[dict, dict]:
+        a = make_person(name=name_a, gender=gender_a)
+        b = make_person(name=name_b, gender=gender_b)
+        with api_tx() as tx:
+            for me, other in ((a, gender_b), (b, gender_a)):
+                tx.execute('UPDATE person SET activated = TRUE, last_online_time = NOW() '
+                           'WHERE id = %(i)s', dict(i=me['id']))
+                tx.execute("""INSERT INTO search_preference_gender (person_id, gender_id)
+                              SELECT %(i)s, id FROM gender WHERE name = %(g)s""",
+                           dict(i=me['id'], g=other))
+        add_photo(a['id'])
+        add_photo(b['id'])
+        return a, b
+
+    return _make

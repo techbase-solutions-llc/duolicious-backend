@@ -91,6 +91,32 @@ SWITCHES = {
     'events_cancel_email': 'AHAVAH_EVENTS_CANCEL_EMAIL_ENABLED',
     'events_digest_email': 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED',
     'events_manage_email': 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED',
+    # Matchmaker (TEC-1845), the master switch: until launch every
+    # /matchmaker, /alerts, /introductions, /recommendations, /mentor and
+    # /conversations/<uuid>/share route but /matchmaker/status answers 404,
+    # and nothing below opens or sends, whichever way its own switch is set
+    # (service.matchmaker.switch_on). Admin > Growth and Moderation > Text
+    # work either way.
+    'matchmaker_live': 'AHAVAH_MATCHMAKER_LIVE_ENABLED',
+    # The surfaces, in the spec's rollout order: members' alerts, visitors'
+    # alerts, introductions (recommend and suggest) and mentors (mentors,
+    # sharing and /families). Each needs matchmaker_live.
+    'matchmaker_alerts': 'AHAVAH_MATCHMAKER_ALERTS_ENABLED',
+    'matchmaker_visitor_alerts': 'AHAVAH_MATCHMAKER_VISITOR_ALERTS_ENABLED',
+    'matchmaker_introductions': 'AHAVAH_MATCHMAKER_INTRODUCTIONS_ENABLED',
+    'matchmaker_mentors': 'AHAVAH_MATCHMAKER_MENTORS_ENABLED',
+    # The matchmaker emails and pushes, each off until the owner has seen
+    # its proof (scripts/send_matchmaker_proofs.py): a member's alert, a
+    # visitor's confirm link and alert, a recommendation, an introduction
+    # and a mentor's invitation; the alert push and the introduction push.
+    'matchmaker_alert_email': 'AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED',
+    'matchmaker_visitor_confirm_email': 'AHAVAH_MATCHMAKER_VISITOR_CONFIRM_EMAIL_ENABLED',
+    'matchmaker_visitor_alert_email': 'AHAVAH_MATCHMAKER_VISITOR_ALERT_EMAIL_ENABLED',
+    'matchmaker_recommend_email': 'AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED',
+    'matchmaker_intro_email': 'AHAVAH_MATCHMAKER_INTRO_EMAIL_ENABLED',
+    'matchmaker_mentor_invite_email': 'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED',
+    'matchmaker_alert_push': 'AHAVAH_MATCHMAKER_ALERT_PUSH_ENABLED',
+    'matchmaker_intro_push': 'AHAVAH_MATCHMAKER_INTRO_PUSH_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})
