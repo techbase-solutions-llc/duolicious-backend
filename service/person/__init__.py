@@ -321,11 +321,20 @@ def bump_presence(person_id: int) -> None:
     if not person_id:
         return
     with api_tx() as tx:
+        # The day row rides on the same throttled update (TEC-1897): no
+        # bump, no write.
         tx.execute(
             """
-            UPDATE person SET last_online_time = NOW()
-            WHERE id = %(id)s
-              AND last_online_time < NOW() - INTERVAL '10 minutes'
+            WITH bumped AS (
+                UPDATE person SET last_online_time = NOW()
+                WHERE id = %(id)s
+                  AND last_online_time < NOW() - INTERVAL '10 minutes'
+                RETURNING id
+            )
+            INSERT INTO member_online_day (person_id, day, first_at, last_at)
+            SELECT id, (NOW() AT TIME ZONE 'America/Barbados')::date, NOW(), NOW()
+              FROM bumped
+            ON CONFLICT (person_id, day) DO UPDATE SET last_at = EXCLUDED.last_at
             """, dict(id=person_id))
 
 

@@ -49,6 +49,13 @@ WITH updated_person AS (
         uuid = %(person_uuid)s
     RETURNING
         id
+), online_day AS (
+    -- The Barbados days a person was online (TEC-1897, migration 0075):
+    -- last_online_time keeps only the latest moment.
+    INSERT INTO member_online_day (person_id, day, first_at, last_at)
+    SELECT id, (NOW() AT TIME ZONE 'America/Barbados')::date, NOW(), NOW()
+    FROM updated_person
+    ON CONFLICT (person_id, day) DO UPDATE SET last_at = EXCLUDED.last_at
 )
 INSERT INTO presence_histogram (
     person_id,
