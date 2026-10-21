@@ -19,6 +19,7 @@ from service.cron.referralintro import referral_intro_forever
 from service.cron.leadretention import lead_retention_forever
 from service.cron.questionofweek import question_of_week_forever
 from service.cron.returnmail import return_mail_forever
+from service.cron.adminalerts import admin_alerts_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
@@ -123,6 +124,12 @@ async def main():
         # is behind its own switch, all off by default
         # (service/campaigns/switches.py). Hourly.
         return_mail_forever(),
+
+        # Owner alerts (TEC-1897): the daily stale-post email, and the error
+        # tally and online days kept to 30 and 120 days. Hourly. Does
+        # nothing unless AHAVAH_ADMIN_ALERTS_CRON_ENABLED=1; the email also
+        # needs AHAVAH_STALE_POST_ALERT_ENABLED=1.
+        admin_alerts_forever(),
 
         check_connections_forever(),
 

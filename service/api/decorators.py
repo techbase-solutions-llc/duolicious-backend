@@ -259,6 +259,10 @@ def validate(RequestType):
                 # versions, and env config don't leak to the client
                 # (audit Auth LOW: validate-500-info-leak).
                 print(traceback.format_exc())
+                # This 500 never reaches Flask's error path, so it is
+                # counted here (TEC-1897).
+                from service.api.error_tally import record, route_of
+                record(route_of())
                 return 'Internal server error', 500
             return func(req, *args, **kwargs)
         go1.__name__ = func.__name__

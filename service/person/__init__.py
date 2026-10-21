@@ -321,11 +321,20 @@ def bump_presence(person_id: int) -> None:
     if not person_id:
         return
     with api_tx() as tx:
+        # The day row rides on the same throttled update (TEC-1897): no
+        # bump, no write.
         tx.execute(
             """
-            UPDATE person SET last_online_time = NOW()
-            WHERE id = %(id)s
-              AND last_online_time < NOW() - INTERVAL '10 minutes'
+            WITH bumped AS (
+                UPDATE person SET last_online_time = NOW()
+                WHERE id = %(id)s
+                  AND last_online_time < NOW() - INTERVAL '10 minutes'
+                RETURNING id
+            )
+            INSERT INTO member_online_day (person_id, day, first_at, last_at)
+            SELECT id, (NOW() AT TIME ZONE 'America/Barbados')::date, NOW(), NOW()
+              FROM bumped
+            ON CONFLICT (person_id, day) DO UPDATE SET last_at = EXCLUDED.last_at
             """, dict(id=person_id))
 
 
@@ -1886,7 +1895,10 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
                 nsfw_score = NULL,
                 face_count = NULL,
                 face_checked_at = NULL,
-                face_confirmed_at = NULL
+                face_confirmed_at = NULL,
+                -- Its own upload time, not the replaced photo's (TEC-1897,
+                -- migration 0075), so "Photo waiting" dates the new photo.
+                uploaded_at = NOW()
         ), updated_person AS (
             UPDATE person
             SET

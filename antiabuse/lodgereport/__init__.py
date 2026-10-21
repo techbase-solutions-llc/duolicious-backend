@@ -173,6 +173,12 @@ def _send_report_email(
     report: dict,
     is_automoded_bot: bool,
 ):
+    # The owner's "Email me when a report arrives" (TEC-1897). Read here,
+    # after the report has committed, so turning it off never loses a report.
+    from service.moderation import report_email_on
+    if not report_email_on():
+        return
+
     report_email = _sample_email_addresses(REPORT_EMAILS)
 
     try:

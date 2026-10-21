@@ -6,7 +6,7 @@ from service.admin.queries.members import member_sql
 
 _MEMBER_P = member_sql('p')
 
-Q_PHOTOS_LIST = """
+Q_PHOTOS_LIST = f"""
     SELECT
         ph.uuid AS photo_uuid,
         ph.position,
@@ -15,17 +15,25 @@ Q_PHOTOS_LIST = """
         ph.face_count,
         ph.face_checked_at,
         ph.moderated_at,
+        ph.uploaded_at,
         p.email AS owner_email,
-        p.uuid::text AS owner_uuid
+        p.uuid::text AS owner_uuid,
+        NOT ({_MEMBER_P}) AS owner_is_staff
       FROM photo ph
       JOIN person p ON p.id = ph.person_id
      -- 'queue' is everything waiting on a person: pending AND manual_review.
      -- The Photos tab used to ask for 'pending' alone, so a photo the cron
      -- had sent for a human decision was never shown to anyone (TEC-946).
+     -- 'approved_no_face' (TEC-1897, finding 9): approved photos the
+     -- detector saw no face in and no moderator has confirmed.
      WHERE (%(state)s = ''
             OR ph.moderation_status::text = %(state)s
             OR (%(state)s = 'queue'
-                AND ph.moderation_status::text IN ('pending', 'manual_review')))
+                AND ph.moderation_status::text IN ('pending', 'manual_review'))
+            OR (%(state)s = 'approved_no_face'
+                AND ph.moderation_status::text = 'approved'
+                AND ph.face_count = 0
+                AND ph.face_confirmed_at IS NULL))
      ORDER BY ph.moderated_at DESC NULLS FIRST
      LIMIT 100
 """
@@ -44,6 +52,19 @@ Q_PHOTOS_KPIS = f"""
         COUNT(*) FILTER (WHERE ph.moderation_status::text = 'rejected' AND {_MEMBER_P}) AS rejected
       FROM photo ph
       JOIN person p ON p.id = ph.person_id
+"""
+
+# Frame P.3's line, "6 photos, 5 people: 4 members and 1 staff account".
+Q_APPROVED_NO_FACE_KPIS = f"""
+    SELECT count(*)::int AS photos,
+           count(DISTINCT ph.person_id)::int AS people,
+           count(DISTINCT ph.person_id) FILTER (WHERE {_MEMBER_P})::int AS members,
+           count(DISTINCT ph.person_id) FILTER (WHERE NOT ({_MEMBER_P}))::int AS staff
+      FROM photo ph
+      JOIN person p ON p.id = ph.person_id
+     WHERE ph.moderation_status::text = 'approved'
+       AND ph.face_count = 0
+       AND ph.face_confirmed_at IS NULL
 """
 
 # The photo gate (findings 91 and 99): how many members can_view_photos()

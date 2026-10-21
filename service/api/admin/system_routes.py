@@ -58,3 +58,18 @@ def get_system_health(s: t.SessionInfo):
         'verification': dict(verification),
         'feedback': [dict(r, created_at=r['created_at'].isoformat()) for r in feedback],
     }
+
+
+@aget('/admin/system/errors')
+def get_system_errors(s: t.SessionInfo):
+    """API errors (TEC-1897; frames E.1 to E.3). `available` is False when
+    the tally cannot be read, which the card shows as "Error counter
+    unavailable" rather than as no errors."""
+    require_admin(s)
+    import psycopg
+    from service.api import error_tally
+    try:
+        with api_tx('read committed') as tx:
+            return dict(available=True, **error_tally.summary(tx))
+    except psycopg.Error:
+        return dict(available=False, last_24h=None, last_7d=None, routes=[])

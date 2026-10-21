@@ -117,6 +117,15 @@ SWITCHES = {
     'matchmaker_mentor_invite_email': 'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED',
     'matchmaker_alert_push': 'AHAVAH_MATCHMAKER_ALERT_PUSH_ENABLED',
     'matchmaker_intro_push': 'AHAVAH_MATCHMAKER_INTRO_PUSH_ENABLED',
+    # Owner alerts (TEC-1897), to the owner alone, never to a member. The
+    # adminalerts cron does nothing while its switch is off; the daily list
+    # of posts in review for more than 24 hours needs its own switch as
+    # well, once the owner has seen its proof
+    # (scripts/send_admin_alert_proofs.py). The report email has no switch
+    # here: it is live, and the owner's "Email me when a report arrives"
+    # preference (admin_alert_pref) turns it off.
+    'admin_alerts_cron': 'AHAVAH_ADMIN_ALERTS_CRON_ENABLED',
+    'stale_post_alert': 'AHAVAH_STALE_POST_ALERT_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

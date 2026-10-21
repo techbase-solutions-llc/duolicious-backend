@@ -460,5 +460,17 @@ def _report():
 
 
 add('STAFF_report', 'antiabuse/lodgereport/__init__.py report_template', 'staff',
-    'LIVE, STAFF: a member report to DUO_REPORT_EMAIL, from support@ (TEC-1845)', _report,
+    'LIVE, STAFF: a member report to DUO_REPORT_EMAIL, from support@ (TEC-1845), while the '
+    "owner's Email me when a report arrives is on (TEC-1897)", _report,
     'support@ahavah.app')
+
+
+def _stale_posts():
+    from emails import admin_alerts
+    return admin_alerts.preview_stale(admin_alerts.OWNER_TO)
+
+
+add('STAFF_stale_posts', 'emails/admin_alerts.py stale_posts_email', 'staff',
+    'DARK, STAFF: the adminalerts cron to the owner, daily after 07:00 Barbados, while '
+    'AHAVAH_ADMIN_ALERTS_CRON_ENABLED and AHAVAH_STALE_POST_ALERT_ENABLED are on (TEC-1897)',
+    _stale_posts)

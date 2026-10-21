@@ -25,3 +25,13 @@ def member_sql(alias: str = 'p') -> str:
 
 
 MEMBER_SQL = member_sql('p')
+
+
+def counted_member_sql(alias: str = 'p', *, active: bool = True) -> str:
+    """A member the Growth tab counts: the member rule above, not one of the
+    staff or test addresses in service/growth/queries.py EXCLUDED_EMAILS
+    (bind `%(ex)s` with `_excluded()`), and, when `active`, activated.
+    History (the weekly funnel) passes active=False: a member who has since
+    deactivated still liked who they liked."""
+    rule = f"({member_sql(alias)} AND lower({alias}.email) <> ALL(%(ex)s))"
+    return f"({rule} AND {alias}.activated)" if active else rule

@@ -9,8 +9,10 @@ from flask import request, abort
 
 from service.api.decorators import aget, apost
 from service.admin import require_admin, record_audit
+from service.admin.jsonrow import iso_row
 from service.admin.queries import (
     Q_PHOTOS_LIST, Q_PHOTOS_KPIS, Q_RUDE_MESSAGES, Q_PHOTO_GATE_KPIS,
+    Q_APPROVED_NO_FACE_KPIS,
 )
 from service.photo_gate import photo_gate_enabled
 from emails.photo_removed import send_photo_removed
@@ -22,13 +24,14 @@ def get_moderation_photos(s: t.SessionInfo):
     require_admin(s)
     state = (request.args.get('state') or 'pending').strip()
     with api_tx('read committed') as tx:
-        rows = [dict(r) for r in tx.execute(Q_PHOTOS_LIST, dict(state=state)).fetchall()]
+        rows = [iso_row(r) for r in tx.execute(Q_PHOTOS_LIST, dict(state=state)).fetchall()]
         kpis = tx.execute(Q_PHOTOS_KPIS).fetchone() or {}
         gate = dict(tx.execute(Q_PHOTO_GATE_KPIS).fetchone() or {})
+        no_face = dict(tx.execute(Q_APPROVED_NO_FACE_KPIS).fetchone())
     # The photo gate (findings 91, 99): whether it is on, and how many
     # members it holds or would hold.
     gate['enabled'] = photo_gate_enabled()
-    return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate}
+    return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate, 'approved_no_face': no_face}
 
 
 @apost('/admin/moderation/photos/<photo_uuid>/approve')
@@ -183,3 +186,91 @@ def get_report_messages(s: t.SessionInfo):
             'after_unmatch': bool(r['held']),
         })
     return {'count': len(messages), 'messages': messages}
+
+
+@apost('/admin/reports/<report_key>/resolve')
+def post_resolve_report(s: t.SessionInfo, report_key: str):
+    """Records an outcome, who resolved it and when (TEC-1897; frame R.3).
+    Recording "deactivated" does not deactivate anyone: the drawer's own
+    Deactivate action does that. The member's reason is never copied."""
+    require_admin(s)
+    from service import moderation
+    body = request.get_json(silent=True) or {}
+    outcome = body.get('outcome')
+    note = body.get('note') or ''
+    if outcome not in moderation.OUTCOMES or not isinstance(note, str) or len(note) > moderation.NOTE_MAX:
+        abort(400)
+    with api_tx() as tx:
+        result = moderation.resolve_report(tx, report_key, outcome, note.strip(),
+                                           s.person_uuid, s.email)
+        if result == 'resolved':
+            record_audit(tx, s, 'resolve_report',
+                         metadata={'report_key': report_key, 'outcome': outcome})
+    if result == 'not_found':
+        abort(404)
+    if result == 'already_resolved':
+        return {'error': 'already_resolved'}, 409
+    return {'ok': True}
+
+
+def _report_alert(tx, s: t.SessionInfo) -> dict:
+    from service.admin.owner import is_owner
+    row = tx.execute("SELECT enabled FROM admin_alert_pref WHERE alert = 'report'").fetchone()
+    # No row reads as on, as the report email itself reads it.
+    return dict(enabled=True if row is None else bool(row['enabled']),
+                can_change=is_owner(s.email))
+
+
+@aget('/admin/alerts/report')
+def get_report_alert(s: t.SessionInfo):
+    """"Email me when a report arrives" (frame R.2): the owner's switch for
+    the report email antiabuse/lodgereport sends to DUO_REPORT_EMAIL. Every
+    admin sees it; `can_change` is True on the owner's account only."""
+    require_admin(s)
+    with api_tx('read committed') as tx:
+        return _report_alert(tx, s)
+
+
+@apost('/admin/alerts/report')
+def post_report_alert(s: t.SessionInfo):
+    require_admin(s)
+    from service.admin.owner import is_owner
+    if not is_owner(s.email):
+        abort(403)
+    value = (request.get_json(silent=True) or {}).get('enabled')
+    if not isinstance(value, bool):
+        abort(400)
+    with api_tx() as tx:
+        tx.execute(
+            """INSERT INTO admin_alert_pref (alert, enabled, updated_at, updated_by)
+               VALUES ('report', %(v)s, NOW(), %(by)s)
+               ON CONFLICT (alert) DO UPDATE
+                  SET enabled = EXCLUDED.enabled, updated_at = NOW(), updated_by = EXCLUDED.updated_by""",
+            dict(v=value, by=s.email))
+        record_audit(tx, s, 'set_report_alert', metadata={'enabled': value})
+        return _report_alert(tx, s)
+
+
+@aget('/admin/moderation/profile-gaps')
+def get_moderation_profile_gaps(s: t.SessionInfo):
+    """Members with no photo, only declined or pending photos, or no approved
+    photo showing a face, and the not verified count (frame P.2)."""
+    require_admin(s)
+    from service.admin.queries.profiles import Q_PROFILE_GAP_KPIS, Q_PROFILE_GAPS
+    from service.growth.queries import _excluded
+    params = dict(ex=_excluded())
+    with api_tx('read committed') as tx:
+        kpis = dict(tx.execute(Q_PROFILE_GAP_KPIS, params).fetchone())
+        rows = [dict(r) for r in tx.execute(Q_PROFILE_GAPS, params).fetchall()]
+    return dict(kpis=kpis, rows=rows)
+
+
+@aget('/admin/moderation/photo-gate')
+def get_moderation_photo_gate(s: t.SessionInfo):
+    """The members the photo gate holds or would hold, with their last 30
+    days (frame P.1). Counts only."""
+    require_admin(s)
+    from service.admin.queries.profiles import Q_PHOTO_GATE_MEMBERS
+    with api_tx('read committed') as tx:
+        members = [iso_row(r) for r in tx.execute(Q_PHOTO_GATE_MEMBERS).fetchall()]
+    return dict(enabled=photo_gate_enabled(), members=members)
