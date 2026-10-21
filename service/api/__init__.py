@@ -1269,3 +1269,4 @@ import service.api.admin.events_routes  # noqa: E402,F401
 # Matchmaker (TEC-1845).
 import service.api.matchmaker_routes  # noqa: E402,F401
 import service.api.mentor_routes  # noqa: E402,F401
+import service.api.admin.matchmaker_routes  # noqa: E402,F401
