@@ -100,6 +100,8 @@ Q_USER_PROFILE = """
         p.sign_in_count,
         p.last_online_time,
         p.activated,
+        -- An admin's Deactivate, which only Reactivate lifts (migration 0072).
+        p.admin_deactivated_at IS NOT NULL AS admin_deactivated,
         COALESCE(p.roles, ARRAY[]::text[]) AS roles,
         COALESCE(p.entitlements, ARRAY[]::text[]) AS entitlements,
         p.subscription_expires_at,

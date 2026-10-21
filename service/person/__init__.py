@@ -521,6 +521,12 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
         tx.execute(Q_MAYBE_SIGN_IN, params)
         row = tx.fetchone()
 
+        if not row and tx.execute(
+                Q_ADMIN_DEACTIVATED_CODE, params).fetchone():
+            # The right code, but an admin deactivated the account. The
+            # session stays signed out; the attempt counter is untouched.
+            return 'Account deactivated', 403
+
         if not row:
             # Wrong OTP. Increment the per-session attempt counter and
             # null the OTP after 5 failures so it cannot be brute-forced
@@ -846,7 +852,13 @@ def patch_onboardee_info(req: t.PatchOnboardeeInfo, s: t.SessionInfo):
                     uuid = EXCLUDED.uuid,
                     blurhash = EXCLUDED.blurhash,
                     extra_exts = EXCLUDED.extra_exts,
-                    hash = EXCLUDED.hash
+                    hash = EXCLUDED.hash,
+                    -- A replacement starts as a first upload does (TEC-1845
+                    -- admin audit), the same rule as the profile upload.
+                    moderation_status = 'pending',
+                    moderation_labels = '{}',
+                    moderation_confidence = NULL,
+                    moderated_at = NULL
             )
             SELECT 1
             """
@@ -1851,7 +1863,20 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
                 blurhash = EXCLUDED.blurhash,
                 extra_exts = EXCLUDED.extra_exts,
                 hash = EXCLUDED.hash,
-                verified = FALSE
+                verified = FALSE,
+                -- A replacement is a new photo and starts as a first upload
+                -- does (TEC-1845 admin audit): pending and unscored, so the
+                -- NSFW cron checks it, with no face check and no moderator
+                -- decision. It used to keep the old photo's verdict, so it
+                -- went out unchecked wherever the old approval let it.
+                moderation_status = 'pending',
+                moderation_labels = '{}',
+                moderation_confidence = NULL,
+                moderated_at = NULL,
+                nsfw_score = NULL,
+                face_count = NULL,
+                face_checked_at = NULL,
+                face_confirmed_at = NULL
         ), updated_person AS (
             UPDATE person
             SET

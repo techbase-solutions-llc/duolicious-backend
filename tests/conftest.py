@@ -1137,3 +1137,18 @@ def admin_headers(make_person):
                SELECT %(h)s, email, id, TRUE, '123456' FROM person WHERE id = %(i)s""",
             dict(h=hashlib.sha512(tok.encode()).hexdigest(), i=p['id']))
     return {'Authorization': f'Bearer {tok}'}
+
+
+# Migration 0072 (TEC-1845 admin audit): the ledger's admin reasons, the admin
+# deactivation flag the sign-in queries read, and the other serious fixes. It
+# is idempotent, so applying it once per session is what the deploy does.
+
+@pytest.fixture(scope='session', autouse=True)
+def admin_fixes_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0072_admin_serious_fixes.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

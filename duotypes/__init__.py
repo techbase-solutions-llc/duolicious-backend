@@ -453,7 +453,7 @@ class PatchRoles(BaseModel):
 
 
 class PostLifecycle(BaseModel):
-    """Admin POST /admin/users/:uuid/{deactivate,reactivate,clear-onboardee,resend-otp} body."""
+    """Admin POST /admin/users/:uuid/{deactivate,reactivate,clear-onboardee} body."""
     reason: str = Field(min_length=1, max_length=512)
 
 

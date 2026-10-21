@@ -291,13 +291,37 @@ RETURNING
     otp.otp
 """
 
+# An admin deactivation (person.admin_deactivated_at) blocks sign-in until an
+# admin reactivates. Both /check-otp queries carry it: the first one marks
+# the session signed in, so guarding only the second would leave a signed-in
+# bearer behind. Reads duo_session in the surrounding UPDATE.
+_NOT_ADMIN_DEACTIVATED = """NOT EXISTS (
+        SELECT 1 FROM person
+         WHERE person.id = duo_session.person_id
+           AND person.admin_deactivated_at IS NOT NULL
+    )"""
+
+# The right, live code for a session whose person an admin deactivated. Asked
+# only after the sign-in queries refused, so /check-otp can tell the member
+# why instead of calling a correct code wrong. Someone without the code (and
+# so without the inbox) learns nothing.
+Q_ADMIN_DEACTIVATED_CODE = """
+SELECT 1
+  FROM duo_session
+  JOIN person ON person.id = duo_session.person_id
+ WHERE duo_session.session_token_hash = %(session_token_hash)s
+   AND duo_session.otp = %(otp)s
+   AND duo_session.otp_expiry > NOW()
+   AND person.admin_deactivated_at IS NOT NULL
+"""
+
 # Mark the session signed-in and reset the attempt counter, but do NOT
 # expire the OTP here -- Q_MAYBE_SIGN_IN runs IMMEDIATELY after this in
 # the same /check-otp request and needs to re-match the same OTP. The
 # one-shot replay-prevention `otp_expiry = NOW()` lives on Q_MAYBE_SIGN_IN
 # (the second/last query in the chain) so the OTP is dead for any
 # subsequent /check-otp tx but still usable by the rest of THIS tx.
-Q_MAYBE_DELETE_ONBOARDEE = """
+Q_MAYBE_DELETE_ONBOARDEE = f"""
 WITH valid_session AS (
     UPDATE duo_session
     SET signed_in = TRUE,
@@ -305,7 +329,8 @@ WITH valid_session AS (
     WHERE
         session_token_hash = %(session_token_hash)s AND
         otp = %(otp)s AND
-        otp_expiry > NOW()
+        otp_expiry > NOW() AND
+        {_NOT_ADMIN_DEACTIVATED}
     RETURNING email
 )
 -- Only wipe stale onboardee state. Within the last hour of ACTIVITY we
@@ -352,6 +377,8 @@ WITH valid_session AS (
         AND
             'bot' = ANY(person.roles)
     )
+    AND
+        {_NOT_ADMIN_DEACTIVATED}
     RETURNING
         person_id,
         email

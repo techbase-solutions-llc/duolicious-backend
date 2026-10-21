@@ -303,15 +303,18 @@ def post_check_session_token(s: t.SessionInfo):
 # Launch claim link. Unauthenticated -- the signed `claim` token (emailed to a
 # waitlist registrant) IS the auth. Logs them in + pre-fills an onboardee from
 # their waitlist answers. See service/claim.
-from service.claim import claim as _claim
+from service.claim import AccountDeactivated as _AccountDeactivated, claim as _claim
 
 @post('/claim')
 def post_claim():
     token = (request.get_json(silent=True) or {}).get('token')
     if not token:
         return {'error': 'missing_token'}, 400
-    with api_tx() as tx:
-        result = _claim(tx, token)
+    try:
+        with api_tx() as tx:
+            result = _claim(tx, token)
+    except _AccountDeactivated:
+        return {'error': 'account_deactivated'}, 403
     if result is None:
         return {'error': 'invalid_token'}, 400
     return result
