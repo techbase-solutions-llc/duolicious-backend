@@ -57,13 +57,28 @@ _Q_PERSON_BY_UUID = """
 """
 
 _Q_SOFT_DELETE = """
-    WITH deactivated AS (
+    WITH before_state AS (
+        SELECT id, activated FROM person WHERE uuid = %(uuid)s::uuid
+    ),
+    deactivated AS (
         -- admin_deactivated_at is what keeps the member out: the sign-in
         -- queries refuse it, while activated alone is set back to TRUE by
         -- the next sign-in.
         UPDATE person SET activated = FALSE, admin_deactivated_at = NOW()
          WHERE uuid = %(uuid)s::uuid
         RETURNING id, email
+    ),
+    -- Mirrors Q_POST_DEACTIVATE: take the member off their clubs only if
+    -- they were activated, so a repeat deactivate takes nothing more off
+    -- and the reactivate increment below balances it (TEC-1845 admin
+    -- audit, Minor 5).
+    decrement_club AS (
+        UPDATE club SET
+            count_members = GREATEST(0, count_members - 1)
+        FROM person_club
+        WHERE person_club.club_name = club.name
+          AND person_club.person_id IN (
+              SELECT id FROM before_state WHERE activated)
     ),
     del_session AS (
         DELETE FROM duo_session
@@ -105,7 +120,21 @@ _Q_REACTIVATE = """
     SELECT email FROM reactivated
 """
 
+# The club decrement reads person_club as it was before the cascade, as
+# a member's own Q_DELETE_ACCOUNT does, and only for an activated
+# member: a deactivated one was already taken off (TEC-1845 admin audit,
+# Minor 5).
 _Q_HARD_DELETE = """
+    WITH target AS (
+        SELECT id, activated FROM person WHERE uuid = %(uuid)s::uuid
+    ),
+    decrement_club AS (
+        UPDATE club SET
+            count_members = GREATEST(0, count_members - 1)
+        FROM person_club
+        WHERE person_club.club_name = club.name
+          AND person_club.person_id IN (SELECT id FROM target WHERE activated)
+    )
     DELETE FROM person WHERE uuid = %(uuid)s::uuid
     RETURNING email, uuid::text AS uuid
 """
