@@ -1947,6 +1947,14 @@ def post_growth_spotlight_member_of_week(s: t.SessionInfo):
     if not person_id:
         abort(400)
     when = _parse_dt(body.get('scheduled_for'))
+    # An explicit slot is checked as a brand post's is (TEC-1845 admin
+    # audit): approval does not check rest days for member kinds, so a card
+    # slotted on a Sabbath or a slot already gone came back to review, or
+    # posted the moment it was approved. No slot keeps the default.
+    if when is not None:
+        problem = slot_problem(when)
+        if problem:
+            return dict(error='slot_unavailable', reason=problem), 409
     with api_tx() as tx:
         # Task 9 (F12): invites_enabled gates candidate creation and E4.
         if settings(tx).get('invites_enabled') != 'true':
