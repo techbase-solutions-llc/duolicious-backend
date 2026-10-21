@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 import service.spotlight.restdays as rd
+from service.admin.jsonrow import iso
 from service.admin.queries.members import member_sql
 from service.campaigns.switches import enabled
 from service.questions.bank import CHOICE_FORMATS, LIVE, live_question
@@ -147,6 +148,9 @@ def schedule_rows(tx, now: Optional[datetime] = None, weeks: int = SCHEDULE_WEEK
         out.append(dict(week_of=week_of.isoformat(), live_on=day.isoformat() if day else None,
                         problem=problem, prompt_key=d['prompt_key'] if d else None,
                         text=d['text'] if d else None, approved=bool(d and d['approved_at']),
+                        # When, for "Approved, 16 Oct" (TEC-1845 admin audit,
+                        # Minor 21). `approved` stays for the live admin.
+                        approved_at=iso(d['approved_at']) if d and d['approved_at'] else None,
                         proposed_key=proposed))
     return out
 
