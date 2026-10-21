@@ -42,7 +42,11 @@ _Q_STAFF_ROLES = """
 """
 
 
-@aget('/admin/whoami')
+# A signed-in onboardee (a code that is valid for an address with no
+# member) is answered is_admin false rather than 401, so the admin sends
+# them to the unauthorised screen instead of saying the code was not
+# accepted (TEC-1845 admin audit, Minor 27). Sign-in is still required.
+@aget('/admin/whoami', expected_onboarding_status=None)
 def get_admin_whoami(s: t.SessionInfo):
     if not s or not s.person_uuid:
         return {'is_admin': False, 'email': None, 'person_uuid': None, 'roles': []}
