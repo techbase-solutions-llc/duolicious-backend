@@ -6165,3 +6165,14 @@ What changed, and why:
 Checked and found sound: the staff rule on every new count matches the endpoint it sits beside (Growth's address list where Growth uses it, the member rule alone where Moderation's gate tile does, as conflicts item 17 says); every Barbados day and week converts on both sides; production reads stay counts, no query names message content, and the two owner emails sit behind default-off switches passed to both api and cron; the JSON keys and routes in Tasks 3 to 14 match the types and hooks in Tasks 15 and 16.
 
 Left as it is, on purpose: Tasks 17 to 24 change React components with no failing test first. The admin has no component test harness; their logic lives in `community.ts` and `acting.ts`, tested in Tasks 15 and 17, and the components are checked by the type check, the build, `/sot-sync` and Task 25's screenshots.
+
+## Rulings made overnight (21 Oct 2026)
+
+- **Ruling: the migration is 0074, not 0069.** Migrations 0070 to 0073 shipped while this plan waited. A file numbered below them reads as older than it is. Cost if wrong: none, since the number is only a name.
+- **Ruling: no second report email.**
+  - The report alert email shipped on 21 Oct (17db55a, plan 2026-10-21-better-reports.md). It carries the reason, who reported whom, the message count and one "Open in the dashboard" button, and goes to DUO_REPORT_EMAIL.
+  - Item 3's "Email me when a report arrives" switch controls that email instead of adding another one.
+  - It is the owner's alone, and **on by default**, because the owner asked for report emails (21 Oct).
+  - Item 13's report email lines are dropped, because that email already exists.
+  - Cost if wrong: the switch defaults off instead, which is a one-line change.
+- **Ruling: reports read `person_report`.** That table was created by 0072. Item 1's report state and outcome columns go on it, rather than on a new table. Cost if wrong: one migration.
