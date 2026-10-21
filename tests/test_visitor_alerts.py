@@ -111,23 +111,103 @@ def test_an_unknown_link_is_not_found(client):
     assert r.status_code == 404 and r.get_json()['error'] == 'not_found'
 
 
-def test_send_it_again_stops_after_3(client, visitor_email):
+def test_send_it_again_stops_after_3_and_says_nothing(client, visitor_email):
+    """Past the limit nothing is sent, and the answer is a send's, so the
+    form never tells anyone the address has an alert."""
     email = visitor_email()
     for _ in range(4):
         assert _ask(client, email).status_code == 201
     r = _ask(client, email)
-    assert r.status_code == 429 and r.get_json()['error'] == 'too_many_tries'
+    assert r.status_code == 201 and r.get_json() == {'state': 'check_email', 'email': email}
     assert len(_confirm_rows(email)) == 4 and _alert(email)['resends'] == 3
 
 
-def test_asking_again_once_on_replaces_what_they_look_for(client, visitor_email):
+def _confirmed(client, email) -> dict:
+    _ask(client, email)
+    return client.post('/alerts/confirm', json=dict(token=_token(email))).get_json()
+
+
+def test_asking_again_once_on_changes_nothing_until_the_link(client, visitor_email):
+    """Anyone may type a visitor's address into the form: a confirmed alert
+    changes only when its owner taps the new link (review, 21 Oct)."""
+    email = visitor_email()
+    first = _confirmed(client, email)
+    r = _ask(client, email, region=None, age_max=40, first_name='Eve')
+    assert r.status_code == 201 and r.get_json() == {'state': 'check_email', 'email': email}
+    alert = _alert(email)
+    assert alert['criteria']['region'] == 'north-america' and alert['criteria']['age_max'] == 34
+    assert alert['first_name'] == 'Hannah' and alert['active'] is True
+    assert len(_confirm_rows(email)) == 2
+    assert 'a man aged 26 to 40' in _confirm_rows(email)[-1]['payload']['html']
+    r = client.post('/alerts/confirm', json=dict(token=_token(email)))
+    assert r.status_code == 200 and r.get_json() == dict(state='confirmed', stop_token=first['stop_token'])
+    alert = _alert(email)
+    assert alert['criteria']['region'] is None and alert['criteria']['age_max'] == 40
+    assert alert['first_name'] == 'Eve' and alert['pending_criteria'] is None
+    again = client.post('/alerts/confirm', json=dict(token=_token(email)))
+    assert again.status_code == 404
+
+
+def test_a_confirmed_alert_is_answered_as_a_new_address_is(client, visitor_email):
+    on, fresh = visitor_email(), visitor_email()
+    _confirmed(client, on)
+    a, b = _ask(client, on, age_max=40), _ask(client, fresh)
+    assert (a.status_code, a.get_json()['state']) == (b.status_code, b.get_json()['state'])
+    assert set(a.get_json()) == set(b.get_json())
+
+
+def test_a_change_request_leaves_the_original_link_saying_already_on(client, visitor_email):
     email = visitor_email()
     _ask(client, email)
+    original = _token(email)
+    stop = client.post('/alerts/confirm', json=dict(token=original)).get_json()['stop_token']
+    _ask(client, email, age_max=40)
+    assert client.post('/alerts/confirm', json=dict(token=original)).get_json() == dict(
+        state='already_on', stop_token=stop)
+    assert _alert(email)['criteria']['age_max'] == 34
+
+
+def test_only_the_newest_change_link_applies(client, visitor_email):
+    email = visitor_email()
+    _confirmed(client, email)
+    _ask(client, email, age_max=40)
+    older = _token(email)
+    _ask(client, email, age_max=45)
+    assert client.post('/alerts/confirm', json=dict(token=older)).status_code == 404
     client.post('/alerts/confirm', json=dict(token=_token(email)))
-    r = _ask(client, email, region=None, age_max=40)
-    assert r.status_code == 201 and r.get_json() == {'state': 'already_on', 'email': email}
-    assert _alert(email)['criteria']['region'] is None and _alert(email)['criteria']['age_max'] == 40
-    assert len(_confirm_rows(email)) == 1
+    assert _alert(email)['criteria']['age_max'] == 45
+
+
+def test_an_expired_change_link_changes_nothing(client, visitor_email):
+    email = visitor_email()
+    _confirmed(client, email)
+    _ask(client, email, age_max=40)
+    with api_tx() as tx:
+        tx.execute("""UPDATE match_alert SET confirm_by = NOW() - interval '1 minute'
+                       WHERE lead_id = (SELECT id FROM lead WHERE email = %(e)s)""", dict(e=email))
+    r = client.post('/alerts/confirm', json=dict(token=_token(email)))
+    assert r.status_code == 410 and r.get_json()['error'] == 'expired'
+    assert _alert(email)['criteria']['age_max'] == 34
+
+
+def test_change_links_stop_after_3_more_and_say_nothing(client, visitor_email):
+    email = visitor_email()
+    _confirmed(client, email)
+    with api_tx() as tx:
+        tx.execute("""UPDATE match_alert SET confirm_by = NULL, resends = 0
+                       WHERE lead_id = (SELECT id FROM lead WHERE email = %(e)s)""", dict(e=email))
+    for age in range(36, 40):
+        assert _ask(client, email, age_max=age).status_code == 201
+    r = _ask(client, email, age_max=44)
+    assert r.status_code == 201 and r.get_json() == {'state': 'check_email', 'email': email}
+    assert len(_confirm_rows(email)) == 1 + 4
+    assert 'aged 26 to 39' in _confirm_rows(email)[-1]['payload']['html']
+    # Once the last link has lapsed, a new ask sends again.
+    with api_tx() as tx:
+        tx.execute("""UPDATE match_alert SET confirm_by = NOW() - interval '1 minute'
+                       WHERE lead_id = (SELECT id FROM lead WHERE email = %(e)s)""", dict(e=email))
+    assert _ask(client, email, age_max=44).status_code == 201
+    assert len(_confirm_rows(email)) == 1 + 5
 
 
 def test_stopping_deletes_a_visitor_alert(client, visitor_email):

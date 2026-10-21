@@ -142,7 +142,8 @@ _visitor_ip_limit = limiter.shared_limit('10 per hour; 30 per day', scope='mm_vi
 @validate(t.PostVisitorAlert)
 def post_alerts(req: t.PostVisitorAlert):
     """The landing's "Not ready to join?" form. A refused address (the free
-    defences) and a member's address get the same answer as a sent one."""
+    defences), a member's address, an address whose alert is on and one
+    past its resend limit all get the same answer as a sent one."""
     from database import api_tx
     from service import leads, signupguard
     from service.matchmaker import MatchmakerError, alerts, clean_first_name, surface_on
