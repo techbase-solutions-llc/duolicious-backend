@@ -39,6 +39,31 @@ def test_everything_needs_the_live_switch(monkeypatch):
     assert live() and surface_on('events_list') and switch_on('events_confirm_email')
     assert not surface_on('events_hosting') and not switch_on('events_digest_email')
 
+_DARK_PREFIXES = ('/events', '/e/', '/rsvp', '/organiser', '/host-requests', '/invite-ahavah')
+
+
+def test_every_gathering_route_answers_404_while_dark(app, client, monkeypatch):
+    """Global constraint: while events_live is off, every gathering route
+    but GET /events/status answers 404, whatever the body or headers."""
+    for env in NEW.values():
+        monkeypatch.setenv(env, '1')
+    monkeypatch.delenv('AHAVAH_EVENTS_LIVE_ENABLED')
+    seen = []
+    for rule in app.url_map.iter_rules():
+        if not rule.rule.startswith(_DARK_PREFIXES):
+            continue
+        path = rule.rule
+        for arg in rule.arguments:
+            path = path.replace(f'<int:{arg}>', '1').replace(f'<{arg}>', 'x' * 32)
+        for method in sorted(rule.methods - {'HEAD', 'OPTIONS'}):
+            if (method, rule.rule) == ('GET', '/events/status'):
+                continue
+            r = client.open(path, method=method, json={'image': '!!', 'content_type': 'image/png'})
+            seen.append((method, rule.rule))
+            assert r.status_code == 404, (method, rule.rule, r.status_code)
+    assert len(seen) == 23
+
+
 def test_status_says_dark_until_live(client, monkeypatch):
     for env in NEW.values():
         monkeypatch.delenv(env, raising=False)

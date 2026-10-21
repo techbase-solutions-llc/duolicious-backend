@@ -17,6 +17,7 @@ from database import api_tx
 from service.api.decorators import (
     aget,
     apost,
+    app,
     delete,
     get,
     limiter,
@@ -29,6 +30,26 @@ from service.api.decorators import (
 
 def _off():
     return dict(error='not_found'), 404
+
+
+# Every path a gathering route lives under. While events_live is off they
+# all answer 404 before anything else runs (the body check, the limits, the
+# session lookup), so a dark release says nothing about itself. Each route
+# checks again, for a call that does not come through a request.
+_DARK_PATHS = ('/events', '/e', '/rsvp', '/organiser', '/organisers', '/host-requests',
+               '/invite-ahavah')
+
+
+@app.before_request
+def _events_dark():
+    path = request.path.rstrip('/') or '/'
+    if path == '/events/status':
+        return None
+    if any(path == p or path.startswith(p + '/') for p in _DARK_PATHS):
+        from service.events import live
+        if not live():
+            return _off()
+    return None
 
 
 def _refused(e):
