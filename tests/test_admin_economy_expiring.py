@@ -1,7 +1,7 @@
 """Expiring entitlement counts leave out holders who have already lapsed
 (TEC-1845 admin audit, Minor 32). Between expiry and the nightly strip a
 lapsed holder still holds the entitlement, and with no lower bound it
-counted as expiring soon."""
+counted as expiring soon. The holder list's filter keeps listing them."""
 from __future__ import annotations
 
 from database import api_tx
@@ -34,8 +34,8 @@ def test_a_lapsed_holder_is_not_expiring(make_person):
     after = _kpis()
     assert after['holders'] == before['holders'] + 1
     assert (after['expiring_7d'], after['expiring_30d']) == (before['expiring_7d'], before['expiring_30d'])
-    assert p['uuid'] not in _expiring_within(7)
-    assert p['uuid'] in _expiring_within(0), 'the unfiltered list still shows the lapsed holder'
+    # The list still shows them, read as Lapsed from a negative time_left.
+    assert p['uuid'] in _expiring_within(7)
 
 
 def test_a_holder_expiring_in_two_days_is_expiring(make_person):

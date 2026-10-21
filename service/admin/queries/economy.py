@@ -116,16 +116,16 @@ Q_ENTITLEMENT_HOLDERS = f"""
       FROM person p
      WHERE {_MEMBER_P}
        AND %(name)s = ANY(p.entitlements)
-       -- Expiring means not yet lapsed: between expiry and the nightly
-       -- strip a lapsed holder still holds it (TEC-1845 admin audit, Minor
-       -- 32). The unfiltered list (0) still shows them.
-       AND (%(expires_within_days)s = 0
-            OR (p.subscription_expires_at > NOW()
-                AND p.subscription_expires_at < NOW() + (%(expires_within_days)s || ' days')::INTERVAL))
+       AND (%(expires_within_days)s = 0 OR p.subscription_expires_at < NOW() + (%(expires_within_days)s || ' days')::INTERVAL)
      ORDER BY p.subscription_expires_at NULLS LAST
      LIMIT 200
 """
 
+# Expiring means not yet lapsed: between expiry and the nightly strip a
+# lapsed holder still holds the entitlement, and with no lower bound it
+# counted as expiring soon (TEC-1845 admin audit, Minor 32). The holder
+# list's expiry filter still lists them, with a negative time_left the
+# admin reads as Lapsed (tests/test_admin_routes_answer.py).
 Q_ENTITLEMENT_KPIS = f"""
     SELECT
         COUNT(*) AS holders,
