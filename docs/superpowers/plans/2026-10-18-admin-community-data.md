@@ -6165,3 +6165,37 @@ What changed, and why:
 Checked and found sound: the staff rule on every new count matches the endpoint it sits beside (Growth's address list where Growth uses it, the member rule alone where Moderation's gate tile does, as conflicts item 17 says); every Barbados day and week converts on both sides; production reads stay counts, no query names message content, and the two owner emails sit behind default-off switches passed to both api and cron; the JSON keys and routes in Tasks 3 to 14 match the types and hooks in Tasks 15 and 16.
 
 Left as it is, on purpose: Tasks 17 to 24 change React components with no failing test first. The admin has no component test harness; their logic lives in `community.ts` and `acting.ts`, tested in Tasks 15 and 17, and the components are checked by the type check, the build, `/sot-sync` and Task 25's screenshots.
+
+## Rulings made overnight (21 Oct 2026)
+
+- **Ruling: the migration is 0074, not 0069.** Migrations 0070 to 0073 shipped while this plan waited. A file numbered below them reads as older than it is. Cost if wrong: none, since the number is only a name.
+- **Ruling: no second report email.**
+  - The report alert email shipped on 21 Oct (17db55a, plan 2026-10-21-better-reports.md). It carries the reason, who reported whom, the message count and one "Open in the dashboard" button, and goes to DUO_REPORT_EMAIL.
+  - Item 3's "Email me when a report arrives" switch controls that email instead of adding another one.
+  - It is the owner's alone, and **on by default**, because the owner asked for report emails (21 Oct).
+  - Item 13's report email lines are dropped, because that email already exists.
+  - Cost if wrong: the switch defaults off instead, which is a one-line change.
+- **Ruling: reports read `person_report`.** That table was created by 0072. Item 1's report state and outcome columns go on it, rather than on a new table. Cost if wrong: one migration.
+
+## Build notes (API, Tasks 1 to 14, 21 Oct 2026)
+
+Built on branch `community-data` from production head 17db55a. Each line is `Ruling: what, why, cost if wrong`.
+
+- **Ruling: the migration is `0075_admin_community.sql`**, not 0069 or 0074. Why: 0070 to 0073 shipped, and the controller ruled that mm-fixes' `0074_matchmaker_alert_change.sql` ships first. Cost if wrong: none, the number is a name; the header says a change is 0076.
+- **Ruling: report state and outcome are columns on `person_report`** (outcome, note, resolved_by_uuid, resolved_by_email, resolved_at), with no `report_resolution` table. Why: overnight ruling; person_report already keys a report by its pair and time, and a report made again is a new row. Cost if wrong: one migration.
+- **Ruling: the unresolved count reads a partial index on `person_report` where outcome is null**, and `idx__skipped__reported` is not built. Why: the count no longer reads `skipped`, and an index on the busy skipped table would lock it for nothing. Cost if wrong: one index.
+- **Ruling: `admin_alert_pref` defaults on and the migration seeds the report row with ON CONFLICT DO NOTHING.** Why: overnight ruling (the owner asked for report emails), and a rerun must never turn the owner's off back on. Cost if wrong: a one-line default change.
+- **Ruling: the migration sets lock_timeout '5s' first and resets it last, with no BEGIN and no backfill.** Why: the deploy's psql runs each statement on its own, and every new column is nullable with no default. Cost if wrong: a timed-out statement stops the deploy before the new code starts; a rerun finishes it.
+- **Ruling: there is no `AHAVAH_REPORT_ALERT_ENABLED`.** Why: the report email is live (17db55a); a switch defaulting to 0 would silence it. The owner's preference is its switch. Cost if wrong: one switch and two compose lines.
+- **Ruling: a new `AHAVAH_ADMIN_ALERTS_CRON_ENABLED` (`admin_alerts_cron`) gates the whole adminalerts cron**, retention included; `AHAVAH_STALE_POST_ALERT_ENABLED` gates the email on top. Why: the dark rule puts every new cron job behind a switch defaulting to 0. Cost if wrong: online days and the error tally grow until the cron is on, about one row per member per day.
+- **Ruling: the report email checks the preference in `antiabuse/lodgereport._send_report_email`**, after the report has committed, and no row or an unreadable preference reads as on. Why: the email was live before the switch; a database fault must not silence a report. Cost if wrong: an email the owner turned off can go out while the database is failing.
+- **Ruling: the recipient of the report email stays `DUO_REPORT_EMAIL`** (admin@techbaseltd.com in production), not `harrigan.tennyson@gmail.com`. Why: the overnight ruling makes the switch control the existing email and says nothing of moving it. Cost if wrong: one compose value.
+- **Ruling: the owner's account is the one signed in as `harrigan.tennyson@gmail.com`** (`service/admin/owner.py` OWNER_EMAILS). Why: the owner's answers name OWNER_TO's account; admin id 18 cannot be confirmed from code, and an id would follow a copied database. Cost if wrong: the owner sees the switch read-only until his sign-in address is added, one line.
+- **Ruling: `GET /admin/alerts/report` answers `{enabled, can_change}` instead of `{enabled, switch_on}`**; POST is 403 for anyone but the owner. Why: there is no server switch to report, and other admins see the setting read-only. Cost if wrong: Tasks 15 to 18 (admin) must read `can_change`; they have not been built.
+- **Ruling: no second report email.** `report_email`, `preview_report` and the report half of the adminalerts cron (`queue_reports`, its log keys and tests) are not built; the proof script plans one email, and conflicts item 13's report lines are dropped. Why: overnight ruling. Cost if wrong: none; the cron's report code is in the plan above.
+- **Ruling: a resolved report survives an unblock** (new test). Why: since 0072 an unblock deletes the skipped row and keeps the person_report row, so the outcome stays with it. Cost if wrong: none.
+- **Ruling: `/admin/moderation/photos` rows now leave through `iso_row`**, as Task 12 says, so `face_checked_at` and `moderated_at` change from RFC 2822 to ISO 8601. Why: the plan's rule for every endpoint it touches. Cost if wrong: an admin view that formats those strings itself; JavaScript's Date reads both.
+- **Ruling: `is_blocked_pair` now also reads `unmatched_pair` (0070)**, so an unmatched pair is never on the waiting list. Why: neither person can write. Cost if wrong: none.
+- **Ruling: the stale email is in `tests/email_samples.py` as `STAFF_stale_posts`**, and the `STAFF_report` note now says it sends while Email me is on. The stale email's lines are listed for `/copy-pass` in the `emails/admin_alerts.py` docstring. Cost if wrong: none.
+- Not done here: Tasks 15 to 26 (admin and deploy). Nothing pushed, merged or sent; the proof script was not run with `--send`.
+- Full suite at the end: 2981 passed, 6 failed, 4 skipped. One was this build's (`test_admin_routes_answer` had no arguments for the new runs route) and is fixed. Four are the known base failures (test_brand_posts, test_growth_kinds, test_regenerate_roundup, test_spotlight_render_backoff). `test_spotlight_controls` failed in the full run and passes alone (16 passed with the routes test), so it reads as the shared database.
