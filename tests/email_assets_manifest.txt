@@ -5,6 +5,12 @@ logo-horizontal-wht.png
 logo-horizontal.png
 subhead-welcome-wht.png
 subhead-welcome.png
+title-alert-confirm-wht.png
+title-alert-confirm.png
+title-alert-fits-wht.png
+title-alert-fits.png
+title-alert-joined-wht.png
+title-alert-joined.png
 title-beta-launch-wht.png
 title-beta-launch.png
 title-beta-welcome-wht.png
@@ -43,6 +49,8 @@ title-finish-profile-wht.png
 title-finish-profile.png
 title-first-match-wht.png
 title-first-match.png
+title-introduction-wht.png
+title-introduction.png
 title-launch-wht.png
 title-launch.png
 title-like-wht.png
@@ -53,6 +61,8 @@ title-match-wht.png
 title-match.png
 title-member-welcome-wht.png
 title-member-welcome.png
+title-mentor-invite-wht.png
+title-mentor-invite.png
 title-message-wht.png
 title-message.png
 title-new-features-wht.png
@@ -71,6 +81,8 @@ title-quick-questions-wht.png
 title-quick-questions.png
 title-receipt-wht.png
 title-receipt.png
+title-recommend-wht.png
+title-recommend.png
 title-reengage-wht.png
 title-reengage.png
 title-referral-wht.png
