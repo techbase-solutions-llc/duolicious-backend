@@ -13,6 +13,7 @@ from service.admin.queries import (
     Q_REFERRALS_KPIS, Q_REFERRALS_CLICK_STREAM_7D, Q_REFERRALS_PER_INVITER,
 )
 from database import api_tx
+from service.api.admin.overview_routes import _empty_when_nothing
 
 
 @aget('/admin/cohorts/waitlist')
@@ -20,7 +21,11 @@ def get_cohorts_waitlist(s: t.SessionInfo):
     require_admin(s)
     with api_tx('read committed') as tx:
         kpis = tx.execute(Q_WAITLIST_KPIS).fetchone() or {}
-        velocity = [dict(r) for r in tx.execute(Q_WAITLIST_VELOCITY_30D).fetchall()]
+        # No rows when nothing happened, as on the Overview, so the admin's
+        # empty state can show (TEC-1845 admin audit, Minor 30).
+        velocity = _empty_when_nothing(
+            [dict(r) for r in tx.execute(Q_WAITLIST_VELOCITY_30D).fetchall()],
+            ('waitlist', 'beta', 'person'))
         sex = [dict(r) for r in tx.execute(Q_WAITLIST_SEX).fetchall()]
         intent = [dict(r) for r in tx.execute(Q_WAITLIST_INTENT).fetchall()]
         country = [dict(r) for r in tx.execute(Q_WAITLIST_COUNTRY).fetchall()]
@@ -56,7 +61,9 @@ def get_cohorts_referrals(s: t.SessionInfo):
     require_admin(s)
     with api_tx('read committed') as tx:
         kpis = tx.execute(Q_REFERRALS_KPIS).fetchone() or {}
-        click_stream = [dict(r) for r in tx.execute(Q_REFERRALS_CLICK_STREAM_7D).fetchall()]
+        click_stream = _empty_when_nothing(
+            [dict(r) for r in tx.execute(Q_REFERRALS_CLICK_STREAM_7D).fetchall()],
+            ('mobile', 'desktop', 'bot'))
         per_inviter = [dict(r) for r in tx.execute(Q_REFERRALS_PER_INVITER).fetchall()]
     return {
         'kpis': dict(kpis),
