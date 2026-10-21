@@ -1322,3 +1322,36 @@ def single_with_mentor(make_person, add_photo, sign_in):
         tx.execute('UPDATE mentor_link SET revoked_at = COALESCE(revoked_at, NOW()) '
                    'WHERE mentor_account_id = ANY(%(i)s)', dict(i=accounts))
         tx.execute('DELETE FROM mentor_account WHERE id = ANY(%(i)s)', dict(i=accounts))
+
+
+# ---------------------------------------------------------------------------
+# Admin, acting on the community (TEC-1897)
+# ---------------------------------------------------------------------------
+# Migration 0074 is idempotent, so applying it here is what the deploy does.
+# It needs 0072 (person_report) first. Autouse: from TEC-1897 on, every
+# presence bump writes member_online_day and the report email reads
+# admin_alert_pref, and a database without them would stop moving
+# last_online_time for every test file.
+
+@pytest.fixture(scope='session', autouse=True)
+def admin_community_schema(admin_fixes_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0074_admin_community.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
+@pytest.fixture
+def admin_bearer(make_person, sign_in):
+    """The Authorization header of a signed-in admin. The account has the
+    admin role, so the member rule leaves it out of every count."""
+    from database import api_tx
+
+    p = make_person(name='CommunityAdmin')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=p['id']))
+    return sign_in(p)
