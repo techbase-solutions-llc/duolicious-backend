@@ -33,6 +33,7 @@ from database import api_tx
 from emails.community_weekly import FROM_ADDR
 from emails.send_community_weekly import (
     CAP_DAYS, UNSUB_SCOPE, build_for, recipients)
+from service.campaigns import schedule as _schedule
 from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.schedule import (
     COMMUNITY_WEEKLY_ENABLED, SEND_HOUR_UTC, is_send_window)
@@ -68,6 +69,10 @@ print(f'Hello from cron module: {__name__}')
 def _send_once() -> None:
     now = datetime.now(timezone.utc)
     if not is_send_window(now):
+        return
+    # No campaign emails in the owner's rest periods (restdays.py). A rest
+    # day on the send day skips that week's e2 (TEC-1845 admin audit).
+    if _schedule.campaign_rest_now():
         return
     cid = week_campaign_id(now, 'e2')
     out = run_campaign(

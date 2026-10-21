@@ -55,3 +55,13 @@ def test_a_dry_run_still_runs_in_a_rest_period(client, admin_headers, monkeypatc
         with api_tx() as tx:
             tx.execute("DELETE FROM admin_audit_log WHERE metadata->>'campaign_id' = 'rest-dry'")
 
+
+def test_the_weekly_cron_skips_a_rest_period(monkeypatch):
+    import service.cron.communityweekly as cron
+    from service.campaigns import schedule
+    monkeypatch.setattr(cron, 'is_send_window', lambda now: True)
+    monkeypatch.setattr(schedule, 'campaign_rest_now', lambda: True)
+    called = []
+    monkeypatch.setattr(cron, 'run_campaign', lambda *a, **k: called.append(1))
+    cron._send_once()
+    assert called == []
