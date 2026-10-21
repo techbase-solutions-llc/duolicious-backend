@@ -74,8 +74,12 @@ def test_the_other_ways_the_introducer_can_see_someone(client, introducer_with_t
     with api_tx() as tx:
         tx.execute('INSERT INTO liked (liker_id, liked_id) VALUES (%(a)s, %(b)s)', dict(a=hannah['id'], b=liked['id']))
         tx.execute('INSERT INTO liked (liker_id, liked_id) VALUES (%(a)s, %(b)s)', dict(a=liked_you['id'], b=hannah['id']))
-        tx.execute('INSERT INTO profile_view (viewer_id, viewed_id) VALUES (%(a)s, %(b)s)',
+        # A view is the visited row the Views list reads; the map counts
+        # once the introducer has opened the profile (test_introductions_window).
+        tx.execute('INSERT INTO visited (subject_person_id, object_person_id) VALUES (%(a)s, %(b)s)',
                    dict(a=viewer['id'], b=hannah['id']))
+        tx.execute('INSERT INTO visited (subject_person_id, object_person_id) VALUES (%(a)s, %(b)s)',
+                   dict(a=hannah['id'], b=on_map['id']))
         tx.execute("""UPDATE person SET show_my_location = TRUE,
                              ahavah_extra = COALESCE(ahavah_extra, '{}'::jsonb) || '{"citySet": true}'::jsonb
                        WHERE id = %(i)s""", dict(i=on_map['id']))

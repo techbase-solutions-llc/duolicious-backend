@@ -2,8 +2,10 @@
 
 A member suggests two members they can already see (owner decision 6,
 option B: their matches, likes either way, members who viewed them, members
-on their map and members in a published Spotlight post in the last 8
-weeks). "Nobody browses anyone they could not already see as a member."
+on their map and members in a published Spotlight post), and only those
+they interacted with in the last 8 weeks, from every source (owner's
+answers, second round, 21 Oct 2026; before it only Spotlight was limited).
+"Nobody browses anyone they could not already see as a member."
 Each of the two is told privately; they are matched only when both accept,
 and nobody is ever told of a no.
 
@@ -39,17 +41,41 @@ REACH_LABELS = {
     'map': 'On the map',
     'spotlight': 'In the weekly Spotlight',
 }
-SPOTLIGHT_WEEKS = 8
+# Owner's answers, second round (21 Oct 2026): every source counts only
+# when the introducer and the member interacted in the last 8 weeks.
+REACH_WEEKS = 8
+_SINCE = f'(NOW() - make_interval(weeks => {REACH_WEEKS}))'
+# The same moment as a MAM id (microseconds since the epoch, shifted left 8
+# bits; service/chat/messagestorage/mam), so the archive's index is used.
+_SINCE_MAM_ID = f'((EXTRACT(EPOCH FROM {_SINCE}) * 1000000)::bigint * 256)'
 
 
 def _reach_sql(intro: str) -> dict[str, str]:
-    """Each way the introducer can already see the member p, as SQL."""
+    """Each way the introducer has interacted with the member p in the last
+    REACH_WEEKS weeks, as SQL. The picker and the check on a suggestion both
+    read this, so they cannot disagree. Each source is dated by its own row:
+    the match by when it was made or by the latest message between the two
+    (the introducer's archive holds both directions); a like by when it was
+    given; a view by the visited row's updated_at, the latest view; the map,
+    which records nothing itself, by the introducer opening the member's
+    profile (the visited row a map pin's View profile writes) while the
+    member shows on their map; Spotlight by the post's time."""
     return {
         'match': f"""EXISTS (SELECT 1 FROM ahavah_match m
-                      WHERE m.user_a_id = LEAST({intro}, p.id) AND m.user_b_id = GREATEST({intro}, p.id))""",
-        'liked': f'EXISTS (SELECT 1 FROM liked l WHERE l.liker_id = {intro} AND l.liked_id = p.id)',
-        'liked_you': f'EXISTS (SELECT 1 FROM liked l WHERE l.liker_id = p.id AND l.liked_id = {intro})',
-        'viewed_you': f'EXISTS (SELECT 1 FROM profile_view v WHERE v.viewer_id = p.id AND v.viewed_id = {intro})',
+                      WHERE m.user_a_id = LEAST({intro}, p.id) AND m.user_b_id = GREATEST({intro}, p.id)
+                        AND (m.created_at > {_SINCE}
+                             OR EXISTS (SELECT 1 FROM mam_message mm
+                                         WHERE mm.person_id = {intro} AND mm.remote_bare_jid = p.uuid::text
+                                           AND mm.id > {_SINCE_MAM_ID})))""",
+        'liked': f"""EXISTS (SELECT 1 FROM liked l WHERE l.liker_id = {intro} AND l.liked_id = p.id
+                               AND l.created_at > {_SINCE})""",
+        'liked_you': f"""EXISTS (SELECT 1 FROM liked l WHERE l.liker_id = p.id AND l.liked_id = {intro}
+                                   AND l.created_at > {_SINCE})""",
+        # The introducer's Views list (Q_VISITORS): an invisible view is not
+        # shown to them, so it is not someone they can already see.
+        'viewed_you': f"""EXISTS (SELECT 1 FROM visited v
+                                   WHERE v.subject_person_id = p.id AND v.object_person_id = {intro}
+                                     AND NOT v.invisible AND v.updated_at > {_SINCE})""",
         # The map's own predicates (service/search/sql Q_MAP_MARKERS): the
         # introducer's genders, a real city, an approved photo.
         'map': f"""(NOT p.verification_required
@@ -60,12 +86,14 @@ def _reach_sql(intro: str) -> dict[str, str]:
                     AND COALESCE((p.ahavah_extra->>'showOnMap')::boolean, TRUE)
                     AND COALESCE((p.ahavah_extra->>'citySet')::boolean, FALSE)
                     AND EXISTS (SELECT 1 FROM photo ph WHERE ph.person_id = p.id
-                                  AND ph.moderation_status = 'approved'))""",
+                                  AND ph.moderation_status = 'approved')
+                    AND EXISTS (SELECT 1 FROM visited v
+                                 WHERE v.subject_person_id = {intro} AND v.object_person_id = p.id
+                                   AND v.updated_at > {_SINCE}))""",
         'spotlight': f"""(p.spotlight_opt_in AND EXISTS (
                           SELECT 1 FROM publishing_queue q
                            WHERE q.subject_person_id = p.id AND q.status = 'published'
-                             AND COALESCE(q.scheduled_for, q.updated_at)
-                                 > NOW() - make_interval(weeks => {SPOTLIGHT_WEEKS})))""",
+                             AND COALESCE(q.scheduled_for, q.updated_at) > {_SINCE}))""",
     }
 
 
