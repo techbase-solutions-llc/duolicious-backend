@@ -419,6 +419,9 @@ def get_search(s: t.SessionInfo):
 
     age_min = _int_arg('age_min')
     age_max = _int_arg('age_max')
+    # "See who joined" from a matchmaker alert (TEC-1845): the new members
+    # who fit come first on the first page.
+    fits_first = request.args.get('fits_first') in ('1', 'true', 'yes')
 
     search_type, _ = search.get_search_type(n, o)
 
@@ -456,6 +459,7 @@ def get_search(s: t.SessionInfo):
                 health_tags=health_tags,
                 age_min=age_min,
                 age_max=age_max,
+                fits_first=fits_first,
             )
     else:
         return search.get_search(

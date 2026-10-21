@@ -96,6 +96,7 @@ def _uncached_search_results(
     age_max: int | None = None,
     band_min: int | None = None,
     band_max: int | None = None,
+    new_fit_ids: list[int] | None = None,
 ):
     n, o = no
 
@@ -121,6 +122,8 @@ def _uncached_search_results(
         # The saved band ranks; it never filters (finding 34).
         band_min=band_min,
         band_max=band_max,
+        # "See who joined" (TEC-1845): these sort first; empty changes nothing.
+        new_fit_ids=list(new_fit_ids or []),
         local_radius_m=LOCAL_RADIUS_M,
         **gate_params(),
     )
@@ -203,6 +206,7 @@ def get_search(
     health_tags: list[str] | None = None,
     age_min: int | None = None,
     age_max: int | None = None,
+    fits_first: bool = False,
 ):
     search_type, no = get_search_type(n, o)
 
@@ -234,6 +238,14 @@ def get_search(
             if age_min is None and age_max is None:
                 band_min, band_max = saved_age_band(tx, s.person_id)
 
+            # "See who joined" from an alert notice (TEC-1845, 1.13).
+            new_fit_ids: list[int] = []
+            if fits_first:
+                from service.matchmaker import surface_on
+                if surface_on('matchmaker_alerts'):
+                    from service.matchmaker.notices import new_fit_ids as _new_fit_ids
+                    new_fit_ids = _new_fit_ids(tx, s.person_id)
+
             return _uncached_search_results(
                 tx=tx,
                 searcher_person_id=s.person_id,
@@ -253,6 +265,7 @@ def get_search(
                 age_max=age_max,
                 band_min=band_min,
                 band_max=band_max,
+                new_fit_ids=new_fit_ids,
             )
 
         elif search_type == 'cached-search':

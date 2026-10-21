@@ -1179,11 +1179,11 @@ def admin_fixes_schema():
 # Matchmaker (TEC-1845)
 # ---------------------------------------------------------------------------
 # Migration 0073 is idempotent, so applying it here is what the deploy does.
-# It needs 0066 (lead) and 0071 (email_outbox.organiser_id) first. A module
-# that reads the matchmaker tables asks for it with
-#     pytestmark = pytest.mark.usefixtures('matchmaker_schema')
+# It needs 0066 (lead) and 0071 (email_outbox.organiser_id) first.
+# Autouse, as unmatch_schema is: from 0073 on the likes email and the deck
+# read match_alert and shared_conversation, so every session needs it.
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def matchmaker_schema(events_schema):
     from pathlib import Path
 

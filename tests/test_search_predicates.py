@@ -26,11 +26,25 @@ def _squash(sql: str) -> str:
     return re.sub(r'\s+', ' ', sql).strip()
 
 
+# What the matchmaker adds to the deck on purpose, each exactly once, as
+# squashed text. Task 7: "See who joined" sorts the new fits first.
+EXPECTED_ADDITIONS = [
+    '-- new_fit_ids (TEC-1845, matchmaker 1.13): "See who joined" puts the -- members the latest '
+    'alert notice counted first. Empty on every other -- search, so the order is otherwise unchanged. ',
+    '(p.id = ANY(%(new_fit_ids)s::INT[])) DESC, ',
+]
+
+
 def test_the_deck_query_means_what_it_meant():
     """The fragments replace the clauses word for word: the query's text
-    with whitespace collapsed is the text it had on 20 Oct."""
+    with whitespace collapsed is the text it had on 20 Oct, plus exactly the
+    matchmaker's additions."""
     from service.search.sql import Q_UNCACHED_SEARCH_2
-    assert _squash(Q_UNCACHED_SEARCH_2) == SNAPSHOT
+    text = _squash(Q_UNCACHED_SEARCH_2)
+    for added in EXPECTED_ADDITIONS:
+        assert text.count(added) == 1, added
+        text = text.replace(added, '')
+    assert text == SNAPSHOT
 
 
 def test_the_deck_and_the_alert_read_torah_level_the_same_way():

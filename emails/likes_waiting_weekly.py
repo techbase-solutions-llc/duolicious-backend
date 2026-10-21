@@ -50,7 +50,13 @@ TARGET = f"{WEB_BASE_URL}/matches?tab=likes"
 # email channel off. It does not read the per-like email switch: that
 # defaults off (migration 0029) and a push subscribe writes a row with it
 # off, so it cannot tell a member's choice from a default.
-_Q_DUE = f"""
+#
+# Matchmaker (TEC-1845): when a member's alert email carried these likes
+# (the 4.3 block), match_alert.likes_told_at counts as a likes email, so the
+# same likes are never told twice. Q_DUE_FOR is the same rule for one member,
+# which the alert job asks before it adds the block.
+def _due_sql(only: str) -> str:
+    return f"""
     WITH waiting AS (
         SELECT l.liked_id AS pid, count(*) AS n, max(l.created_at) AS newest
           FROM liked l
@@ -72,11 +78,25 @@ _Q_DUE = f"""
        AND p.last_online_time < NOW() - make_interval(days => {OFFLINE_DAYS})
        AND w.newest > GREATEST(p.last_online_time,
                                (SELECT max(l.sent_at) FROM email_send_log l
-                                 WHERE l.person_id = p.id AND l.campaign = '{CAMPAIGN}'))
+                                 WHERE l.person_id = p.id AND l.campaign = '{CAMPAIGN}'),
+                               (SELECT a.likes_told_at FROM match_alert a WHERE a.person_id = p.id))
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
        AND NOT {held.nudged_recently_sql('p.id')}
+       {only}
      ORDER BY p.id
+"""
+
+
+_Q_DUE = _due_sql('')
+Q_DUE_FOR = _due_sql('AND p.id = %(pid)s')
+
+# A member whose alert is on with its email on hears about new members who
+# fit from the alert, so the likes email leaves its new-fit line out
+# (TEC-1845, plan item 15).
+_Q_ALERT_EMAIL_ON = """
+    SELECT 1 FROM match_alert
+     WHERE person_id = %(p)s AND active AND notify_email AND confirmed_at IS NOT NULL
 """
 
 
@@ -135,7 +155,10 @@ def queue_due(tx, now: datetime) -> int:
     for r in rows:
         if held.already_queued(tx, CAMPAIGN, cid, r['person_id']):
             continue
-        fits = count_newcomers_since(tx, r['person_id'], r['last_online_time'])
+        if tx.execute(_Q_ALERT_EMAIL_ON, dict(p=r['person_id'])).fetchone():
+            fits = 0
+        else:
+            fits = count_newcomers_since(tx, r['person_id'], r['last_online_time'])
         cta = make_campaign_link(tx, CAMPAIGN, TARGET, r['person_id'])
         unsub = unsub_url(UNSUB_SCOPE, r['email'], WEB_BASE_URL)
         if held.queue(tx, campaign=CAMPAIGN, campaign_id=cid, person_id=r['person_id'],

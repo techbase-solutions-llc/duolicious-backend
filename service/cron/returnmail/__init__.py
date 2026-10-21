@@ -28,6 +28,7 @@ from service.questions import pushes as question_pushes
 from service.campaigns import held
 from service.campaigns.runner import audit_send
 from service.events import jobs as event_jobs
+from service.matchmaker import notices as mm_notices
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
 RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
@@ -35,6 +36,11 @@ RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
 # (name, queue_due). Each runs in its own transaction, so one failing job
 # never takes another's queued rows down with it.
 JOBS = [
+    # Matchmaker (TEC-1845): the alert notices run before the likes email,
+    # so an alert email that carried the likes stamps likes_told_at first
+    # and that week's likes email skips the member.
+    ('mm_member_alerts', mm_notices.queue_member_notices),
+    ('mm_visitor_alerts', mm_notices.queue_visitor_notices),
     ('likes_waiting', likes_waiting_weekly.queue_due),
     ('match_reminder', reminders.queue_match_reminders),
     ('message_reminder', reminders.queue_message_reminders),

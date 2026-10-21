@@ -339,7 +339,10 @@ SELECT
     -- goes first to someone who will see it. Away members are not removed
     -- (owner decision, 1 Oct 2026), only placed after. Q_CACHED_SEARCH
     -- reads this position, so every later page keeps the same order.
-    (ROW_NUMBER() OVER (ORDER BY p.is_boosted DESC, p.in_band DESC, p.seen_recently DESC, p.is_local DESC, p.verification_level_id DESC, p.last_online_time DESC, p.id) - 1)::SMALLINT,
+    -- new_fit_ids (TEC-1845, matchmaker 1.13): "See who joined" puts the
+    -- members the latest alert notice counted first. Empty on every other
+    -- search, so the order is otherwise unchanged.
+    (ROW_NUMBER() OVER (ORDER BY (p.id = ANY(%(new_fit_ids)s::INT[])) DESC, p.is_boosted DESC, p.in_band DESC, p.seen_recently DESC, p.is_local DESC, p.verification_level_id DESC, p.last_online_time DESC, p.id) - 1)::SMALLINT,
     p.id,
     p.uuid_raw,
     NULL,

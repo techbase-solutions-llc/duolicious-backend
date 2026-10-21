@@ -23,7 +23,7 @@ DECK_PARAMS = dict(
     assemblies=[], torah_levels=[], polygyny_stances=[], calendars=[],
     educations=[], health_tags=[],
     age_min=None, age_max=None,
-    band_min=None, band_max=None,
+    band_min=None, band_max=None, new_fit_ids=[],
     local_radius_m=160_000,
     photo_gate=False,
 )
