@@ -41,12 +41,13 @@ def _refused(e):
 # they all answer 404 before anything else runs (the body check, the
 # limits, the session lookup), so a dark release says nothing about itself.
 # Each route checks again, for a call that does not come through a request.
+# The check goes first among the app's before_request functions, ahead of
+# Flask-Limiter's, so a dark call is never counted or answered 429.
 _DARK_PATHS = ('/matchmaker', '/alerts', '/introductions', '/recommendations', '/mentor')
 _DARK_PATTERNS = (re.compile(r'^/conversations/[^/]+/(share|sharing)$'),
                   re.compile(r'^/matches/[^/]+/mentor-note$'))
 
 
-@app.before_request
 def _matchmaker_dark():
     path = request.path.rstrip('/') or '/'
     if path == '/matchmaker/status':
@@ -58,6 +59,9 @@ def _matchmaker_dark():
         if not live():
             return _off()
     return None
+
+
+app.before_request_funcs.setdefault(None, []).insert(0, _matchmaker_dark)
 
 
 @get('/matchmaker/status')
