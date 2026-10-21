@@ -48,6 +48,8 @@ def _args(admin_uuid: str) -> dict[str, dict]:
         '/admin/events/<slug>/weeks': dict(slug=f'no-such-gathering-{uuid.uuid4().hex[:8]}'),
         # Matchmaker (TEC-1845): a member's connections, by uuid or id.
         '/admin/users/<who>/connections': dict(who=admin_uuid),
+        # One email's run history (TEC-1897).
+        '/admin/growth/emails/<campaign>/runs': dict(campaign='e2'),
     }
 
 
