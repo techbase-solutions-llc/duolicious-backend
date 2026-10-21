@@ -210,6 +210,20 @@ def test_change_links_stop_after_3_more_and_say_nothing(client, visitor_email):
     assert len(_confirm_rows(email)) == 1 + 5
 
 
+def test_a_visitor_who_used_every_resend_can_still_change_once_on(client, visitor_email):
+    """The first confirm leaves its confirm_by and resends behind; they do
+    not count against change links."""
+    email = visitor_email()
+    for _ in range(4):
+        _ask(client, email)
+    assert _alert(email)['resends'] == 3
+    client.post('/alerts/confirm', json=dict(token=_token(email)))
+    assert _ask(client, email, age_max=40).status_code == 201
+    assert len(_confirm_rows(email)) == 4 + 1
+    client.post('/alerts/confirm', json=dict(token=_token(email)))
+    assert _alert(email)['criteria']['age_max'] == 40
+
+
 def test_stopping_deletes_a_visitor_alert(client, visitor_email):
     email = visitor_email()
     _ask(client, email)

@@ -200,9 +200,12 @@ def _ask_to_change(tx, row: dict, address: str, criteria: dict, first_name: Opti
     confirm() applies them. Only the newest link applies. A confirmed alert
     no longer needs confirm_by and resends, so they count these links: each
     lives CONFIRM_WINDOW, and while the newest is live at most MAX_RESENDS
-    more go. Past that nothing is sent and the caller answers the same."""
+    more go. Past that nothing is sent and the caller answers the same.
+    With no change link out, confirm_by and resends still hold the first
+    confirm's, so counting starts again."""
     from service.leads import new_token
-    lapsed = row['confirm_by'] is None or row['confirm_by'] <= now
+    lapsed = (row['change_token_hash'] is None or row['confirm_by'] is None
+              or row['confirm_by'] <= now)
     sends = 0 if lapsed else row['resends'] + 1
     if sends > MAX_RESENDS:
         return
