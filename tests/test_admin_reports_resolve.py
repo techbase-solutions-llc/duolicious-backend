@@ -234,3 +234,21 @@ def test_a_preference_that_cannot_be_read_still_sends(monkeypatch, report_pref):
     monkeypatch.setattr(lodgereport.aws_smtp, 'send', lambda **kw: sent.append(kw))
     lodgereport._send_report_email(reason='spam-scam', report=dict(_REPORT), is_automoded_bot=False)
     assert len(sent) == 1
+
+
+def test_overview_pending_reports_leaves_out_a_resolved_report(client, admin_bearer, make_person):
+    """The Overview card and the Needs you tile must agree once reports
+    are resolved (review of TEC-1897, 21 Oct)."""
+    from service.admin.queries.overview import Q_OVERVIEW_KPIS
+
+    def pending() -> int:
+        with api_tx('read committed') as tx:
+            return tx.execute(Q_OVERVIEW_KPIS).fetchone()['pending_reports']
+
+    a, b = make_person(name='RepY'), make_person(name='RepZ')
+    _report(a, b)
+    key = _mine(_reports(client, admin_bearer), a)['report_key']
+    before = pending()
+    assert client.post(f'/admin/reports/{key}/resolve', headers=admin_bearer,
+                       json=dict(outcome='dismissed')).status_code == 200
+    assert pending() == before - 1
