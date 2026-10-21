@@ -52,7 +52,7 @@ from service.spotlight.queue import (CALENDAR_HELD_KINDS, CAPTION_MAX, TEMPLATE_
                                      create_candidate,
                                      lock_request_rows, set_status, settings, set_setting,
                                      reap_expired_leases, reconcile_published,
-                                     record_receipt, OUTCOMES,
+                                     record_receipt, release_unposted, OUTCOMES,
                                      OUTCOME_DELIVERY_STATE, PLATFORMS,
                                      SETTING_KEYS, FREE_KEYS)
 from service.spotlight.assets import asset_key, attach_platform_image, complete_render_if_ready
@@ -1883,6 +1883,29 @@ def post_growth_queue_reconcile(s: t.SessionInfo, qid: str):
                external_post_id=external_post_id, occurrences=occurrences,
                first_confirmation=first_confirmation)
     return dict(ok=True, status='published', external_post_id=external_post_id)
+
+
+@apost('/admin/growth/queue/<qid>/not-posted')
+def post_growth_queue_not_posted(s: t.SessionInfo, qid: str):
+    """The operator checked the page for a row whose delivery was never
+    resolved and the post is not there (TEC-1845 admin audit). The row goes
+    back to an ordinary review card that Approve and Cancel act on, or is
+    cancelled when its member has withdrawn (`release_unposted`). The other
+    answer is /reconcile. Admin session only, under the same request-key
+    lock as /reconcile, so a late receipt cannot cross it."""
+    require_admin(s)
+    queue_id = _qid(qid)
+    with api_tx() as tx:
+        rows = lock_request_rows(tx, queue_id)
+        row = next((r for r in rows if r['id'] == queue_id), None)
+        if not row:
+            abort(404)
+        try:
+            status = release_unposted(tx, row)
+        except ValueError as e:
+            return dict(error=str(e)), 409
+        _audit(tx, s, 'growth.queue.not_posted', queue_id=str(queue_id), status=status)
+    return dict(ok=True, status=status)
 
 
 @apost('/admin/growth/queue/purge')

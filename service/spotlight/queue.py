@@ -370,6 +370,35 @@ def reconcile_published(tx, row: dict, external_post_id: str, post_url: Optional
     return row
 
 
+def release_unposted(tx, row: dict) -> str:
+    """The operator's other answer for a row parked in `review` with an
+    unresolved delivery: they checked the page and the post is not there
+    (TEC-1845 admin audit). Without it such a row could be neither approved
+    nor cancelled (`set_status` refuses both), so a card that never went out
+    sat in the queue for good and its open status kept the member from
+    being offered that kind of card again.
+
+    The row becomes an ordinary review row (delivery 'none', the same state
+    a lease holder's own 'review' outcome leaves), which Approve and Cancel
+    then act on as usual. The lease is cleared, so the expired attempt can
+    no longer report back. A row whose member has already withdrawn is
+    cancelled outright: nothing is live and consent is gone.
+
+    `row` is the caller's own row, already locked by `lock_request_rows`,
+    as for `reconcile_published`. Returns the row's new status. Raises
+    ValueError('not_reconcilable') for any other row state."""
+    if row['status'] != 'review' or row['delivery_state'] not in RECOVERABLE_DELIVERY_STATES:
+        raise ValueError('not_reconcilable')
+    status = 'cancelled' if row['cancellation_requested_at'] is not None else 'review'
+    tx.execute(
+        """UPDATE publishing_queue SET status = %(st)s, delivery_state = 'none',
+                  error = NULL, lease_token = NULL, lease_until = NULL,
+                  updated_at = NOW()
+            WHERE id = %(id)s""",
+        dict(st=status, id=row['id']))
+    return status
+
+
 def record_receipt(tx, queue_id, lease_token: Optional[str], outcome: str, *,
                     external_post_id: Optional[str] = None, post_url: Optional[str] = None,
                     error: Optional[str] = None) -> str:
