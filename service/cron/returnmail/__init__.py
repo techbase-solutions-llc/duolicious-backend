@@ -8,8 +8,9 @@ every deploy and sends nothing until the owner has confirmed a proof and the
 switch is turned on. Each job queues into the durable outbox; the emailoutbox
 cron does the sending.
 
-It also runs the quick-question pushes (service/questions/pushes.py), each
-behind its own switch.
+It also runs the quick-question pushes (service/questions/pushes.py) and the
+gathering reminder and digest (service/events/jobs.py), each behind its own
+switch.
 
 Hourly. Each job's id carries its week or its event, so a repeat tick, a
 restart or two ticks at once queue nothing extra.
@@ -26,6 +27,7 @@ from emails import likes_waiting_weekly, one_photo_nudge, profile_views_weekly, 
 from service.questions import pushes as question_pushes
 from service.campaigns import held
 from service.campaigns.runner import audit_send
+from service.events import jobs as event_jobs
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
 RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
@@ -48,6 +50,10 @@ JOBS = [
     # The launch email (TEC-1845): once per member, on a drop day while its
     # switch is on.
     ('questions_launch_email', questions_launch.queue_due),
+    # Gatherings (TEC-1845): the reminder the day before and the organiser's
+    # daily digest, each behind its email's switch and events_live.
+    ('event_reminder', event_jobs.queue_reminders),
+    ('event_digest', event_jobs.queue_digests),
 ]
 
 print(f'Hello from cron module: {__name__}')
