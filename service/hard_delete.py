@@ -99,3 +99,10 @@ Q_DELETE_TOOL_DATA_OF = """
 # Q_DELETE_TOOL_DATA_OF, binding `nes` and `ids` the same way.
 from service.events.retention import Q_DELETE_EVENT_DATA_OF  # noqa: E402,F401
 
+# Matchmaker (TEC-1845): the account's mentor link, recommendations sent to
+# its address, its own pending ones, and a mentor account with its address.
+# Defined in service/matchmaker/retention.py. Runs before the person delete,
+# beside Q_DELETE_TOOL_DATA_OF, binding `nes` and `ids` the same way and
+# `keys`, matchmaker_keys(nes): a keyed hash cannot be made in SQL.
+from service.matchmaker.retention import Q_DELETE_MATCHMAKER_DATA_OF, matchmaker_keys  # noqa: E402,F401
+

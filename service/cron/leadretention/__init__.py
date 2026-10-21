@@ -38,12 +38,14 @@ def purge_stale_leads(tx) -> int:
 def _purge_once() -> None:
     from service.decisions.unmatch import HOLD_DAYS, purge_held_messages
     from service.events.retention import purge_event_data
+    from service.matchmaker.retention import purge_matchmaker_data
     from service.tools.retention import purge_stale_tool_sessions
     with api_tx() as tx:
         n = purge_stale_leads(tx)
         n_tools = purge_stale_tool_sessions(tx)
         n_held = purge_held_messages(tx)
         n_events = purge_event_data(tx)
+        n_mm = purge_matchmaker_data(tx)
     if n:
         print(f'lead_retention: {n} lead(s) deleted after {RETENTION_DAYS} days without a visit')
     if n_tools:
@@ -64,6 +66,22 @@ def _purge_once() -> None:
         print(f"lead_retention: {n_events['links']} lapsed organiser link(s) deleted")
     if n_events['requests']:
         print(f"lead_retention: {n_events['requests']} invite request(s) deleted after 12 months")
+    # Matchmaker (TEC-1845).
+    if n_mm['recommendations_erased']:
+        print(f"lead_retention: {n_mm['recommendations_erased']} recommended address(es) and note(s) erased "
+              f"7 days after sending")
+    if n_mm['recommendations_deleted']:
+        print(f"lead_retention: {n_mm['recommendations_deleted']} recommendation(s) deleted after 12 months")
+    if n_mm['notes_erased']:
+        print(f"lead_retention: {n_mm['notes_erased']} introduction note(s) erased 30 days after closing")
+    if n_mm['unconfirmed_alerts']:
+        print(f"lead_retention: {n_mm['unconfirmed_alerts']} visitor alert(s) never confirmed deleted")
+    if n_mm['mentor_sessions']:
+        print(f"lead_retention: {n_mm['mentor_sessions']} lapsed mentor session(s) deleted")
+    if n_mm['invitations']:
+        print(f"lead_retention: {n_mm['invitations']} mentor invitation(s) never accepted ended")
+    if n_mm['mentor_accounts']:
+        print(f"lead_retention: {n_mm['mentor_accounts']} mentor account(s) serving nobody for 30 days deleted")
 
 
 async def lead_retention_forever() -> None:

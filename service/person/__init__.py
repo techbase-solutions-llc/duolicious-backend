@@ -985,6 +985,11 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # and lead_source written from them. Never fails the sign-up.
         from service.person.attribution import record_attribution
         record_attribution(tx, row['person_id'], req.first_touch, req.heard_about)
+        # A single someone recommended to Ahavah counts as joined, and is
+        # marked 'intro' only when nothing above named a source (TEC-1845,
+        # first touch wins). Never fails the sign-up.
+        from service.matchmaker.retention import link_recommendations_to_person
+        link_recommendations_to_person(tx, row['person_id'])
 
         # Phase W map fix: Q_FINISH_ONBOARDING builds the person from the
         # onboardee but never set person.country (ISO2), so every newly-

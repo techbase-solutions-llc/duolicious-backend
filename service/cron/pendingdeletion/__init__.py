@@ -22,8 +22,10 @@ from service.hard_delete import (
     Q_DELETE_EVENT_DATA_OF,
     Q_DELETE_INBOX_OF,
     Q_DELETE_LEADS_OF,
+    Q_DELETE_MATCHMAKER_DATA_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    matchmaker_keys,
     Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
     Q_STAGE_PHOTOS_FOR_REMOVAL,
@@ -169,6 +171,10 @@ async def hard_delete_expired_once():
             # delete sets their person_id to NULL.
             await tx.execute(Q_DELETE_EVENT_DATA_OF,
                              dict(nes=[normalize_email(e) for e in emails], ids=person_ids))
+            # Matchmaker (TEC-1845), before the person delete.
+            _nes = [normalize_email(e) for e in emails]
+            await tx.execute(Q_DELETE_MATCHMAKER_DATA_OF,
+                             dict(nes=_nes, ids=person_ids, keys=matchmaker_keys(_nes)))
 
             await tx.execute(
                 "DELETE FROM person WHERE id = ANY(%(ids)s)",
