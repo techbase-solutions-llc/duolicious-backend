@@ -21,3 +21,13 @@ def get_admin_community_waiting(s: t.SessionInfo):
         summary = tx.execute(community.Q_WAITING_SUMMARY, params).fetchone()
         members = tx.execute(community.Q_WAITING_MEMBERS, params).fetchall()
     return dict(summary=iso_row(summary), members=[iso_row(r) for r in members])
+
+
+@aget('/admin/community/unfinished')
+def get_admin_community_unfinished(s: t.SessionInfo):
+    """People who started sign-up and stopped (frames U.1 to U.4)."""
+    require_admin(s)
+    from service.admin.queries.signups import Q_UNFINISHED
+    with api_tx('read committed') as tx:
+        rows = [iso_row(r) for r in tx.execute(Q_UNFINISHED, dict(ex=_excluded())).fetchall()]
+    return dict(count=len(rows), rows=rows)
