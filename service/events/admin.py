@@ -218,6 +218,7 @@ def approve_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] =
     if ev['starts_at'] <= now:
         raise EventError('started', 409)
     manage.publish_now(tx, ev, now)
+    manage.send_held_change(tx, ev['id'])
     mail.queue_manage_link(tx, ev['organiser_id'], issue_link(tx, ev['organiser_id']),
                            note=mail.live_note(ev['title']), subject=mail.live_subject(ev['title']))
 
@@ -248,6 +249,11 @@ def resume_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] = 
     tx.execute('UPDATE event SET paused_at = NULL, updated_at = NOW() WHERE id = %(i)s', dict(i=ev['id']))
     if ev['status'] == 'published':
         _restore_posts(tx, slug, ev['starts_at'], now)
+        if ev['starts_at'] > now:
+            # A date moved while paused has no posts yet; a date that did
+            # not move has its keys taken, so this queues nothing more.
+            manage._queue_posts(tx, manage._event_by_id(tx, ev['id']), now)
+            manage.send_held_change(tx, ev['id'])
 
 
 def set_attending(tx, admin_person_id: int, slug: str, on: bool) -> None:

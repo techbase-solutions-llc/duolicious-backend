@@ -159,22 +159,55 @@ def update_event(tx, organiser: dict, slug: str, raw: dict, now: Optional[dateti
         status = 'pending'
         _cancel_posts(tx, slug)
     moved_facts = [k for k in GUEST_FACTS if k in changed]
-    if row['status'] == 'published' and moved_facts:
-        sets.update(changed_at=now, change_before=json.dumps(facts(row)),
-                    change_after=json.dumps(facts(after)))
+    # The guests hear of a change only while the public can find the
+    # gathering. An edit the filters sent back for approval, or one made
+    # while an admin has it paused, is held (`held` in change_after) until
+    # the admin approves or resumes it (send_held_change), so a flagged
+    # title or a pulled organiser's new place never reaches them first.
+    # A gathering that was ever published may have guests. While a change
+    # is held, "before" stays what the guests last heard.
+    notify = status == 'published' and row['paused_at'] is None
+    had_guests = row['published_at'] is not None
+    if had_guests and moved_facts:
+        held = (row['change_after'] or {}).get('held')
+        before = row['change_before'] if held and row['change_before'] else facts(row)
+        sets.update(changed_at=now, change_before=json.dumps(before),
+                    change_after=json.dumps(dict(facts(after), **({} if notify else {'held': True}))))
     assignments = ', '.join(
         f'{k} = %({k})s::jsonb' if k in ('change_before', 'change_after') else f'{k} = %({k})s'
         for k in sets)
     tx.execute(f'UPDATE event SET {assignments}, updated_at = NOW() WHERE id = %(id)s',
                dict(sets, id=row['id']))
-    if row['status'] == 'published' and moved_facts:
+    if had_guests and moved_facts and notify:
         notified = mail.queue_change(tx, row['id'])
     if status == 'published' and 'starts_at' in changed:
         from service.spotlight.growthposts import event_request_key
         if event_request_key(slug, row['starts_at'], 10) != event_request_key(slug, d['starts_at'], 10):
             _cancel_posts(tx, slug)
-            _queue_posts(tx, _event_by_id(tx, row['id']), now)
+            # Posts a pause held carry the old date: they never come back.
+            # A paused gathering gets its new posts when it is resumed.
+            tx.execute(
+                """UPDATE publishing_queue SET error = 'event_changed', updated_at = NOW()
+                    WHERE kind = 'event' AND request_key LIKE %(p)s
+                      AND status = 'cancelled' AND error = 'event_paused'""",
+                dict(p=f'event:{slug}:%'))
+            if row['paused_at'] is None:
+                _queue_posts(tx, _event_by_id(tx, row['id']), now)
     return dict(event=dict(slug=slug, status=status), notified=notified)
+
+
+def send_held_change(tx, event_id: int) -> int:
+    """The change update_event held, sent now that the gathering is
+    published and not paused again. Returns how many guests were told."""
+    from service.events import mail
+    row = tx.execute(
+        """SELECT status, paused_at, change_after FROM event WHERE id = %(i)s""",
+        dict(i=event_id)).fetchone()
+    if (row is None or row['status'] != 'published' or row['paused_at'] is not None
+            or not (row['change_after'] or {}).get('held')):
+        return 0
+    tx.execute("UPDATE event SET change_after = change_after - 'held' WHERE id = %(i)s", dict(i=event_id))
+    return mail.queue_change(tx, event_id)
 
 
 def publish_now(tx, event: dict, now: datetime) -> None:

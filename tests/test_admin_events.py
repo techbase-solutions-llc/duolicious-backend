@@ -113,6 +113,42 @@ def test_pausing_hides_the_page_and_cancels_the_posts(client, admin_headers, org
     assert client.get(f'/events/{slug}').status_code == 200 and _post_statuses(slug) == {'awaiting_render': 2}
 
 
+def test_a_change_made_while_paused_reaches_the_guests_only_on_resume(
+        client, admin_headers, organiser, create, confirmed_guest, monkeypatch):
+    from tests.test_event_manage import _iso
+    calls = []
+    monkeypatch.setattr('service.events.mail.queue_change', lambda tx, eid: calls.append(eid) or 1)
+    o = organiser()
+    slug = create(o)
+    client.post(f'/organiser/events/{slug}/publish', headers=o['headers'])
+    confirmed_guest(slug)
+    client.post(f'/admin/events/{slug}/pause', headers=admin_headers)
+    r = client.patch(f'/organiser/events/{slug}', headers=o['headers'],
+                     json=dict(starts_at=_iso(31, 1), ends_at=_iso(31, 4)))
+    assert r.get_json()['notified'] == 0 and calls == []
+    assert _post_statuses(slug) == {'cancelled': 2}
+    assert client.post(f'/admin/events/{slug}/resume', headers=admin_headers).status_code == 200
+    assert calls == [_row(slug)['id']]
+    assert _post_statuses(slug) == {'cancelled': 2, 'awaiting_render': 2}
+    assert 'held' not in _row(slug)['change_after']
+
+
+def test_a_flagged_change_reaches_the_guests_once_the_admin_approves(
+        client, admin_headers, organiser, create, confirmed_guest, monkeypatch):
+    from tests.test_event_manage import SCAM, _iso
+    calls = []
+    monkeypatch.setattr('service.events.mail.queue_change', lambda tx, eid: calls.append(eid) or 1)
+    o = organiser()
+    slug = create(o)
+    client.post(f'/organiser/events/{slug}/publish', headers=o['headers'])
+    confirmed_guest(slug)
+    r = client.patch(f'/organiser/events/{slug}', headers=o['headers'],
+                     json=dict(description=SCAM, starts_at=_iso(31, 1), ends_at=_iso(31, 4)))
+    assert r.get_json() == {'event': {'slug': slug, 'status': 'pending'}, 'notified': 0} and calls == []
+    assert client.post(f'/admin/events/{slug}/approve', headers=admin_headers).status_code == 200
+    assert calls == [_row(slug)['id']]
+
+
 def test_revoking_an_organiser_pauses_their_gatherings_and_ends_their_links(client, admin_headers, organiser, create):
     o = organiser()
     slug = create(o)
