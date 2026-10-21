@@ -75,3 +75,56 @@ def test_removing_admin_from_another_admin_still_works(client, make_person, admi
         assert r.get_json()['roles'] == []
     finally:
         _clean_audit(other['uuid'])
+
+
+def test_a_concurrent_removal_cannot_leave_no_admin(client, make_person, admin_headers):
+    """Two admins removing each other at once from two workers. The second
+    request's transaction began before the first committed; the admin rows
+    it locks have changed under it, so it fails to serialize instead of
+    removing the last admin as well (write skew under REPEATABLE READ)."""
+    import psycopg
+    import pytest
+    from database import _api_conninfo
+    from service.api.admin import users_action_routes as routes
+    other = make_person(name='OtherAdmin')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=other['id']))
+    second = psycopg.connect(_api_conninfo, row_factory=psycopg.rows.dict_row)
+    try:
+        # The second request has read its snapshot, with `other` an admin.
+        second.execute('SELECT roles FROM person WHERE id = %(i)s', dict(i=other['id'])).fetchone()
+        r = client.patch(f"/admin/users/{other['uuid']}/roles",
+                         json={'remove': ['admin'], 'reason': 'first'}, headers=admin_headers)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        with pytest.raises(psycopg.errors.SerializationFailure):
+            routes._other_admins(second.cursor(), -1)
+    finally:
+        second.rollback()
+        second.close()
+        _clean_audit(other['uuid'])
+
+
+def test_a_serialization_failure_is_a_409(client, make_person, admin_headers, monkeypatch):
+    import psycopg
+    from service.api.admin import users_action_routes as routes
+    other = make_person(name='OtherAdmin')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=other['id']))
+
+    def _raise(tx, person_id):
+        raise psycopg.errors.SerializationFailure('concurrent update')
+
+    monkeypatch.setattr(routes, '_other_admins', _raise)
+    try:
+        r = client.patch(f"/admin/users/{other['uuid']}/roles",
+                         json={'remove': ['admin'], 'reason': 'race'}, headers=admin_headers)
+        assert r.status_code == 409
+        assert r.get_json()['error'] == 'conflict'
+        with api_tx() as tx:
+            roles = tx.execute('SELECT roles FROM person WHERE id = %(i)s',
+                               dict(i=other['id'])).fetchone()['roles']
+        assert 'admin' in roles
+    finally:
+        _clean_audit(other['uuid'])

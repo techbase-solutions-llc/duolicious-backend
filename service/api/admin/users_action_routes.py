@@ -19,6 +19,7 @@ trade-off because entitlements grant/revoke is idempotent.
 from __future__ import annotations
 
 import duotypes as t
+import psycopg
 from flask import abort, request
 
 from service.api.decorators import apost, apatch, adelete, validate
@@ -237,15 +238,25 @@ def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
 
 # ----- ROLES ---------------------------------------------------------------
 
-_Q_OTHER_ADMINS = """
-    SELECT count(*)::int AS n FROM person
-     WHERE 'admin' = ANY(COALESCE(roles, ARRAY[]::text[])) AND id <> %(id)s
+# Every admin row, locked until the transaction ends. A plain count let two
+# admins remove each other at the same moment from two gunicorn workers:
+# under REPEATABLE READ each saw the other still an admin, each updated a
+# different row, both committed, and nobody was left (write skew). Locked,
+# the second waits for the first and then fails to serialize, which the
+# route answers with a 409.
+_Q_LOCK_ADMINS = """
+    SELECT id FROM person
+     WHERE 'admin' = ANY(COALESCE(roles, ARRAY[]::text[]))
+     ORDER BY id
+       FOR UPDATE
 """
 
 
 def _other_admins(tx, person_id: int) -> int:
-    """How many people other than `person_id` hold the admin role."""
-    return int(tx.execute(_Q_OTHER_ADMINS, dict(id=person_id)).fetchone()['n'])
+    """How many people other than `person_id` hold the admin role. Locks
+    every admin row for the rest of the transaction."""
+    return sum(1 for r in tx.execute(_Q_LOCK_ADMINS).fetchall()
+               if int(r['id']) != person_id)
 
 
 @apatch('/admin/users/<uuid>/roles')
@@ -255,30 +266,35 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
     allowed = {'admin', 'mod'}
     add = [r for r in req.add if r in allowed]
     remove = [r for r in req.remove if r in allowed]
-    with api_tx() as tx:
-        row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
-        if row is None:
-            abort(404)
-        target_email = row['email']
-        current = set(row['roles'] or [])
-        # One mis-tap on your own drawer, or on the last admin's, used to
-        # turn every admin route into a 403 that only a database edit could
-        # undo (TEC-1845 admin audit). Refused before any write.
-        if 'admin' in remove and 'admin' in current and 'admin' not in add:
-            if s.person_id is not None and int(row['id']) == int(s.person_id):
-                return dict(error='cannot_remove_own_admin'), 409
-            if _other_admins(tx, int(row['id'])) == 0:
-                return dict(error='last_admin'), 409
-        before = sorted(current)
-        new = sorted((current - set(remove)) | set(add))
-        updated = tx.execute(
-            _Q_PATCH_ROLES, dict(uuid=uuid, roles=new),
-        ).fetchone()
-        record_audit(
-            tx, s, 'patch_roles',
-            target_email=target_email, target_uuid=uuid,
-            metadata={'before': before, 'after': new, 'reason': req.reason},
-        )
+    # Two admins removing each other at once: the second fails to serialize
+    # on the admin rows _other_admins locks, and nothing is written.
+    try:
+        with api_tx() as tx:
+            row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
+            if row is None:
+                abort(404)
+            target_email = row['email']
+            current = set(row['roles'] or [])
+            # One mis-tap on your own drawer, or on the last admin's, used to
+            # turn every admin route into a 403 that only a database edit could
+            # undo (TEC-1845 admin audit). Refused before any write.
+            if 'admin' in remove and 'admin' in current and 'admin' not in add:
+                if s.person_id is not None and int(row['id']) == int(s.person_id):
+                    return dict(error='cannot_remove_own_admin'), 409
+                if _other_admins(tx, int(row['id'])) == 0:
+                    return dict(error='last_admin'), 409
+            before = sorted(current)
+            new = sorted((current - set(remove)) | set(add))
+            updated = tx.execute(
+                _Q_PATCH_ROLES, dict(uuid=uuid, roles=new),
+            ).fetchone()
+            record_audit(
+                tx, s, 'patch_roles',
+                target_email=target_email, target_uuid=uuid,
+                metadata={'before': before, 'after': new, 'reason': req.reason},
+            )
+    except psycopg.errors.SerializationFailure:
+        return dict(error='conflict'), 409
     return {'ok': True, 'roles': list(updated['roles'])}
 
 
