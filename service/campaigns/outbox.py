@@ -101,6 +101,24 @@ _Q_ENQUEUE_FOR_ORGANISER = """
     RETURNING id
 """
 
+# Matchmaker mail (TEC-1845, migration 0073): a recommended single and a
+# mentor are neither members nor leads. Each has its own partial unique
+# index as the idempotency point. Exempt, no List-Unsubscribe: each is sent
+# once, about something a member asked for.
+_Q_ENQUEUE_FOR_RECOMMENDATION = """
+    INSERT INTO email_outbox (campaign, campaign_id, recommendation_id, email, payload, exempt, unsub_scope)
+    VALUES (%(c)s, %(cid)s, %(rid)s, %(email)s, %(payload)s, TRUE, 'notifications')
+    ON CONFLICT (campaign, campaign_id, recommendation_id) WHERE recommendation_id IS NOT NULL DO NOTHING
+    RETURNING id
+"""
+
+_Q_ENQUEUE_FOR_MENTOR_LINK = """
+    INSERT INTO email_outbox (campaign, campaign_id, mentor_link_id, email, payload, exempt, unsub_scope)
+    VALUES (%(c)s, %(cid)s, %(mid)s, %(email)s, %(payload)s, TRUE, 'notifications')
+    ON CONFLICT (campaign, campaign_id, mentor_link_id) WHERE mentor_link_id IS NOT NULL DO NOTHING
+    RETURNING id
+"""
+
 # The inner SELECT takes the row locks with SKIP LOCKED, so a second drain
 # running at the same moment simply does not see the rows this one is about
 # to reserve -- it never blocks on them, and never reserves them twice.
@@ -280,6 +298,37 @@ def enqueue_for_organiser(tx, *, campaign: str, campaign_id: str, organiser_id: 
     return row['id'] if row else None
 
 
+def _exempt_payload(subject: str, html: str, from_addr: Optional[str]) -> str:
+    return json.dumps(dict(subject=subject, html=html, from_addr=from_addr, list_unsubscribe=None,
+                           post_send=None, cap_days=0, requires_spotlight_opt_in=False))
+
+
+def enqueue_for_recommendation(tx, *, campaign: str, campaign_id: str, recommendation_id: int,
+                               email: str, subject: str, html: str,
+                               from_addr: Optional[str]) -> Optional[int]:
+    """Queue the one email a recommended single gets (TEC-1845). They are
+    neither a member nor a lead: "nobody gives their own email there"
+    (service/leads/sources.py). Exempt, with no unsubscribe, since it is
+    sent once ever. Returns the new row id, or None when this exact
+    (campaign, campaign_id, recommendation_id) is already in the outbox."""
+    row = tx.execute(_Q_ENQUEUE_FOR_RECOMMENDATION, dict(
+        c=campaign, cid=campaign_id, rid=recommendation_id, email=email,
+        payload=_exempt_payload(subject, html, from_addr))).fetchone()
+    return row['id'] if row else None
+
+
+def enqueue_for_mentor_link(tx, *, campaign: str, campaign_id: str, mentor_link_id: int,
+                            email: str, subject: str, html: str,
+                            from_addr: Optional[str]) -> Optional[int]:
+    """Queue a mentor's invitation (TEC-1845): a mentor has no account, only
+    the link a single made. Exempt, no unsubscribe. Returns the new row id,
+    or None when already queued."""
+    row = tx.execute(_Q_ENQUEUE_FOR_MENTOR_LINK, dict(
+        c=campaign, cid=campaign_id, mid=mentor_link_id, email=email,
+        payload=_exempt_payload(subject, html, from_addr))).fetchone()
+    return row['id'] if row else None
+
+
 def reserve(tx, limit: int = BATCH) -> list[dict]:
     """Claim up to `limit` due rows for this drain and return them in full.
 
@@ -326,8 +375,9 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
 
 def mark_skipped(tx, id: int, reason: str) -> None:
     """A send-time re-check refused this row: 'withdrawn', 'suppressed',
-    'unsubscribed', 'capped' or 'switched_off'. Terminal, and deliberately distinct from
-    'failed' -- nothing went wrong, we simply must not send it. The same
+    'unsubscribed', 'capped', 'switched_off' or 'member_now'. Terminal, and
+    deliberately distinct from 'failed' -- nothing went wrong, we simply
+    must not send it. The same
     state and reason string `withdraw_member` writes directly onto the
     Spotlight invites it finds still queued."""
     tx.execute(_Q_SKIP, dict(id=id, reason=reason))
@@ -349,6 +399,15 @@ def mark_failed_attempt(tx, id: int, error: str, attempts: int) -> None:
 _Q_SPOTLIGHT_CONSENT = """
     SELECT spotlight_opt_in, activated FROM person WHERE id = %(p)s
 """
+
+
+def _is_member_address(tx, email: str) -> bool:
+    from service.leads import clean_email
+    cleaned = clean_email(email)
+    if cleaned is None:
+        return False
+    return tx.execute('SELECT 1 FROM person WHERE normalized_email = %(ne)s LIMIT 1',
+                      dict(ne=cleaned[1])).fetchone() is not None
 
 
 def _refusal(tx, row: dict) -> Optional[str]:
@@ -384,6 +443,25 @@ def _refusal(tx, row: dict) -> Optional[str]:
     if row['campaign'] in events.CAMPAIGN_SWITCHES and not events.switch_on(
             events.CAMPAIGN_SWITCHES[row['campaign']]):
         return 'switched_off'
+    # Matchmaker (TEC-1845): the same, for any recipient.
+    from service import matchmaker
+    if row['campaign'] in matchmaker.CAMPAIGN_SWITCHES and not matchmaker.switch_on(
+            matchmaker.CAMPAIGN_SWITCHES[row['campaign']]):
+        return 'switched_off'
+    # A recommended single (TEC-1845) is neither a member nor a lead: the
+    # suppression list applies, and the email is not sent once the address
+    # has joined (they are a member now, and the app speaks for itself).
+    if row.get('recommendation_id') is not None:
+        if is_suppressed_send(row['email']):
+            return 'suppressed'
+        return 'member_now' if _is_member_address(tx, row['email']) else None
+    # A mentor's invitation (TEC-1845): not once the single has ended the link.
+    if row.get('mentor_link_id') is not None:
+        if is_suppressed_send(row['email']):
+            return 'suppressed'
+        live_link = tx.execute('SELECT 1 FROM mentor_link WHERE id = %(i)s AND revoked_at IS NULL',
+                               dict(i=row['mentor_link_id'])).fetchone()
+        return None if live_link else 'withdrawn'
     # An organiser (TEC-1845) is neither a member nor a lead: only the
     # suppression list applies.
     if row.get('organiser_id') is not None:

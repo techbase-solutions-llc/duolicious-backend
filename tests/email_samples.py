@@ -343,6 +343,23 @@ for _name, _src, _aud, _switch, _build in (
         (lambda b: lambda: b(TO))(_build), EV.FROM_ADDR)
 
 # ===========================================================================
+# 8c. Matchmaker (service/matchmaker/mail.py, TEC-1845), all behind switches
+# and AHAVAH_MATCHMAKER_LIVE_ENABLED, launch pending
+from service.matchmaker import mail as MM  # noqa: E402
+_MM_HELD = 'HELD: AHAVAH_MATCHMAKER_LIVE_ENABLED + {}, off until launch'
+for _name, _src, _aud, _switch, _build in (
+        ('mm_alert_several', 'alert_email (several)', 'member', 'AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED', MM.preview_alert_several),
+        ('mm_alert_one', 'alert_email (1)', 'member', 'AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED', MM.preview_alert_one),
+        ('mm_alert_with_likes', 'alert_email (with the likes block)', 'member', 'AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED', MM.preview_alert_with_likes),
+        ('mm_visitor_confirm', 'visitor_confirm_email', 'lead', 'AHAVAH_MATCHMAKER_VISITOR_CONFIRM_EMAIL_ENABLED', MM.preview_visitor_confirm),
+        ('mm_visitor_alert', 'visitor_alert_email', 'lead', 'AHAVAH_MATCHMAKER_VISITOR_ALERT_EMAIL_ENABLED', MM.preview_visitor_alert),
+        ('mm_recommend', 'recommend_email', 'lead', 'AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED', MM.preview_recommend),
+        ('mm_intro', 'intro_email', 'member', 'AHAVAH_MATCHMAKER_INTRO_EMAIL_ENABLED', MM.preview_intro),
+        ('mm_mentor_invite', 'mentor_invite_email', 'lead', 'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED', MM.preview_mentor_invite)):
+    add(_name, f'service/matchmaker/mail.py {_src}', _aud, _MM_HELD.format(_switch),
+        (lambda b: lambda: b(TO))(_build), MM.FROM_ADDR)
+
+# ===========================================================================
 # 9. Personal notes (one-off CLI, sent once in Oct 2026)
 from emails import spotlight_candidates_note, warm_leads_note  # noqa: E402
 add('spotlight_candidates_note', 'emails/spotlight_candidates_note.py note_html', 'member',
