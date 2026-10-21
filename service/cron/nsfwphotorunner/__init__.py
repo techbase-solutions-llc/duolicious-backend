@@ -3,6 +3,7 @@ from antiabuse.facecheck import count_faces as count_faces_in
 from database.asyncdatabase import api_tx
 from service.cron.nsfwphotorunner.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS
+from emails.photo_removed import queue_for_automatic_rejections
 from service.cron.cronutil import (
     MAX_RANDOM_START_DELAY,
     download_450_images,
@@ -80,6 +81,12 @@ async def predict_nsfw_photos_once():
         if uuids_:
             await tx.execute(
                 Q_RECHECK_MAIN_PHOTO_FACE_OF_PHOTOS, dict(uuids=uuids_))
+
+    # The note to each member whose photo was just rejected, after the
+    # verdicts have committed (TEC-1845 admin audit). Nothing is queued
+    # while the auto_photo_removed_email switch is off.
+    if uuids_:
+        await asyncio.to_thread(queue_for_automatic_rejections, uuids_)
 
 async def predict_nsfw_photos_forever():
     await asyncio.sleep(random.randint(0, MAX_RANDOM_START_DELAY))

@@ -99,3 +99,21 @@ def next_send_at(now: datetime) -> datetime:
     if slot <= now:
         slot += timedelta(days=7)
     return slot.astimezone(timezone.utc)
+
+
+# THE OWNER'S REST DAYS (TEC-1845 admin audit).
+#
+# restdays.py states the rule: no campaign emails on the Day of Atonement or
+# on the Sabbaths, which are lunar and fall on Mondays as often as any other
+# day. Nothing here read it, so the weekly e2 and the Send button could mail
+# the membership during a rest period. Both ask campaign_rest_now, and read
+# it through this module (schedule.campaign_rest_now) so a test can pin it.
+
+def is_campaign_rest_period(at: datetime) -> bool:
+    """True inside a rest period, evening before included (restdays.py)."""
+    from service.spotlight.restdays import is_rest_period
+    return is_rest_period(at)
+
+
+def campaign_rest_now() -> bool:
+    return is_campaign_rest_period(datetime.now(timezone.utc))

@@ -63,7 +63,10 @@ _REPORT_KEY = ("r.reporter_id || '-' || r.reported_id || '-' || "
 
 Q_LIST_REPORTS = f"""
 SELECT
-    r.reported_at::text                          AS created_at,
+    -- ISO 8601 UTC (TEC-1845 admin audit). reported_at is a naive UTC
+    -- TIMESTAMP, and ::text sent it with no zone, which the admin read as
+    -- the browser's local time: an evening report showed the next day.
+    to_char(r.reported_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
     {_REPORT_KEY}                                AS report_key,
     r.reporter_id                                AS reporter_id,
     reporter.uuid::text                          AS reporter_uuid,

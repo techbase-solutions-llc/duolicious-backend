@@ -199,7 +199,7 @@ def approve(tx, days: list[date], now: Optional[datetime] = None) -> list[str]:
 # A question week runs from 00:00 Barbados on its drop day to the next
 # drop's, or 7 days when there is none yet. The launch push is also logged
 # as that week's question push, so weekly_sent takes it back out.
-_Q_PUSHES = """
+_Q_PUSHES = f"""
     WITH w AS (
         SELECT live_on,
                live_on::timestamp AT TIME ZONE 'America/Barbados' AS starts,
@@ -220,8 +220,14 @@ _Q_PUSHES = """
                AND t.tapped_at >= w.starts AND t.tapped_at < w.ends) AS mpush,
            (SELECT count(*) FROM push_tap t WHERE t.src = 'lpush'
                AND t.tapped_at >= w.starts AND t.tapped_at < w.ends) AS lpush,
+           -- Members only, as the push audience is (pushes._audience): a
+           -- staff or test account switching pushes off while checking the
+           -- setting is no signal (TEC-1845 admin audit). %(ex)s is
+           -- service.growth.queries._excluded().
            (SELECT count(*) FROM notification_preference np
-             WHERE np.push_questions_off_at >= w.starts AND np.push_questions_off_at < w.ends) AS switched_off
+              JOIN person sp ON sp.id = np.person_id
+             WHERE np.push_questions_off_at >= w.starts AND np.push_questions_off_at < w.ends
+               AND {member_sql('sp')} AND lower(sp.email) <> ALL(%(ex)s)) AS switched_off
       FROM w
      ORDER BY w.live_on DESC
      LIMIT %(n)s
@@ -230,7 +236,8 @@ _Q_PUSHES = """
 
 def push_rows(tx, weeks: int = 8) -> list[dict]:
     out = []
-    for r in tx.execute(_Q_PUSHES, dict(n=weeks)).fetchall():
+    from service.growth.queries import _excluded
+    for r in tx.execute(_Q_PUSHES, dict(n=weeks, ex=_excluded())).fetchall():
         launch = int(r['launch_sent'])
         off = int(r['switched_off'])
         out.append(dict(live_on=r['live_on'].isoformat(),

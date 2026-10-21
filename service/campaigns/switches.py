@@ -126,6 +126,11 @@ SWITCHES = {
     # preference (admin_alert_pref) turns it off.
     'admin_alerts_cron': 'AHAVAH_ADMIN_ALERTS_CRON_ENABLED',
     'stale_post_alert': 'AHAVAH_STALE_POST_ALERT_ENABLED',
+    # The note to a member whose photo the NSFW cron rejected (TEC-1845
+    # admin audit): the same "About one of your photos" an admin's Take
+    # down sends, queued through the outbox by the cron. Off until the
+    # owner decides automatic takedowns should be announced.
+    'auto_photo_removed_email': 'AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

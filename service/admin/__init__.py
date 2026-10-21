@@ -81,18 +81,22 @@ def record_system_audit(
     actor: str,
     action: str,
     metadata: Optional[dict[str, Any]] = None,
+    target_email: Optional[str] = None,
+    target_uuid: Optional[str] = None,
 ) -> str:
     """`record_audit` for an action with no admin session behind it.
-    `actor` is 'cron' or 'cli'. Same caller contract: inside the api_tx
-    that holds what is being audited, where there is one."""
+    `actor` is 'cron', 'cli' or 'email-link' (a ban or photo deletion made
+    from the report email's links, which carry a token and no session).
+    Same caller contract: inside the api_tx that holds what is being
+    audited, where there is one."""
     row = tx.execute(
         Q_INSERT_AUDIT,
         dict(
             actor_email=actor,
             actor_uuid=SYSTEM_ACTOR_UUID,
             action=action,
-            target_email=None,
-            target_uuid=None,
+            target_email=target_email,
+            target_uuid=target_uuid,
             metadata=json.dumps(metadata or {}),
         ),
     ).fetchone()

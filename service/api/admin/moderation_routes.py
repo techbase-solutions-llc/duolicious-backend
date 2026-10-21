@@ -75,6 +75,10 @@ def reject_photo_admin(s: t.SessionInfo, photo_uuid: str):
     true. The note goes out AFTER the takedown has committed and can never
     undo it: a mail failure is caught and reported back as `notified: false`
     so the operator knows whether the member was told.
+
+    A photo already taken down is left alone: no second note, no second
+    audit row, and `changed: false` (TEC-1845 admin audit). A double click
+    used to email the member twice.
     """
     require_admin(s)
     notify = (request.get_json(silent=True) or {}).get('notify', True) is not False
@@ -84,12 +88,16 @@ def reject_photo_admin(s: t.SessionInfo, photo_uuid: str):
             UPDATE photo
                SET moderation_status = 'rejected', moderated_at = NOW()
              WHERE uuid = %(uuid)s
+               AND moderation_status <> 'rejected'
             RETURNING person_id
             """,
             dict(uuid=photo_uuid),
         ).fetchone()
         if row is None:
-            abort(404)
+            if tx.execute('SELECT 1 FROM photo WHERE uuid = %(uuid)s',
+                          dict(uuid=photo_uuid)).fetchone() is None:
+                abort(404)
+            return {'ok': True, 'notified': False, 'changed': False}
         owner = tx.execute("SELECT email, name FROM person WHERE id = %(i)s",
                            dict(i=row['person_id'])).fetchone()
         record_audit(

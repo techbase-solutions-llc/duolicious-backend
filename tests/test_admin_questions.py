@@ -171,6 +171,29 @@ def test_pushes_taps_and_switch_offs_by_week(calendar, make_person, make_questio
     assert (row['switched_off'], row['guard_rail']) == (2, True)
 
 
+def test_switch_offs_count_members_only(calendar, make_person, make_question, monkeypatch):
+    """Pushes go to members only, so a staff or test account turning them
+    off while checking the setting is not a signal and must not trip the
+    guard rail (TEC-1845 admin audit)."""
+    q = make_question()
+    member, staff, tester = (make_person(name='QaOffMember'), make_person(name='QaOffStaff'),
+                             make_person(name='QaOffTester'))
+    in_week = '2027-01-04 12:00:00+00'
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s", dict(i=staff['id']))
+        tester_email = tx.execute('SELECT lower(email) AS e FROM person WHERE id = %(i)s',
+                                  dict(i=tester['id'])).fetchone()['e']
+        tx.execute("INSERT INTO question_drop (live_on, prompt_key, approved_at) VALUES (%(d)s, %(k)s, NOW())",
+                   dict(d=SUN, k=q['key']))
+        for p in (member, staff, tester):
+            tx.execute("""INSERT INTO notification_preference (person_id, push_questions, push_questions_off_at)
+                          VALUES (%(p)s, FALSE, %(t)s)""", dict(p=p['id'], t=in_week))
+    monkeypatch.setenv('AHAVAH_TEST_ACCOUNT_EMAILS', tester_email)
+    with api_tx() as tx:
+        row = {r['live_on']: r for r in qa.push_rows(tx, weeks=52)}[SUN.isoformat()]
+    assert (row['switched_off'], row['guard_rail']) == (1, False)
+
+
 def test_the_routes_answer_an_admin(client, make_person, monkeypatch):
     monkeypatch.delenv('AHAVAH_QUESTION_PUSH_ENABLED', raising=False)
     monkeypatch.setenv('AHAVAH_E2_QUESTION_LINE_ENABLED', '1')

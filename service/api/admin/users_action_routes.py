@@ -19,7 +19,8 @@ trade-off because entitlements grant/revoke is idempotent.
 from __future__ import annotations
 
 import duotypes as t
-from flask import abort
+import psycopg
+from flask import abort, request
 
 from service.api.decorators import apost, apatch, adelete, validate
 from service.admin import require_admin, record_audit
@@ -116,8 +117,11 @@ _Q_PATCH_ROLES = """
     RETURNING email, roles
 """
 
-# Wipe onboardee + any duo_session rows tied to the person's email. The
-# WITH clause runs first; the final DELETE returns the email for audit.
+# Wipe the onboardee row and every duo_session for the person's email, which
+# signs a member out of every device. The admin's dialog says so, and
+# whether it should stay that way is the owner's call (TEC-1845 admin
+# audit, 21 Oct), so it is unchanged. `cleared` says whether there was an
+# onboardee row at all.
 _Q_CLEAR_ONBOARDEE = """
     WITH target AS (
         SELECT email FROM person WHERE uuid = %(uuid)s::uuid
@@ -126,10 +130,14 @@ _Q_CLEAR_ONBOARDEE = """
         DELETE FROM duo_session
          WHERE email IN (SELECT email FROM target)
         RETURNING email
+    ),
+    del_onboardee AS (
+        DELETE FROM onboardee
+         WHERE email IN (SELECT email FROM target)
+        RETURNING email
     )
-    DELETE FROM onboardee
-     WHERE email IN (SELECT email FROM target)
-    RETURNING email
+    SELECT t.email, EXISTS (SELECT 1 FROM del_onboardee) AS cleared
+      FROM target t
 """
 
 
@@ -166,7 +174,12 @@ def post_grant_entitlement(req: t.PostGrantEntitlement, s: t.SessionInfo, uuid: 
 
 @adelete('/admin/users/<uuid>/entitlements/<name>')
 def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
+    """Body `{reason}` is optional: the live admin sends none. When given it
+    is written to the audit row (TEC-1845 admin audit)."""
     require_admin(s)
+    body = request.get_json(silent=True)
+    reason = body.get('reason') if isinstance(body, dict) else None
+    reason = reason.strip()[:512] or None if isinstance(reason, str) else None
     with api_tx('read committed') as tx:
         row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
     if row is None:
@@ -179,7 +192,7 @@ def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
         record_audit(
             tx, s, 'revoke_entitlement',
             target_email=target_email, target_uuid=uuid,
-            metadata={'name': name, 'changed': changed},
+            metadata={'name': name, 'changed': changed, 'reason': reason},
         )
     return {'ok': True, 'changed': changed}
 
@@ -225,6 +238,27 @@ def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
 
 # ----- ROLES ---------------------------------------------------------------
 
+# Every admin row, locked until the transaction ends. A plain count let two
+# admins remove each other at the same moment from two gunicorn workers:
+# under REPEATABLE READ each saw the other still an admin, each updated a
+# different row, both committed, and nobody was left (write skew). Locked,
+# the second waits for the first and then fails to serialize, which the
+# route answers with a 409.
+_Q_LOCK_ADMINS = """
+    SELECT id FROM person
+     WHERE 'admin' = ANY(COALESCE(roles, ARRAY[]::text[]))
+     ORDER BY id
+       FOR UPDATE
+"""
+
+
+def _other_admins(tx, person_id: int) -> int:
+    """How many people other than `person_id` hold the admin role. Locks
+    every admin row for the rest of the transaction."""
+    return sum(1 for r in tx.execute(_Q_LOCK_ADMINS).fetchall()
+               if int(r['id']) != person_id)
+
+
 @apatch('/admin/users/<uuid>/roles')
 @validate(t.PatchRoles)
 def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
@@ -232,22 +266,35 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
     allowed = {'admin', 'mod'}
     add = [r for r in req.add if r in allowed]
     remove = [r for r in req.remove if r in allowed]
-    with api_tx() as tx:
-        row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
-        if row is None:
-            abort(404)
-        target_email = row['email']
-        current = set(row['roles'] or [])
-        before = sorted(current)
-        new = sorted((current - set(remove)) | set(add))
-        updated = tx.execute(
-            _Q_PATCH_ROLES, dict(uuid=uuid, roles=new),
-        ).fetchone()
-        record_audit(
-            tx, s, 'patch_roles',
-            target_email=target_email, target_uuid=uuid,
-            metadata={'before': before, 'after': new, 'reason': req.reason},
-        )
+    # Two admins removing each other at once: the second fails to serialize
+    # on the admin rows _other_admins locks, and nothing is written.
+    try:
+        with api_tx() as tx:
+            row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
+            if row is None:
+                abort(404)
+            target_email = row['email']
+            current = set(row['roles'] or [])
+            # One mis-tap on your own drawer, or on the last admin's, used to
+            # turn every admin route into a 403 that only a database edit could
+            # undo (TEC-1845 admin audit). Refused before any write.
+            if 'admin' in remove and 'admin' in current and 'admin' not in add:
+                if s.person_id is not None and int(row['id']) == int(s.person_id):
+                    return dict(error='cannot_remove_own_admin'), 409
+                if _other_admins(tx, int(row['id'])) == 0:
+                    return dict(error='last_admin'), 409
+            before = sorted(current)
+            new = sorted((current - set(remove)) | set(add))
+            updated = tx.execute(
+                _Q_PATCH_ROLES, dict(uuid=uuid, roles=new),
+            ).fetchone()
+            record_audit(
+                tx, s, 'patch_roles',
+                target_email=target_email, target_uuid=uuid,
+                metadata={'before': before, 'after': new, 'reason': req.reason},
+            )
+    except psycopg.errors.SerializationFailure:
+        return dict(error='conflict'), 409
     return {'ok': True, 'roles': list(updated['roles'])}
 
 
@@ -370,9 +417,10 @@ def post_clear_onboardee(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
     require_admin(s)
     with api_tx() as tx:
         row = tx.execute(_Q_CLEAR_ONBOARDEE, dict(uuid=uuid)).fetchone()
+        cleared = bool(row and row['cleared'])
         record_audit(
             tx, s, 'clear_onboardee',
             target_email=(row or {}).get('email'), target_uuid=uuid,
-            metadata={'reason': req.reason},
+            metadata={'reason': req.reason, 'cleared': cleared},
         )
-    return {'ok': True}
+    return {'ok': True, 'cleared': cleared}
