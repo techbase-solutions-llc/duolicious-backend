@@ -974,3 +974,105 @@ def outbox_rows(events_schema):
                 dict(c=campaign)).fetchall()]
 
     return _rows
+
+
+def _event_rows_cleanup(tx, slugs):
+    """What a test's gatherings leave beside their own rows: their leads
+    (and so the leads' outbox rows) and their posts."""
+    for s in slugs:
+        tx.execute('DELETE FROM lead WHERE source = %(s)s', dict(s=f'event:{s}'))
+        keys = [r['request_key'] for r in tx.execute(
+            'SELECT DISTINCT request_key FROM publishing_queue WHERE request_key LIKE %(p)s',
+            dict(p=f'event:{s}:%')).fetchall()]
+        if keys:
+            tx.execute('DELETE FROM publishing_queue WHERE request_key = ANY(%(k)s)', dict(k=keys))
+            tx.execute('DELETE FROM spotlight_revision WHERE request_key = ANY(%(k)s)', dict(k=keys))
+            tx.execute('DELETE FROM campaign_link WHERE kind = ANY(%(k)s)',
+                       dict(k=[f'post:{k}' for k in keys]))
+
+
+@pytest.fixture
+def event_cleanup():
+    """event_cleanup(slug): forget this gathering's leads and posts after
+    the test (its rows go with its organiser)."""
+    from database import api_tx
+    slugs: list[str] = []
+    yield slugs.append
+    with api_tx() as tx:
+        _event_rows_cleanup(tx, slugs)
+
+
+@pytest.fixture
+def published(organiser, event_cleanup):
+    """published(**over) -> slug: an approved organiser's published
+    gathering 30 days ahead, in Dallas, inserted directly (no posts). Any
+    column may be overridden; `organiser_row` gives an organiser dict from
+    the organiser fixture to host it."""
+    from datetime import datetime, time, timedelta, timezone
+    from uuid import uuid4
+
+    from database import api_tx
+    from service.events.fields import region_for
+
+    def _make(organiser_row: dict | None = None, **over) -> str:
+        o = organiser_row or organiser()
+        day = (datetime.now(timezone.utc) + timedelta(days=30)).date()
+        start = datetime.combine(day, time(0, 0), timezone.utc)
+        row = dict(
+            slug=f'test-gathering-{uuid4().hex[:8]}', title='Marriage preparation evening',
+            starts_at=start, ends_at=start + timedelta(hours=3), tz='America/Chicago',
+            tz_label='Central Time', mode='in_person', city='Dallas', country='United States',
+            venue='Grace Fellowship hall, 14 Elm Street, Dallas', venue_visibility='confirmed',
+            online_url=None, description='An evening for single believers who hope to marry.',
+            capacity=None, tags=['singles_welcome'], feast=None, show_going=False,
+            status='published', published_at=datetime.now(timezone.utc))
+        row.update(over)
+        for k in ('starts_at', 'ends_at'):
+            if isinstance(row[k], str):
+                row[k] = datetime.fromisoformat(row[k])
+        if 'ends_at' not in over and 'starts_at' in over:
+            row['ends_at'] = row['starts_at'] + timedelta(hours=3)
+        if row['mode'] == 'online':
+            row.update(city=over.get('city'), country=over.get('country'), venue=None)
+            row['online_url'] = row['online_url'] or 'https://meet.example.com/ahavah-test'
+        row.setdefault('region', 'online' if row['mode'] == 'online' else region_for(row['country']))
+        cols = list(row)
+        with api_tx() as tx:
+            tx.execute(
+                f"""INSERT INTO event (organiser_id, {', '.join(cols)})
+                    VALUES (%(oid)s, {', '.join(f'%({c})s' for c in cols)})""",
+                dict(row, oid=o['id']))
+        event_cleanup(row['slug'])
+        return row['slug']
+
+    return _make
+
+
+@pytest.fixture
+def confirmed_guest():
+    """confirmed_guest(slug, *, name, email, party_size, share) -> dict(id,
+    email, token): a confirmed going RSVP with a token, inserted directly
+    (no lead). It goes with its gathering."""
+    from uuid import uuid4
+
+    from database import api_tx
+    from service.leads import new_token
+
+    def _make(slug: str, *, name: str = 'Hannah Okafor', email: str | None = None,
+              party_size: int = 1, share: bool = False, person_id: int | None = None) -> dict:
+        address = email or f'guest-{uuid4().hex[:10]}@ahavah-test.invalid'
+        token, hashed = new_token()
+        with api_tx() as tx:
+            rid = tx.execute(
+                """INSERT INTO event_rsvp (event_id, name, email, normalized_email, party_size,
+                                           confirmed_at, token_hash, confirm_by,
+                                           share_email_with_organiser, source, person_id)
+                   SELECT id, %(n)s, %(e)s, %(e)s, %(p)s, NOW(), %(h)s, NOW() + interval '7 days',
+                          %(sh)s, 'event:' || slug, %(pid)s
+                     FROM event WHERE slug = %(slug)s
+                   RETURNING id""",
+                dict(n=name, e=address, p=party_size, h=hashed, sh=share, slug=slug,
+                     pid=person_id)).fetchone()['id']
+        return dict(id=rid, email=address, token=token)
+
+    return _make

@@ -1195,3 +1195,33 @@ class PostOrganiserLink(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class EventDraftBody(BaseModel):
+    """POST /organiser/events and PATCH /organiser/events/<slug>. Every
+    field optional here: service.events.fields.clean_draft holds the rules,
+    in full for a new draft and for the keys given in an edit."""
+    title: Optional[str] = Field(default=None, max_length=400)
+    starts_at: Optional[str] = Field(default=None, max_length=64)
+    ends_at: Optional[str] = Field(default=None, max_length=64)
+    tz: Optional[str] = Field(default=None, max_length=64)
+    tz_label: Optional[str] = Field(default=None, max_length=64)
+    mode: Optional[str] = Field(default=None, max_length=16)
+    city: Optional[str] = Field(default=None, max_length=200)
+    country: Optional[str] = Field(default=None, max_length=200)
+    venue: Optional[str] = Field(default=None, max_length=600)
+    venue_visibility: Optional[str] = Field(default=None, max_length=16)
+    online_url: Optional[str] = Field(default=None, max_length=1000)
+    description: Optional[str] = Field(default=None, max_length=6000)
+    capacity: Optional[int] = None
+    tags: Optional[List[str]] = Field(default=None, max_length=10)
+    feast: Optional[str] = Field(default=None, max_length=32)
+    show_going: Optional[bool] = None
+
+
+class PostEventCancel(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+class PostAttended(BaseModel):
+    attended: bool

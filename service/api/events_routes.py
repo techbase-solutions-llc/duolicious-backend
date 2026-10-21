@@ -19,6 +19,7 @@ from service.api.decorators import (
     apost,
     get,
     limiter,
+    patch,
     post,
     shared_recipient_limit,
     validate,
@@ -106,11 +107,86 @@ def post_organiser_link(req: t.PostOrganiserLink):
 
 @get('/organiser/me')
 def get_organiser_me():
-    from service.events import EventError, live, organisers
+    from service.events import EventError, live, manage, organisers
     if not live():
         return _off()
     try:
         with api_tx() as tx:
-            return organisers.me(_organiser(tx)), 200, {'Cache-Control': 'no-store'}
+            o = _organiser(tx)
+            view = manage.organiser_view(tx, o)
     except EventError as e:
         return _refused(e)
+    return dict(organisers.me(o), groups=view['groups']), 200, {'Cache-Control': 'no-store'}
+
+
+# ---------------------------------------------------------------------------
+# An organiser's gatherings. Another organiser's slug answers 404.
+# ---------------------------------------------------------------------------
+
+def _organiser_call(fn):
+    """Runs fn(tx, organiser) for the token's organiser, answering 404
+    while dark and the refusal's status otherwise."""
+    from service.events import EventError, live
+    if not live():
+        return _off()
+    try:
+        with api_tx() as tx:
+            return fn(tx, _organiser(tx))
+    except EventError as e:
+        return _refused(e)
+
+
+def _draft(req: t.EventDraftBody) -> dict:
+    return req.model_dump(exclude_unset=True)
+
+
+@post('/organiser/events')
+@validate(t.EventDraftBody)
+def post_organiser_event(req: t.EventDraftBody):
+    from service.events import manage
+    return _organiser_call(lambda tx, o: (manage.create_event(tx, o, _draft(req)), 201))
+
+
+@patch('/organiser/events/<slug>')
+@validate(t.EventDraftBody)
+def patch_organiser_event(req: t.EventDraftBody, slug: str):
+    from service.events import manage
+    return _organiser_call(lambda tx, o: manage.update_event(tx, o, slug, _draft(req)))
+
+
+@post('/organiser/events/<slug>/publish')
+def post_organiser_event_publish(slug: str):
+    from service.events import manage
+    return _organiser_call(lambda tx, o: manage.publish(tx, o, slug))
+
+
+@post('/organiser/events/<slug>/cancel')
+@validate(t.PostEventCancel)
+def post_organiser_event_cancel(req: t.PostEventCancel, slug: str):
+    from service.events import manage
+    return _organiser_call(lambda tx, o: manage.cancel_event(tx, o, slug, req.note))
+
+
+@get('/organiser/events/<slug>')
+def get_organiser_event(slug: str):
+    from service.events import manage
+    return _organiser_call(
+        lambda tx, o: (manage.organiser_preview(tx, o, slug), 200, {'Cache-Control': 'no-store'}))
+
+
+@get('/organiser/events/<slug>/rsvps')
+def get_organiser_event_rsvps(slug: str):
+    from service.events import manage
+    return _organiser_call(
+        lambda tx, o: (manage.rsvp_list(tx, o, slug), 200, {'Cache-Control': 'no-store'}))
+
+
+@post('/organiser/events/<slug>/rsvps/<int:rid>/attended')
+@validate(t.PostAttended)
+def post_organiser_rsvp_attended(req: t.PostAttended, slug: str, rid: int):
+    from service.events import manage
+
+    def mark(tx, o):
+        manage.mark_attended(tx, o, slug, rid, req.attended)
+        return '', 204
+    return _organiser_call(mark)
