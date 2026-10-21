@@ -18,6 +18,7 @@ Until Phase 1, the stubs below return an empty/minimal result so that:
   - The frontend renders an empty Search/Discover tab gracefully
 """
 
+from service.search.predicates import age_bounds_sql, calendar_sql, gender_sql, torah_level_sql
 from commonsql import Q_COMPUTED_FLAIR  # noqa: F401  # re-exported via `from service.search.sql import *` (consumed by service/person/__init__.py)
 
 # --- Search-preference fragments (kept; not Q&A-related) -------------------
@@ -63,7 +64,11 @@ DELETE FROM search_cache WHERE searcher_person_id = %(searcher_person_id)s
 # When `preferred_countries` is empty, country filter is skipped entirely
 # (user is open to all countries). Same for languages. This lets new accounts
 # without explicit prefs see the global pool.
-Q_UNCACHED_SEARCH_2 = """
+# The gender, Torah level, calendar and age clauses come from
+# service/search/predicates.py, which the matchmaker's alerts share (TEC-1845),
+# so "fits" means the same in both. tests/test_search_predicates.py pins the
+# text to what it was on 20 Oct.
+Q_UNCACHED_SEARCH_2 = f"""
 WITH searcher_prefs AS (
     SELECT
         ARRAY(
@@ -147,10 +152,7 @@ prospect_pool AS (
       AND p.id != %(searcher_person_id)s
 
       -- Fail-open like the map: empty preference = no gender filter.
-      AND (
-          cardinality(%(gender_preference)s::SMALLINT[]) = 0
-          OR p.gender_id = ANY(%(gender_preference)s::SMALLINT[])
-      )
+      AND {gender_sql('p')}
 
       -- Country filter: applied only if user has expressed preferences
       AND (
@@ -284,21 +286,13 @@ prospect_pool AS (
           OR p.ahavah_extra->'assembly' IS NULL
           OR p.ahavah_extra->'assembly' = '[]'::jsonb
       )
-      AND (
-          cardinality(%(torah_levels)s::TEXT[]) = 0
-          OR p.ahavah_extra->>'torahLevel' = ANY(%(torah_levels)s::TEXT[])
-          OR p.ahavah_extra->>'torahLevel' IS NULL
-      )
+      AND {torah_level_sql('p')}
       AND (
           cardinality(%(polygyny_stances)s::TEXT[]) = 0
           OR p.ahavah_extra->>'polygyny' = ANY(%(polygyny_stances)s::TEXT[])
           OR p.ahavah_extra->>'polygyny' IS NULL
       )
-      AND (
-          cardinality(%(calendars)s::TEXT[]) = 0
-          OR p.ahavah_extra->>'calendar' = ANY(%(calendars)s::TEXT[])
-          OR p.ahavah_extra->>'calendar' IS NULL
-      )
+      AND {calendar_sql('p')}
       AND (
           cardinality(%(educations)s::TEXT[]) = 0
           OR p.ahavah_extra->>'education' = ANY(%(educations)s::TEXT[])
@@ -327,14 +321,7 @@ prospect_pool AS (
       -- the SELECT clause that computes `age` for the response, keeping
       -- "what the user filtered on" and "what the user is shown"
       -- consistent.
-      AND (
-          %(age_min)s::INT IS NULL
-          OR EXTRACT(YEAR FROM AGE(p.date_of_birth))::INT >= %(age_min)s::INT
-      )
-      AND (
-          %(age_max)s::INT IS NULL
-          OR EXTRACT(YEAR FROM AGE(p.date_of_birth))::INT <= %(age_max)s::INT
-      )
+      AND {age_bounds_sql('p')}
 )
 INSERT INTO search_cache (
     searcher_person_id, position, prospect_person_id, prospect_uuid,
