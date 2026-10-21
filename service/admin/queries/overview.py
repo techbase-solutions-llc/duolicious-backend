@@ -132,7 +132,19 @@ Q_OVERVIEW_REFERRAL_CTR_7D = f"""
 # event look like a sale. The event types on file on 2026-09-24 were
 # checkout.session.completed (15), customer.subscription.created (8),
 # customer.subscription.deleted (8) and customer.subscription.updated (5).
-_PURCHASE_EVENTS = ('checkout.session.completed', 'customer.subscription.created')
+#
+# A new subscription is counted once, by its checkout.session.completed with
+# session mode 'subscription' (TEC-1845 audit, 20 Oct 2026). The same
+# checkout also sends customer.subscription.created, so counting both plotted
+# every subscriber as 2 adds; and a token bundle is a checkout.session.
+# completed with mode 'payment', which is not Premium at all. The checkout
+# event is the one the webhook acts on (service/checkout), so it is the one
+# certain to be on file. The nested path is the full event as the webhook
+# stores it; the top-level one covers a payload stored as the object itself.
+def _subscription_checkout(e: str) -> str:
+    return (f"{e}.event_type = 'checkout.session.completed' "
+            f"AND COALESCE({e}.payload->'data'->'object'->>'mode', "
+            f"{e}.payload->>'mode') = 'subscription'")
 
 Q_OVERVIEW_PREMIUM_30D = f"""
     WITH days AS ({barbados_days(30)}
@@ -141,7 +153,7 @@ Q_OVERVIEW_PREMIUM_30D = f"""
         days.d::text AS day,
         COALESCE((
             SELECT COUNT(*) FROM entitlement_event e
-             WHERE e.event_type IN {_PURCHASE_EVENTS}
+             WHERE {_subscription_checkout('e')}
                AND {live_stripe_event('e')}
                AND {barbados_day('e.received_at')} = days.d
         ), 0) AS adds
