@@ -225,6 +225,17 @@ def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
 
 # ----- ROLES ---------------------------------------------------------------
 
+_Q_OTHER_ADMINS = """
+    SELECT count(*)::int AS n FROM person
+     WHERE 'admin' = ANY(COALESCE(roles, ARRAY[]::text[])) AND id <> %(id)s
+"""
+
+
+def _other_admins(tx, person_id: int) -> int:
+    """How many people other than `person_id` hold the admin role."""
+    return int(tx.execute(_Q_OTHER_ADMINS, dict(id=person_id)).fetchone()['n'])
+
+
 @apatch('/admin/users/<uuid>/roles')
 @validate(t.PatchRoles)
 def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
@@ -238,6 +249,14 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
             abort(404)
         target_email = row['email']
         current = set(row['roles'] or [])
+        # One mis-tap on your own drawer, or on the last admin's, used to
+        # turn every admin route into a 403 that only a database edit could
+        # undo (TEC-1845 admin audit). Refused before any write.
+        if 'admin' in remove and 'admin' in current and 'admin' not in add:
+            if s.person_id is not None and int(row['id']) == int(s.person_id):
+                return dict(error='cannot_remove_own_admin'), 409
+            if _other_admins(tx, int(row['id'])) == 0:
+                return dict(error='last_admin'), 409
         before = sorted(current)
         new = sorted((current - set(remove)) | set(add))
         updated = tx.execute(
