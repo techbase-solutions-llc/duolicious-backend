@@ -199,9 +199,17 @@ def expire_member_approvals(tx, days: int = 7) -> int:
 
 
 def set_status(tx, queue_id: str, status: str, *, external_post_id: Optional[str] = None, error: Optional[str] = None) -> None:
-    row = tx.execute("SELECT status, attempts FROM publishing_queue WHERE id = %(id)s FOR UPDATE", dict(id=queue_id)).fetchone()
+    row = tx.execute("SELECT status, attempts, delivery_state FROM publishing_queue WHERE id = %(id)s FOR UPDATE", dict(id=queue_id)).fetchone()
     if not row:
         raise ValueError('not_found')
+    # TEC-1845 admin audit (serious 5 and 6): a row parked in review with its
+    # delivery unresolved (RECOVERABLE_DELIVERY_STATES below) may be live on
+    # the platform. Approving it let it be claimed and posted a second time;
+    # cancelling it filed no removal task and put it out of reconcile's
+    # reach. The only operator move is reconcile ("Mark as posted"). Checked
+    # under the row lock, so a stale admin page cannot slip past it.
+    if row['status'] == 'review' and row['delivery_state'] in RECOVERABLE_DELIVERY_STATES:
+        raise ValueError('delivery_unresolved')
     allowed = TRANSITIONS.get(row['status'], set())
     if status not in allowed:
         raise ValueError('bad_transition')
