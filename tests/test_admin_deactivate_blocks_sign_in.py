@@ -142,3 +142,26 @@ def test_a_claim_link_does_not_sign_in_a_deactivated_member(client, make_person)
     with api_tx() as tx:
         assert tx.execute('SELECT 1 FROM duo_session WHERE person_id = %(i)s',
                           dict(i=member['id'])).fetchone() is None
+
+
+def test_an_admin_cannot_deactivate_their_own_account(client, make_person):
+    # Deactivate holds until an admin reactivates and deletes the caller's
+    # sessions, so deactivating yourself would lock you out of the admin.
+    admin = make_person(name='SelfLockAdmin')
+    email = _email(admin)
+    tok = secrets.token_hex(32)
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=admin['id']))
+        tx.execute(
+            """INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
+               VALUES (%(h)s, %(e)s, %(p)s, TRUE, '123456')""",
+            dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=email, p=admin['id']))
+
+    r = client.post(f"/admin/users/{admin['uuid']}/deactivate",
+                    json={'reason': 'mis-tap'}, headers={'Authorization': f'Bearer {tok}'})
+    assert r.status_code == 409
+    assert r.get_json() == {'error': 'cannot_deactivate_self'}
+    assert _state(admin)['admin_deactivated_at'] is None
+    assert _state(admin)['activated'] is True
+    assert _signed_in(tok), 'the admin keeps their session'

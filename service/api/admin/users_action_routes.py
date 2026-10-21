@@ -258,6 +258,12 @@ def post_deactivate_admin(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
         person_row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
         if person_row is None:
             abort(404)
+        # Deactivate now blocks sign-in until an admin reactivates, and it
+        # deletes the caller's sessions with the rest, so an admin who
+        # deactivated their own account would be locked out of the admin
+        # with nobody left to reactivate them. Refused before any write.
+        if s.person_id is not None and int(person_row['id']) == int(s.person_id):
+            return dict(error='cannot_deactivate_self'), 409
         # Wave 1 F03: withdraw Spotlight before the deactivation below takes
         # effect, in the same transaction -- a deactivated member must not
         # stay queued or published.
