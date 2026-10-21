@@ -119,3 +119,67 @@ def get_moderation_rude_messages(s: t.SessionInfo):
         # Table may not exist on a given env; degrade gracefully so the
         # FE shows the "no data" state instead of 500.
         return {'rows': [], 'note': 'rude_message query failed | see backend logs'}
+
+
+# The messages between a reporter and the person they reported, for the
+# dashboard's "Show messages" (TEC-1845, better reports; brief
+# 2026-10-20-admin-report-messages.md). The report email no longer carries
+# them. Staff only, only for a pair with a report on file, and every opening
+# is audited, because it reads members' private messages.
+_Q_REPORT_PAIR = """
+SELECT reporter.uuid::TEXT AS reporter_uuid, reporter.name AS reporter_name,
+       reported.uuid::TEXT AS reported_uuid, reported.name AS reported_name
+  FROM person_report r
+  JOIN person reporter ON reporter.id = r.reporter_id
+  JOIN person reported ON reported.id = r.reported_id
+ WHERE reporter.uuid = %(reporter)s::uuid
+   AND reported.uuid = %(reported)s::uuid
+ LIMIT 1
+"""
+
+
+def _uuid_arg(name: str) -> str:
+    import uuid as _uuid
+    try:
+        return str(_uuid.UUID(request.args.get(name) or ''))
+    except ValueError:
+        abort(400)
+
+
+@aget('/admin/reports/messages')
+def get_report_messages(s: t.SessionInfo):
+    require_admin(s)
+    reporter, reported = _uuid_arg('reporter'), _uuid_arg('reported')
+
+    from datetime import datetime, timezone
+
+    from antiabuse.lodgereport import first_name, message_text
+    from antiabuse.sql import Q_LAST_MESSAGES
+
+    with api_tx() as tx:
+        pair = tx.execute(_Q_REPORT_PAIR, dict(reporter=reporter, reported=reported)).fetchone()
+        if pair is None:
+            abort(404)
+        rows = tx.execute(
+            Q_LAST_MESSAGES, dict(subject_uuid=reporter, object_uuid=reported)).fetchall()
+        record_audit(
+            tx, s, 'view_report_messages',
+            target_email=None, target_uuid=reported,
+            metadata={'reporter_uuid': reporter, 'reported_uuid': reported,
+                      'count': len(rows)},
+        )
+
+    names = {'reporter': first_name(pair['reporter_name']),
+             'reported': first_name(pair['reported_name'])}
+    messages = []
+    for r in rows:
+        who = 'reporter' if r['sent_by'] == 'reporter' else 'reported'
+        sent_at = datetime.fromtimestamp((int(r['id']) >> 8) / 1_000_000, tz=timezone.utc)
+        messages.append({
+            'from': who,
+            'first_name': names[who],
+            'sent_at': sent_at.isoformat(),
+            'text': message_text(r),
+            'after_unmatch': bool(r['held']),
+        })
+    return {'count': len(messages), 'messages': messages}

@@ -29,6 +29,10 @@ from database import api_tx
 _NOT_SESSION_ROUTES = {
     '/admin/ban-link/<token>',
     '/admin/delete-photo-link/<token>',
+    # A reported pair's messages: it takes the pair in the query, answers 404
+    # for a pair with no report and audits every opening, so it is covered
+    # by tests/test_admin_report_messages.py with a report on file.
+    '/admin/reports/messages',
 }
 
 
