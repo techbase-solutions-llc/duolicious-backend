@@ -103,8 +103,13 @@ def recommend(tx, *, sender: dict, email: str, note: Optional[str],
     """`sender` is {person_id, first_name, key, normalized_email}: a member
     (person_id set) or a visitor (None). Answers {state: 'sent'} whatever
     happens next, or raises MatchmakerError('limit', 429, {'from': 'Monday'})
-    at 5 in the sender's week (5a.5)."""
+    at 5 in the sender's week (5a.5). While the recommendation email is
+    off it raises not_found (404) and keeps nothing: a row it could not
+    send would hold the single's address."""
     from service.leads import clean_email
+    from service.matchmaker import mail
+    if not mail.campaign_on(mail.CAMPAIGN_RECOMMEND):
+        raise MatchmakerError('not_found', 404)
     now = now or datetime.now(timezone.utc)
     cleaned = clean_email(email)
     if cleaned is None:

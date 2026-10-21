@@ -190,3 +190,27 @@ def test_the_note_flags():
     assert note_flag('You would love it here.') is None
     assert note_flag('My number is 07700 900123') == 'contact'
     assert note_flag('Send me money urgently via western union, my bank froze my account') == 'scam'
+
+
+def test_closed_while_its_email_is_off_and_nothing_is_kept(client, sender, addresses, outbox_rows, monkeypatch):
+    """A recommendation made with the email off would wait as 'queued' with
+    the single's address for up to 12 months, so it is refused up front
+    (review, 21 Oct)."""
+    me = sender()
+    single = addresses()
+    monkeypatch.delenv('AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED')
+    assert _send(client, me['headers'], single).status_code == 404
+    assert client.get('/recommendations/allowance', headers=me['headers']).status_code == 404
+    assert _recs(me['email']) == [] and _rows(outbox_rows, single) == []
+
+
+def test_the_service_refuses_too_while_the_email_is_off(sender, monkeypatch):
+    from service.matchmaker import MatchmakerError, address_key
+    from service.matchmaker.recommend import recommend
+    me = sender()
+    monkeypatch.delenv('AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED')
+    with pytest.raises(MatchmakerError) as e, api_tx('read committed') as tx:
+        recommend(tx, sender=dict(person_id=me['id'], first_name='Hannah', key=address_key(me['email']),
+                                  normalized_email=me['email']),
+                  email='nobody-kept@ahavah-test.invalid', note=None)
+    assert e.value.status == 404

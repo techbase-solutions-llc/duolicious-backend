@@ -207,8 +207,14 @@ def post_alerts_stop(req: t.PostAlertToken):
 # ---------------------------------------------------------------------------
 # Recommend a single (5a). A member, or a visitor signed in with the code
 # (the onboardee session /check-otp leaves). 404 until matchmaker_
-# introductions.
+# introductions, and while the recommendation email is off: a
+# recommendation that could not be sent would keep the single's address.
 # ---------------------------------------------------------------------------
+
+def _recommending_on() -> bool:
+    from service.matchmaker import surface_on, switch_on
+    return surface_on('matchmaker_introductions') and switch_on('matchmaker_recommend_email')
+
 
 _recommend_ip_limit = limiter.shared_limit('10 per hour', scope='mm_recommend')
 
@@ -239,8 +245,8 @@ def post_recommendations(req: t.PostRecommendation, s: t.SessionInfo):
     defences) is answered the same and nothing is written."""
     from database import api_tx
     from service import leads
-    from service.matchmaker import MatchmakerError, recommend, surface_on
-    if not surface_on('matchmaker_introductions'):
+    from service.matchmaker import MatchmakerError, recommend
+    if not _recommending_on():
         return _off()
     if s.person_id is None:
         # A visitor names themselves before anything else is looked at.
@@ -271,8 +277,8 @@ def get_recommendations_allowance(s: t.SessionInfo):
     """{left, from}: the form's limit state (5a.5)."""
     from database import api_tx
     from service.leads import clean_email
-    from service.matchmaker import address_key, recommend, surface_on
-    if not surface_on('matchmaker_introductions'):
+    from service.matchmaker import address_key, recommend
+    if not _recommending_on():
         return _off()
     with api_tx('read committed') as tx:
         if s.person_id is not None:
