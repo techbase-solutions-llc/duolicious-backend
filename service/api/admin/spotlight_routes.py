@@ -1962,6 +1962,14 @@ def post_growth_spotlight_member_of_week(s: t.SessionInfo):
     person_id = body.get('person_id')
     if not person_id:
         abort(400)
+    # Held to CAPTION_MAX as brand posts are: create_candidate appends a
+    # link of about forty characters, and the margin keeps the caption
+    # under Instagram's 2200 (TEC-1845 admin audit, Minor 12). No caption
+    # still means the default one.
+    custom_caption = body.get('caption')
+    if custom_caption is not None and (
+            not isinstance(custom_caption, str) or len(custom_caption) > CAPTION_MAX):
+        return dict(error='bad_caption'), 400
     when = _parse_dt(body.get('scheduled_for'))
     # An explicit slot is checked as a brand post's is (TEC-1845 admin
     # audit): approval does not check rest days for member kinds, so a card
@@ -1983,7 +1991,7 @@ def post_growth_spotlight_member_of_week(s: t.SessionInfo):
             dict(p=person_id)).fetchone()
         if not info:
             abort(404)
-        caption = body.get('caption') or _member_of_week_caption(
+        caption = custom_caption or _member_of_week_caption(
             info['first_name'], info['age'], info['country'])
         try:
             rk = create_candidate(tx, kind='member_of_week', subject_person_id=person_id,
