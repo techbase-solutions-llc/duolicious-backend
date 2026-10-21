@@ -4,6 +4,9 @@ Reports sub-tab is the EXISTING /admin/reports (service/api/moderation_routes.py
 which the FE will call directly — we don't duplicate it here."""
 from __future__ import annotations
 
+import sys
+import traceback
+
 import duotypes as t
 from flask import request, abort
 
@@ -34,6 +37,9 @@ def get_moderation_photos(s: t.SessionInfo):
     return {'rows': rows, 'kpis': dict(kpis), 'photo_gate': gate, 'approved_no_face': no_face}
 
 
+_Q_OWNER = "SELECT email, name, uuid::text AS uuid FROM person WHERE id = %(i)s"
+
+
 @apost('/admin/moderation/photos/<photo_uuid>/approve')
 def approve_photo_admin(s: t.SessionInfo, photo_uuid: str):
     require_admin(s)
@@ -57,9 +63,12 @@ def approve_photo_admin(s: t.SessionInfo, photo_uuid: str):
         ).fetchone()
         if row is None:
             abort(404)
+        # The photo's owner on the row, so the Audit tab finds it by member
+        # (TEC-1845 admin audit, Minor 16).
+        owner = tx.execute(_Q_OWNER, dict(i=row['person_id'])).fetchone() or {}
         record_audit(
             tx, s, 'approve_photo',
-            target_email=None, target_uuid=None,
+            target_email=owner.get('email'), target_uuid=owner.get('uuid'),
             metadata={'photo_uuid': photo_uuid,
                       'face_confirmed': bool(row['face_confirmed'])},
         )
@@ -98,11 +107,10 @@ def reject_photo_admin(s: t.SessionInfo, photo_uuid: str):
                           dict(uuid=photo_uuid)).fetchone() is None:
                 abort(404)
             return {'ok': True, 'notified': False, 'changed': False}
-        owner = tx.execute("SELECT email, name FROM person WHERE id = %(i)s",
-                           dict(i=row['person_id'])).fetchone()
+        owner = tx.execute(_Q_OWNER, dict(i=row['person_id'])).fetchone()
         record_audit(
             tx, s, 'reject_photo',
-            target_email=None, target_uuid=None,
+            target_email=(owner or {}).get('email'), target_uuid=(owner or {}).get('uuid'),
             metadata={'photo_uuid': photo_uuid, 'notify': notify},
         )
     notified = False
@@ -128,7 +136,11 @@ def get_moderation_rude_messages(s: t.SessionInfo):
         return {'rows': rows}
     except Exception:
         # Table may not exist on a given env; degrade gracefully so the
-        # FE shows the "no data" state instead of 500.
+        # FE shows the "no data" state instead of 500. The note sends the
+        # owner to the logs, so the failure is written there (TEC-1845
+        # admin audit, Minor 18).
+        print('admin rude-messages: query failed', file=sys.stderr)
+        traceback.print_exc()
         return {'rows': [], 'note': 'rude_message query failed | see backend logs'}
 
 
