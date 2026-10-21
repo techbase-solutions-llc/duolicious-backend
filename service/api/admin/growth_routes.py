@@ -12,6 +12,7 @@ from service.admin import require_admin, record_audit
 from service.api.decorators import aget, apost
 from service.campaigns import count_sendable
 from service.campaigns.runner import SEND_AUDIT_ACTION
+from service.campaigns import schedule as campaign_schedule
 from service.campaigns.schedule import COMMUNITY_WEEKLY_ENABLED, next_send_at
 from service.campaigns.weekid import week_campaign_id
 from service.growth import email_outcomes
@@ -237,6 +238,10 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     body = request.get_json(silent=True) or {}
     cid = body.get('campaign_id') or abort(400)
     dry = bool(body.get('dry_run', True))
+    # No campaign emails in the owner's rest periods (restdays.py; TEC-1845
+    # admin audit). A dry run sends nothing, so it still runs.
+    if not dry and campaign_schedule.campaign_rest_now():
+        return dict(error='rest_day'), 409
     from service.campaigns.runner import run_campaign
     from service.unsubscribe import make_url as _unsub_url
     from service.config import WEB_BASE_URL
