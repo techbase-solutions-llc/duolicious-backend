@@ -52,6 +52,7 @@ from service.api.decorators import (
 )
 import time
 from antiabuse.antispam.signupemail import normalize_email
+import antiabuse.lodgereport as lodgereport
 import json
 
 _init_sql_file = (
@@ -569,6 +570,13 @@ def post_skip_by_uuid(req: t.PostSkip, s: t.SessionInfo, prospect_uuid: str):
     # so it gets a looser ceiling (60/min default still applies), but is
     # still capped so a bot can't farm a recommendation algorithm by
     # skipping millions of profiles a day (audit Auth #11 — was inverted).
+    #
+    # "Other" is not a reason on its own (owner, 21 Oct 2026): it needs 10
+    # characters of details. Checked before the limiter, so the member's
+    # corrected report is not refused as too soon. The app checks too, but
+    # older installs do not.
+    if req.report_reason and lodgereport.is_too_thin(req.report_reason):
+        return {'error': lodgereport.OTHER_TOO_SHORT}, 400
     if req.report_reason:
         with (
             limiter.limit(

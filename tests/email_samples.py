@@ -450,12 +450,15 @@ add('STAFF_nsfw_removed', 'service/cron/garbagerecords/__init__.py _nsfw_admin_n
 
 
 def _report():
-    from antiabuse.lodgereport import report_template
-    obj = [dict(id=101, token='reporter-token', name='Reporter', photo_links=[]),
-           dict(id=202, token='accused-token', name='Accused',
-                photo_links=['https://user-images.ahavah.app/450-450/3f9a2c1e.jpg'])]
-    return 'Report: 101 - 202', report_template(report_obj=obj, reason='Asked for money', last_messages=[])
+    from antiabuse.lodgereport import report_subject, report_template
+    report = dict(reporter_id=101, reporter_uuid='3f9a2c1e-7b6d-4e5f-8a9b-0c1d2e3f4a5b',
+                  reporter_name='Miriam Levi', reported_id=202,
+                  reported_uuid='9b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d', reported_name='Samuel Cohen',
+                  message_count=14, reported_at=NOW)
+    reason = 'harassment: He kept messaging after I said I was not interested, and it got rude.'
+    return report_subject(reason, False), report_template(report=report, reason=reason)
 
 
 add('STAFF_report', 'antiabuse/lodgereport/__init__.py report_template', 'staff',
-    'LIVE, STAFF: a member report to DUO_REPORT_EMAIL', _report)
+    'LIVE, STAFF: a member report to DUO_REPORT_EMAIL, from support@ (TEC-1845)', _report,
+    'support@ahavah.app')

@@ -1,20 +1,18 @@
 from database import api_tx
 from antiabuse.sql import (
-    Q_LAST_MESSAGES,
     Q_MAKE_REPORT,
     Q_INSERT_SKIPPED,
 )
-from typing import Any
+from datetime import datetime, timezone
+from typing import Optional
 import os
-from service.config import API_BASE_URL, EMAIL_DOMAIN
+from service.config import EMAIL_DOMAIN
 from smtp import aws_smtp
 import traceback
 import threading
 import html
-import yaml
-from emails.base import SANS  # the brand body stack (18 Oct 2026)
+from emails.base import INK, INK_SOFT, SANS, button, render
 import erlastic
-from io import StringIO
 import re
 from dataclasses import dataclass
 import random
@@ -26,131 +24,110 @@ class EmailEntry:
     count: int
 
 
-def _decode_last_messages_in_place(last_messages: list[dict]):
-    for message in last_messages:
-        try:
-            search_body = message['search_body']
-        except:
-            search_body = None
+# The app's report categories (ahavah-web block-report-sheet.tsx) and the
+# titles it shows for them. The app sends `<category>` or
+# `<category>: <details>`; older clients sent free text.
+CATEGORY_TITLES = {
+    'inappropriate-photos': 'Inappropriate photos',
+    'harassment': 'Harassment or abusive messages',
+    'spam-scam': 'Spam or scam',
+    'underage': 'Underage user',
+    'self-harm': 'Self-harm or suicide content',
+    'other': 'Other',
+}
 
-        m = erlastic.decode(message['message'])
+# "Other" is not a reason on its own (owner, 21 Oct 2026).
+OTHER_MIN_DETAILS = 10
+OTHER_TOO_SHORT = 'Write at least 10 characters so we know what happened.'
 
-        try:
-            m = m[3][0][3][0][1].decode('utf-8')
-        except:
-            m = dict(
-                error=(
-                    "Couldn't unpack message while generating report. "
-                    "Falling back to message search body"),
-                search_body=search_body,
-            )
-
-        message['message'] = m
-
-
-def _repack_last_messages_in_place(last_messages: list[dict]):
-    for i in range(len(last_messages)):
-        m = last_messages[i]
-
-        last_messages[i] = { m['sent_by']: m['message'] }
+# The Moderation tab of the admin dashboard. There is no admin base URL in
+# service.config, so the host is the production one.
+ADMIN_DASHBOARD_URL = 'https://admin.ahavah.app'
 
 
-def _obj_to_yaml_string(obj):
-    class IndentDumper(yaml.Dumper):
-        def increase_indent(self, flow=False, indentless=False):
-            return super(IndentDumper, self).increase_indent(flow, False)
+def parse_reason(reason: str) -> tuple[Optional[str], str]:
+    """(category, details) for a reason the app sent, or (None, the text)
+    for free text from an older client."""
+    text = (reason or '').strip()
+    head, sep, rest = text.partition(':')
+    category = head.strip().lower()
+    if category in CATEGORY_TITLES:
+        return category, rest.strip() if sep else ''
+    return None, text
 
-    output = StringIO()
-    yaml.dump(obj, output, indent=2, allow_unicode=True, Dumper=IndentDumper)
-    return output.getvalue()
+
+def is_too_thin(reason: str) -> bool:
+    """True for an "other" report with fewer than 10 characters of details."""
+    category, details = parse_reason(reason)
+    return category == 'other' and len(details) < OTHER_MIN_DETAILS
 
 
-def _photo_links_to_html(photo_links):
-    def link_to_html(photo_link):
-        return f'''
-            <img src="{photo_link}" style="max-width: 200px;
-            max-height: 200px; width: auto; height: auto;
-            border: 1px solid black;">
-            '''
+def report_subject(reason: str, is_automoded_bot: bool) -> str:
+    category, _ = parse_reason(reason)
+    subject = f'New report: {CATEGORY_TITLES[category]}' if category else 'New report'
+    return subject + (' [automoded]' if is_automoded_bot else '')
 
-    return ''.join(
-        link_to_html(l) + ('<br>' if ((i + 1) % 3 == 0 and i > 0) else '')
-        for i, l in enumerate(photo_links)
+
+def dashboard_url(reporter_uuid: str, reported_uuid: str) -> str:
+    return (f'{ADMIN_DASHBOARD_URL}/?tab=moderation'
+            f'&reporter={reporter_uuid}&reported={reported_uuid}')
+
+
+def message_text(row: dict) -> str:
+    """The text of a stored chat message, falling back to its search body
+    when the stanza cannot be unpacked."""
+    try:
+        text = erlastic.decode(row['message'])[3][0][3][0][1]
+        return text.decode('utf-8') if isinstance(text, bytes) else str(text)
+    except Exception:
+        return row.get('search_body') or ''
+
+
+def first_name(name: Optional[str]) -> str:
+    words = (name or '').split()
+    return words[0] if words else 'Someone'
+
+
+def _when(at: Optional[datetime]) -> str:
+    at = (at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return f'{at.day} {at:%b %Y, %H:%M} UTC'
+
+
+def _p(text: str, *, bold: bool = False, colour: str = INK_SOFT, gap: int = 12) -> str:
+    weight = 'font-weight:700;' if bold else ''
+    return (f'<p class="e-text" style="margin:0 0 {gap}px;font-family:{SANS};font-size:17px;'
+            f'line-height:1.55;color:{colour};{weight}">{text}</p>')
+
+
+def report_template(report: dict, reason: str) -> str:
+    """The report email (TEC-1845, 21 Oct 2026): an alert that points to the
+    dashboard. No ban links, photo links or messages; moderation is done in
+    the dashboard."""
+    category, details = parse_reason(reason)
+    title = CATEGORY_TITLES[category] if category else 'New report'
+    words = details
+    count = int(report.get('message_count') or 0)
+    reporter = html.escape(first_name(report.get('reporter_name')))
+    reported = html.escape(first_name(report.get('reported_name')))
+
+    body = (
+        _p(html.escape(title), bold=True, colour=INK, gap=8)
+        + (_p(html.escape(words).replace('\n', '<br/>'), gap=20) if words
+           else _p('No details given.', gap=20))
+        + _p(f'{reporter} (member {int(report["reporter_id"])}) reported '
+             f'{reported} (member {int(report["reported_id"])})')
+        + _p('From a conversation' if count else 'From their profile')
+        + _p(f'{count} message{"" if count == 1 else "s"} between them')
+        + _p(html.escape(_when(report.get('reported_at'))), gap=24)
+        + button('Open in the dashboard',
+                 html.escape(dashboard_url(report['reporter_uuid'], report['reported_uuid'])))
     )
-
-
-def report_template(
-    report_obj,
-    reason: str,
-    last_messages: list[dict],
-):
-    reporter_token = report_obj[0]['token']
-    accused_token = report_obj[1]['token']
-
-    accused_photo_links = report_obj[1]['photo_links']
-
-    object_person_id = report_obj[1]['id']
-
-    _decode_last_messages_in_place(last_messages)
-    _repack_last_messages_in_place(last_messages)
-
-    report_str = _obj_to_yaml_string(report_obj)
-    last_messages_str = _obj_to_yaml_string(last_messages)
-
-    safe_report_str = html.escape(report_str)
-    safe_reason = html.escape(reason)
-    safe_last_messages = html.escape(last_messages_str)
-
-    accused_img_html = _photo_links_to_html(accused_photo_links)
-
-    return f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Report</title>
-    <style>pre {{ white-space: pre-wrap; word-break: break-word; }}</style>
-</head>
-<body style="font-family:{SANS};color:#0F0B1F;-webkit-text-size-adjust:100%;word-break:break-word;">
-
-<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
-{safe_report_str}
-</pre>
-
-
-<p><b>Accused person's images:</b></p>
-{accused_img_html}
-
-
-<p><b>Last messages between reporter and accused:</b></p>
-<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
-{safe_last_messages}
-</pre>
-
-
-<p><b>Reporter's reason:</b></p>
-<pre style="white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:13px;">
-{safe_reason}
-</pre>
-
-
-<p><b>Ban REPORTING user for one month:</b></p>
-<a href="{API_BASE_URL}/admin/ban-link/{reporter_token}">
-         {API_BASE_URL}/admin/ban-link/{reporter_token}
-</a>
-
-<br/>
-<br/>
-
-<p><b>Ban ACCUSED user for one month:</b></p>
-<a href="{API_BASE_URL}/admin/ban-link/{accused_token}">
-         {API_BASE_URL}/admin/ban-link/{accused_token}
-</a>
-
-</body>
-</html>
-"""
+    return render(
+        title=html.escape(f'New report: {title}' if category else 'New report'),
+        preheader=f'{reporter} reported {reported}.',
+        body_html=body,
+        footer_html='For Ahavah staff. Moderation is done in the dashboard.',
+    )
 
 
 def parse_email_string(email_string):
@@ -193,26 +170,15 @@ def _sample_email_addresses(email_entries):
 
 def _send_report_email(
     reason: str,
-    report_obj: Any,
-    last_messages: list[dict],
+    report: dict,
     is_automoded_bot: bool,
 ):
-    subject_person_id = report_obj[0]['id']
-    object_person_id  = report_obj[1]['id']
-
     report_email = _sample_email_addresses(REPORT_EMAILS)
-
-    subject = f"Report: {subject_person_id} - {object_person_id}"
-    subject += ' [automoded]' if is_automoded_bot else ''
 
     try:
         aws_smtp.send(
-            subject=subject,
-            body=report_template(
-                report_obj=report_obj,
-                reason=reason,
-                last_messages=last_messages,
-            ),
+            subject=report_subject(reason, is_automoded_bot),
+            body=report_template(report=report, reason=reason),
             to_addr=report_email,
             from_addr=REPORT_FROM,
         )
@@ -229,20 +195,19 @@ def lodge_report(
     params = dict(
         subject_uuid=subject_uuid,
         object_uuid=object_uuid,
-        reason=reason,
     )
 
     with api_tx() as tx:
-        last_messages = tx.execute(Q_LAST_MESSAGES, params=params).fetchall()
+        report = tx.execute(Q_MAKE_REPORT, params=params).fetchone()
 
-        report_obj = tx.execute(Q_MAKE_REPORT, params=params).fetchall()
+    if not report:
+        return
 
     threading.Thread(
         target=_send_report_email,
         kwargs=dict(
-            report_obj=report_obj,
+            report=dict(report),
             reason=reason,
-            last_messages=last_messages,
             is_automoded_bot=is_automoded_bot,
         )
     ).start()
