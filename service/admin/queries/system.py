@@ -102,12 +102,17 @@ Q_OTP_DAILY = f"""
      ORDER BY days.d
 """
 
-# Why requests were refused over the same 30 days, most frequent first.
-Q_OTP_REFUSALS_30D = """
+# Why requests were refused over the same 30 Barbados days as Q_OTP_DAILY,
+# most frequent first. It read a rolling NOW() - 30 days, so a refusal late
+# on the day before the series began counted here and not in the refused
+# total (TEC-1845 admin audit, Minor 14). The requested_at bound only lets
+# the index narrow the scan.
+Q_OTP_REFUSALS_30D = f"""
     SELECT refused AS reason, COUNT(*) AS count
       FROM otp_request
      WHERE refused IS NOT NULL
-       AND requested_at > NOW() - INTERVAL '30 days'
+       AND requested_at >= NOW() - INTERVAL '31 days'
+       AND {barbados_day('requested_at')} >= {BARBADOS_TODAY} - 29
      GROUP BY refused
      ORDER BY count DESC, refused
 """
