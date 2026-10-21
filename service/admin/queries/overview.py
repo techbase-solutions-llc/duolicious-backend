@@ -6,7 +6,7 @@ accounts have profiles, photos and Premium too, and counting them put
 Overview at 61 persons on 13 Oct 2026 when there were 58 members."""
 from service.admin.queries.days import (
     BARBADOS_TODAY, barbados_day, barbados_day_of_naive_utc, barbados_days)
-from service.admin.queries.members import member_sql
+from service.admin.queries.members import counted_member_sql, member_sql
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
@@ -72,6 +72,16 @@ Q_OVERVIEW_KPIS = f"""
         -- including one whose block the reporter has since lifted.
         (SELECT COUNT(*) FROM person_report WHERE outcome IS NULL) AS pending_reports,
         (SELECT COUNT(*) FROM referral WHERE created_at > NOW() - INTERVAL '7 days') AS referral_signups_7d
+"""
+
+# Members as the Growth tab's Sources panel counts them: activated, not
+# staff, not a test address (members.counted_member_sql; bind %(ex)s with
+# service.growth.queries._excluded()). person_total above keeps its meaning,
+# every non-staff person, which the admin labels as including deactivated
+# and test accounts (TEC-1845 admin audit). A separate query because the
+# KPI query takes no parameters and is run bare elsewhere.
+Q_OVERVIEW_MEMBER_TOTAL = f"""
+    SELECT COUNT(*)::int AS member_total FROM person p WHERE {counted_member_sql('p')}
 """
 
 Q_OVERVIEW_SIGNUPS_30D = f"""
@@ -163,7 +173,7 @@ Q_OVERVIEW_PREMIUM_30D = f"""
      ORDER BY days.d
 """
 
-Q_OVERVIEW_RECENT_ACTIVITY = f"""
+_RECENT_BRANCHES = f"""
     SELECT * FROM (
         -- A real member joining. Until 2026-09-24 the feed's only two
         -- signup sources were beta_signup and waitlist_signup, the
@@ -202,5 +212,33 @@ Q_OVERVIEW_RECENT_ACTIVITY = f"""
          WHERE actor_email NOT IN ('cron', 'cli')
          ORDER BY created_at DESC LIMIT 10
     ) sub_admin
+"""
+
+Q_OVERVIEW_RECENT_ACTIVITY = f"""{_RECENT_BRANCHES}    ORDER BY created_at DESC LIMIT 20
+"""
+
+# The same feed with reports and live Premium checkouts (TEC-1845 admin
+# audit), sent as `recent_activity_all`. Both admins look each kind up in a
+# fixed table and fail on one they do not know, so `recent_activity` keeps
+# its five kinds and an admin that knows these two reads this instead. A
+# report names the reported member and carries their uuid as `object`; a
+# Premium row names the member who paid. Never the reason or the reporter.
+Q_OVERVIEW_RECENT_ACTIVITY_ALL = f"""{_RECENT_BRANCHES}    UNION ALL SELECT * FROM (
+        SELECT 'report' AS kind, reported.name AS subject, reported.uuid::text AS object,
+               r.reported_at AT TIME ZONE 'UTC' AS created_at
+          FROM person_report r
+          JOIN person reported ON reported.id = r.reported_id
+         ORDER BY r.reported_at DESC LIMIT 10
+    ) sub_report
+    UNION ALL SELECT * FROM (
+        SELECT 'premium' AS kind, p.name AS subject, p.uuid::text AS object,
+               e.received_at AS created_at
+          FROM entitlement_event e
+          JOIN person p ON p.id::text = e.app_user_id
+         WHERE {_subscription_checkout('e')}
+           AND {live_stripe_event('e')}
+           AND {_MEMBER_P}
+         ORDER BY e.received_at DESC LIMIT 10
+    ) sub_premium
     ORDER BY created_at DESC LIMIT 20
 """
