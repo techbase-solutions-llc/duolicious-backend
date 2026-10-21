@@ -1225,3 +1225,10 @@ class PostEventCancel(BaseModel):
 
 class PostAttended(BaseModel):
     attended: bool
+
+
+class PostEventCover(BaseModel):
+    """POST /organiser/events/<slug>/cover: the image as base64. The 10 MB
+    limit is on the decoded bytes (service.events.manage.COVER_MAX_BYTES)."""
+    image: str = Field(min_length=1, max_length=14_000_000)
+    content_type: str = Field(min_length=1, max_length=32)

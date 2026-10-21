@@ -1076,3 +1076,29 @@ def confirmed_guest():
         return dict(id=rid, email=address, token=token)
 
     return _make
+
+
+@pytest.fixture
+def fake_bucket(monkeypatch):
+    """service.spotlight.storage._bucket replaced with a recorder:
+    `.puts` holds (key, body, acl) per put_object, `.deletes` the keys
+    delete_objects was asked to remove."""
+    import service.spotlight.storage as storage
+
+    class _Bucket:
+        name = 'test-bucket'
+
+        def __init__(self):
+            self.puts: list[tuple] = []
+            self.deletes: list[str] = []
+
+        def put_object(self, Key, Body, ACL='private', ContentType=None, **kw):
+            self.puts.append((Key, Body, ACL))
+
+        def delete_objects(self, Delete):
+            self.deletes.extend(o['Key'] for o in Delete['Objects'])
+            return {'Deleted': Delete['Objects']}
+
+    bucket = _Bucket()
+    monkeypatch.setattr(storage, '_bucket', lambda: bucket)
+    return bucket

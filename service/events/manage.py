@@ -323,3 +323,95 @@ def organiser_preview(tx, organiser: dict, slug: str, now: Optional[datetime] = 
     return dict(_draft_json(row), slug=slug, status=row['status'],
                 paused=row['paused_at'] is not None, flag_reason=row['flag_reason'],
                 preview=True)
+
+
+# ---------------------------------------------------------------------------
+# The cover (plan Task 6)
+# ---------------------------------------------------------------------------
+
+COVER_SIZE = (1200, 630)
+COVER_MAX_BYTES = 10 * 1024 * 1024
+COVER_TYPES = {'image/jpeg': 'JPEG', 'image/png': 'PNG'}
+COVER_PREFIX = 'event-covers/'
+
+
+def cover_url(key: Optional[str]) -> Optional[str]:
+    from service.config import USER_IMAGES_BASE_URL
+    return f'{USER_IMAGES_BASE_URL}/{key}' if key else None
+
+
+def _cover_jpeg(data: bytes, content_type: str) -> bytes:
+    """A decodable JPEG or PNG under 10 MB, re-encoded to a 1200 by 630
+    JPEG, centre-cropped, turned upright and with its EXIF dropped."""
+    import io
+
+    from PIL import Image, ImageOps
+    if (content_type not in COVER_TYPES or not isinstance(data, (bytes, bytearray))
+            or not data or len(data) > COVER_MAX_BYTES):
+        raise EventError('bad_image', 400)
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.format not in COVER_TYPES.values():
+            raise EventError('bad_image', 400)
+        img.load()
+        img = ImageOps.exif_transpose(img)
+        out = io.BytesIO()
+        ImageOps.fit(img.convert('RGB'), COVER_SIZE).save(out, 'JPEG', quality=85)
+    except EventError:
+        raise
+    except Exception:
+        raise EventError('bad_image', 400)
+    return out.getvalue()
+
+
+def _delete_cover(key: Optional[str]) -> None:
+    """Best effort: a stray object costs a little storage, never a page."""
+    if not key:
+        return
+    from service.spotlight import storage
+    try:
+        storage._bucket().delete_objects(Delete={'Objects': [{'Key': key}]})
+    except Exception as e:
+        print(f'events.manage: could not delete cover {key}: {e!r}')
+
+
+def set_cover(tx, organiser: dict, slug: str, data: bytes, content_type: str) -> dict:
+    """Checks, crops and stores the cover. A rejected image is refused and
+    nothing is stored; one sent to manual review is kept but sends the
+    gathering for approval (flag 'cover_review'). The object is uploaded
+    before the key is written, and the old one deleted afterwards."""
+    import uuid
+
+    import service.photo_moderation as moderation
+    from service.spotlight import storage
+    row = _event(tx, organiser, slug, lock=True)
+    if row['status'] == 'cancelled':
+        raise EventError('cancelled', 409)
+    jpeg = _cover_jpeg(data, content_type)
+    verdict = moderation.moderate_image_bytes(jpeg)
+    if verdict.status == 'rejected':
+        raise EventError('bad_image', 400)
+    key = f'{COVER_PREFIX}{uuid.uuid4()}.jpg'
+    storage._bucket().put_object(Key=key, Body=jpeg, ACL='public-read', ContentType='image/jpeg')
+    review = verdict.status != 'approved'
+    sets = dict(cover_key=key)
+    if review:
+        sets['flag_reason'] = 'cover_review'
+        if row['status'] == 'published':
+            sets['status'] = 'pending'
+            _cancel_posts(tx, slug)
+    elif row['flag_reason'] == 'cover_review':
+        sets['flag_reason'] = None
+    tx.execute(f"UPDATE event SET {', '.join(f'{k} = %({k})s' for k in sets)}, updated_at = NOW() "
+               "WHERE id = %(id)s", dict(sets, id=row['id']))
+    _delete_cover(row['cover_key'])
+    return dict(cover_url=cover_url(key))
+
+
+def remove_cover(tx, organiser: dict, slug: str) -> None:
+    row = _event(tx, organiser, slug, lock=True)
+    tx.execute(
+        """UPDATE event SET cover_key = NULL, updated_at = NOW(),
+                            flag_reason = CASE WHEN flag_reason = 'cover_review' THEN NULL ELSE flag_reason END
+            WHERE id = %(id)s""", dict(id=row['id']))
+    _delete_cover(row['cover_key'])

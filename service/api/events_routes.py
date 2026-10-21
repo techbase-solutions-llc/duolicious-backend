@@ -17,6 +17,7 @@ from database import api_tx
 from service.api.decorators import (
     aget,
     apost,
+    delete,
     get,
     limiter,
     patch,
@@ -190,3 +191,27 @@ def post_organiser_rsvp_attended(req: t.PostAttended, slug: str, rid: int):
         manage.mark_attended(tx, o, slug, rid, req.attended)
         return '', 204
     return _organiser_call(mark)
+
+
+@post('/organiser/events/<slug>/cover')
+@validate(t.PostEventCover)
+def post_organiser_event_cover(req: t.PostEventCover, slug: str):
+    import base64
+    import binascii
+
+    from service.events import EventError, manage
+    try:
+        data = base64.b64decode(req.image, validate=True)
+    except (binascii.Error, ValueError):
+        return _refused(EventError('bad_image', 400))
+    return _organiser_call(lambda tx, o: manage.set_cover(tx, o, slug, data, req.content_type))
+
+
+@delete('/organiser/events/<slug>/cover')
+def delete_organiser_event_cover(slug: str):
+    from service.events import manage
+
+    def remove(tx, o):
+        manage.remove_cover(tx, o, slug)
+        return '', 204
+    return _organiser_call(remove)
