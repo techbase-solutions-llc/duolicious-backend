@@ -93,7 +93,9 @@ Q_DUE_FOR = _due_sql('AND p.id = %(pid)s')
 
 # A member whose alert is on with its email on hears about new members who
 # fit from the alert, so the likes email leaves its new-fit line out
-# (TEC-1845, plan item 15).
+# (TEC-1845, plan item 15). Only while the alert email itself can go
+# (matchmaker_alert_email, which needs matchmaker_live): otherwise the
+# likes email is as it was before the matchmaker.
 _Q_ALERT_EMAIL_ON = """
     SELECT 1 FROM match_alert
      WHERE person_id = %(p)s AND active AND notify_email AND confirmed_at IS NOT NULL
@@ -149,13 +151,15 @@ def queue_due(tx, now: datetime) -> int:
     Thursday's window."""
     if not enabled(SWITCH) or not held.in_weekly_window(now, CAMPAIGN):
         return 0
+    from service.matchmaker import switch_on
+    alert_email_on = switch_on('matchmaker_alert_email')
     cid = campaign_id(now)
     rows = tx.execute(_Q_DUE, dict(ex=_excluded(), sup=suppressed_sql_pattern())).fetchall()
     queued = 0
     for r in rows:
         if held.already_queued(tx, CAMPAIGN, cid, r['person_id']):
             continue
-        if tx.execute(_Q_ALERT_EMAIL_ON, dict(p=r['person_id'])).fetchone():
+        if alert_email_on and tx.execute(_Q_ALERT_EMAIL_ON, dict(p=r['person_id'])).fetchone():
             fits = 0
         else:
             fits = count_newcomers_since(tx, r['person_id'], r['last_online_time'])

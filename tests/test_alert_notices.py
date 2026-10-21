@@ -280,6 +280,24 @@ def test_beside_an_alert_the_likes_email_drops_its_fit_line(owner, make_person, 
     assert '3 new people who fit what you are looking for' in rows[plain['id']]
 
 
+@pytest.mark.parametrize('env', ['AHAVAH_MATCHMAKER_ALERT_EMAIL_ENABLED', 'AHAVAH_MATCHMAKER_LIVE_ENABLED'])
+def test_with_the_alert_email_off_the_likes_email_is_as_before(owner, make_person, monkeypatch, env):
+    """The alert's email cannot tell her about new fits, so the likes email
+    keeps its line (review, 21 Oct)."""
+    from emails import likes_waiting_weekly as lw
+    monkeypatch.setenv('AHAVAH_LIKES_WAITING_ENABLED', '1')
+    monkeypatch.setattr(lw, 'count_newcomers_since', lambda tx, pid, since: 3)
+    me = owner()
+    _offline_with_likes(me, make_person)
+    monkeypatch.delenv(env)
+    with api_tx() as tx:
+        lw.queue_due(tx, _next(3))
+    with api_tx('read committed') as tx:
+        [row] = tx.execute("SELECT payload FROM email_outbox WHERE campaign = 'likes_waiting' "
+                           "AND person_id = %(p)s", dict(p=me['id'])).fetchall()
+    assert '3 new people who fit what you are looking for' in row['payload']['html']
+
+
 @pytest.fixture
 def visitor(make_person):
     """A confirmed visitor alert for a man aged 61 to 63 in North America,
