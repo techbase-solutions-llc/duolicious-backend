@@ -1257,3 +1257,4 @@ import service.api.tools_routes  # noqa: E402,F401
 
 # Gatherings (TEC-1845).
 import service.api.events_routes  # noqa: E402,F401
+import service.api.admin.events_routes  # noqa: E402,F401

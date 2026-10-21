@@ -40,6 +40,8 @@ def _args(admin_uuid: str) -> dict[str, dict]:
             dict(campaign='e2', campaign_id=f'no-such-run-{uuid.uuid4().hex[:8]}'),
         # An unknown queue row answers ok=false, reason=not_found.
         '/admin/growth/queue/<qid>/eligible': dict(qid=str(uuid.uuid4())),
+        # An unknown gathering answers no weeks, not a 404 (TEC-1845).
+        '/admin/events/<slug>/weeks': dict(slug=f'no-such-gathering-{uuid.uuid4().hex[:8]}'),
     }
 
 

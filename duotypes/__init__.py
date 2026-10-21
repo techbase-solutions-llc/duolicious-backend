@@ -1244,3 +1244,36 @@ class PostEventRsvp(BaseModel):
     news: bool = False
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostInviteAhavah(BaseModel):
+    """POST /invite-ahavah: a leader asks Ahavah to come. Text is cleaned in
+    service.events.invites."""
+    gathering: str = Field(max_length=600)
+    dates: str = Field(max_length=400)
+    place: str = Field(max_length=600)
+    numbers: Optional[int] = None
+    contact_name: str = Field(max_length=200)
+    contact_email: str = Field(max_length=254)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostAdminOrganiser(BaseModel):
+    """POST /admin/events/organisers: Ahavah's own organiser, by default."""
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(min_length=3, max_length=254)
+    kind: Literal['assembly', 'fellowship_leader', 'ministry', 'other', 'ahavah'] = 'ahavah'
+
+
+class PostAdminApproveOrganiser(BaseModel):
+    kind: Optional[Literal['assembly', 'fellowship_leader', 'ministry', 'other', 'ahavah']] = None
+
+
+class PatchInviteRequest(BaseModel):
+    status: Optional[Literal['new', 'contacted', 'planned', 'declined']] = None
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+
+class PostAhavahAttending(BaseModel):
+    on: bool

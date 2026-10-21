@@ -1117,3 +1117,23 @@ def fake_bucket(monkeypatch):
     bucket = _Bucket()
     monkeypatch.setattr(storage, '_bucket', lambda: bucket)
     return bucket
+
+
+@pytest.fixture
+def admin_headers(make_person):
+    """Request headers for a signed-in admin (roles ['admin']), built as
+    tests/test_admin_tool_counts.py builds one."""
+    import hashlib
+    import secrets
+
+    from database import api_tx
+
+    p = make_person(name='EventsAdmin')
+    tok = secrets.token_hex(32)
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s", dict(i=p['id']))
+        tx.execute(
+            """INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
+               SELECT %(h)s, email, id, TRUE, '123456' FROM person WHERE id = %(i)s""",
+            dict(h=hashlib.sha512(tok.encode()).hexdigest(), i=p['id']))
+    return {'Authorization': f'Bearer {tok}'}

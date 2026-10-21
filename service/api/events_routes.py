@@ -378,3 +378,26 @@ def get_rsvp_calendar(token: str):
     return body, 200, {'Content-Type': 'text/calendar; charset=utf-8',
                        'Content-Disposition': 'attachment; filename="gathering.ics"',
                        'Cache-Control': 'no-store'}
+
+
+# ---------------------------------------------------------------------------
+# "Invite Ahavah": leaders ask Ahavah to come. No email; it waits in the admin.
+# ---------------------------------------------------------------------------
+
+_invite_limit = limiter.shared_limit('5 per hour', scope='invite_ahavah')
+
+
+@post('/invite-ahavah', limiter=_invite_limit)
+@validate(t.PostInviteAhavah)
+def post_invite_ahavah(req: t.PostInviteAhavah):
+    from service.events import EventError, invites, live, surface_on
+    if not live() or not surface_on('events_invite'):
+        return _off()
+    if req.website:
+        return {}, 201
+    try:
+        with api_tx() as tx:
+            invites.record_request(tx, req.model_dump())
+    except EventError as e:
+        return _refused(e)
+    return {}, 201
