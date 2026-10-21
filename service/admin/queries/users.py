@@ -40,7 +40,13 @@ Q_USERS_LIST = f"""
             (p.email IS NOT NULL) AS has_person,
             COALESCE(bs.unsubscribed_at, ws.unsubscribed_at) AS unsubscribed_at,
             p.last_online_time AS last_online_at,
-            COALESCE(wt.n, 0) AS likes_waiting
+            COALESCE(wt.n, 0) AS likes_waiting,
+            -- When the row joined, from whichever table it came from
+            -- (TEC-1845 audit). Sorting on sign_up_time alone put every
+            -- waitlist and beta-only row, which has none, above every
+            -- member. sign_up_time is naive UTC, the other two are aware.
+            COALESCE(p.sign_up_time AT TIME ZONE 'UTC', bs.created_at, ws.created_at) AS joined_at,
+            p.deletion_requested_at
           FROM person p
           FULL OUTER JOIN beta_signup bs ON bs.email = p.email
           FULL OUTER JOIN waitlist_signup ws ON ws.email = COALESCE(p.email, bs.email)
@@ -61,7 +67,7 @@ Q_USERS_LIST = f"""
        AND (NOT %(role_admin)s OR 'admin' = ANY(roles))
        AND (NOT %(role_mod)s OR 'mod' = ANY(roles))
        AND (NOT %(has_likes_waiting)s OR likes_waiting > 0)
-     ORDER BY COALESCE(sign_up_time, NOW()) DESC NULLS LAST, email
+     ORDER BY joined_at DESC NULLS LAST, email
      LIMIT %(limit)s OFFSET %(offset)s
 """
 

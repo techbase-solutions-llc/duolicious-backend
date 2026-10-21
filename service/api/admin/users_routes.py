@@ -54,7 +54,9 @@ def get_admin_users(s: t.SessionInfo):
         'ex': _excluded(),
     }
     with api_tx('read committed') as tx:
-        rows = [dict(r, last_online_at=iso(r['last_online_at']))
+        rows = [dict(r, last_online_at=iso(r['last_online_at']),
+                     joined_at=iso(r['joined_at']),
+                     deletion_requested_at=iso(r['deletion_requested_at']))
                 for r in tx.execute(Q_USERS_LIST, params).fetchall()]
         total_row = tx.execute(Q_USERS_COUNT, params).fetchone()
     total = int(total_row['total']) if total_row else 0
