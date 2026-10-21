@@ -1408,6 +1408,11 @@ def delete_or_ban_account(
                 tx.execute(Q_PURGE_HELD_MESSAGES_OF, dict(
                     ids=[int(r['person_id']) for r in rows],
                     uuids=[str(r['person_uuid']).lower() for r in rows]))
+            # Who did it is not known (the link carries a token, not a
+            # session), but that it happened is: one audit row per member,
+            # in this transaction, before the delete (TEC-1845 admin audit).
+            # These were the only /admin mutations with no audit at all.
+            _audit_email_link_bans(tx, rows)
             # Admin path: immediate hard-delete, no grace.
             tx.executemany(Q_DELETE_ACCOUNT, params_seq=rows)
         elif s:
@@ -3190,6 +3195,16 @@ def get_admin_ban_link(token: str):
         return err_invalid_token
 
 
+def _audit_email_link_bans(tx, rows) -> None:
+    from service.admin import record_system_audit
+    for r in rows:
+        who = tx.execute('SELECT email FROM person WHERE id = %(i)s',
+                         dict(i=r['person_id'])).fetchone()
+        record_system_audit(tx, 'email-link', 'ban', metadata={'via': 'email_link'},
+                            target_email=who['email'] if who else None,
+                            target_uuid=str(r['person_uuid']))
+
+
 def post_admin_ban(token: str):
     """POST /admin/ban/<token>: destructive. GET on this path is rejected
     (the confirmation form lives at /admin/ban-link/<token>)."""
@@ -3225,6 +3240,16 @@ def post_admin_delete_photo(token: str):
 
         if rows:
             params = dict(person_id=rows[0]['person_id'])
+            # Audited in the same transaction (TEC-1845 admin audit); the
+            # link carries a token, not a session, so the actor is the link.
+            from service.admin import record_system_audit
+            owner = tx.execute('SELECT email, uuid::text AS uuid FROM person WHERE id = %(person_id)s',
+                               params).fetchone()
+            record_system_audit(
+                tx, 'email-link', 'delete_photo',
+                metadata={'via': 'email_link', 'photo_uuid': rows[0]['uuid']},
+                target_email=owner['email'] if owner else None,
+                target_uuid=owner['uuid'] if owner else None)
             tx.execute(Q_UPDATE_VERIFICATION_LEVEL, params)
             # The next photo may now be the main one (finding 98).
             tx.execute(Q_RECHECK_MAIN_PHOTO_FACE,
