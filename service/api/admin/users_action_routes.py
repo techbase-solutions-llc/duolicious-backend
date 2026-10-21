@@ -23,7 +23,7 @@ import psycopg
 from flask import abort, request
 
 from service.api.decorators import apost, apatch, adelete, validate
-from service.admin import require_admin, record_audit
+from service.admin import require_admin, record_audit, require_uuid
 from service import entitlements
 from service.tokens import (
     InsufficientTokens,
@@ -176,6 +176,7 @@ _Q_CLEAR_ONBOARDEE = """
 @validate(t.PostGrantEntitlement)
 def post_grant_entitlement(req: t.PostGrantEntitlement, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     # service.entitlements.grant takes int person.id, not uuid, so look up first.
     with api_tx('read committed') as tx:
         row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
@@ -206,6 +207,7 @@ def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
     """Body `{reason}` is optional: the live admin sends none. When given it
     is written to the audit row (TEC-1845 admin audit)."""
     require_admin(s)
+    require_uuid(uuid)
     body = request.get_json(silent=True)
     reason = body.get('reason') if isinstance(body, dict) else None
     reason = reason.strip()[:512] or None if isinstance(reason, str) else None
@@ -232,6 +234,7 @@ def delete_revoke_entitlement(s: t.SessionInfo, uuid: str, name: str):
 @validate(t.PostTokenAdjust)
 def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     if req.delta == 0:
         abort(400)
     try:
@@ -292,6 +295,7 @@ def _other_admins(tx, person_id: int) -> int:
 @validate(t.PatchRoles)
 def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     allowed = {'admin', 'mod'}
     add = [r for r in req.add if r in allowed]
     remove = [r for r in req.remove if r in allowed]
@@ -333,6 +337,7 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
 @validate(t.PostLifecycle)
 def post_deactivate_admin(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     with api_tx() as tx:
         person_row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
         if person_row is None:
@@ -362,6 +367,7 @@ def post_deactivate_admin(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
 @validate(t.PostLifecycle)
 def post_reactivate(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     with api_tx() as tx:
         row = tx.execute(_Q_REACTIVATE, dict(uuid=uuid)).fetchone()
         if row is None:
@@ -378,6 +384,7 @@ def post_reactivate(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
 @validate(t.DeletePerson)
 def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     with api_tx() as tx:
         row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
         if row is None:
@@ -444,6 +451,7 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
 @validate(t.PostLifecycle)
 def post_clear_onboardee(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     with api_tx() as tx:
         row = tx.execute(_Q_CLEAR_ONBOARDEE, dict(uuid=uuid)).fetchone()
         cleared = bool(row and row['cleared'])

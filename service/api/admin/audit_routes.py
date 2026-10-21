@@ -5,7 +5,7 @@ import duotypes as t
 from flask import request
 
 from service.api.decorators import aget
-from service.admin import require_admin
+from service.admin import MAX_DAYS, MAX_PAGE, int_arg, require_admin
 from service.admin.queries import Q_AUDIT_LIST, Q_AUDIT_COUNT
 from service.admin.queries.audit import Q_AUDIT_ACTIONS, Q_AUDIT_ACTORS
 from database import api_tx
@@ -20,13 +20,10 @@ def get_audit_log(s: t.SessionInfo):
     actor = (request.args.get('actor') or '').strip()
     target = (request.args.get('target') or '').strip()
     action = (request.args.get('action') or '').strip()
-    try:
-        page = max(1, int(request.args.get('page', '1')))
-        # 0 is all time (TEC-1845 admin audit). With no days the route still
-        # reads the last 30, which the live admin expects.
-        days = max(0, int(request.args.get('days', '30')))
-    except ValueError:
-        page, days = 1, 30
+    page = int_arg('page', 1, 1, MAX_PAGE)
+    # 0 is all time (TEC-1845 admin audit). With no days the route still
+    # reads the last 30, which the live admin expects.
+    days = int_arg('days', 30, 0, MAX_DAYS)
     escaped = target.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
     params = {
         'actor': actor, 'target': target, 'target_like': f'%{escaped}%',

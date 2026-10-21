@@ -5,7 +5,7 @@ import duotypes as t
 from flask import request
 
 from service.api.decorators import aget
-from service.admin import require_admin
+from service.admin import MAX_DAYS, MAX_PAGE, int_arg, require_admin
 from service.admin.queries import (
     Q_LEDGER, Q_LEDGER_COUNT, Q_LEDGER_KPIS,
     Q_ENTITLEMENT_HOLDERS, Q_ENTITLEMENT_KPIS,
@@ -24,11 +24,8 @@ def get_economy_ledger(s: t.SessionInfo):
     email = (request.args.get('email') or '').strip()
     # `days` is the period for the table AND its KPIs; 0, the default, is all
     # time. It used to default to 30 for the table alone (see Q_LEDGER).
-    try:
-        page = max(1, int(request.args.get('page', '1')))
-        days = max(0, int(request.args.get('days', '0')))
-    except ValueError:
-        page, days = 1, 0
+    page = int_arg('page', 1, 1, MAX_PAGE)
+    days = int_arg('days', 0, 0, MAX_DAYS)
     params = {
         'reason': reason,
         'email': email,
@@ -55,10 +52,7 @@ def get_economy_ledger(s: t.SessionInfo):
 def get_economy_entitlements(s: t.SessionInfo):
     require_admin(s)
     name = (request.args.get('name') or 'premium').strip()
-    try:
-        expires_within_days = int(request.args.get('expires_within_days', '0'))
-    except ValueError:
-        expires_within_days = 0
+    expires_within_days = int_arg('expires_within_days', 0, 0, MAX_DAYS)
     params = {'name': name, 'expires_within_days': expires_within_days}
     with api_tx('read committed') as tx:
         holders = [dict(r) for r in tx.execute(Q_ENTITLEMENT_HOLDERS, params).fetchall()]

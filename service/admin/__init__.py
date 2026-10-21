@@ -10,12 +10,15 @@ Public surface:
   record_audit(tx, s, ...)     — writes one admin_audit_log row
   record_system_audit(tx, ...) writes one for a cron tick or a command
   is_admin(tx, person_uuid)    — read-only check (used by /admin/whoami)
+  require_uuid(value)          — 404 for a path uuid that is not one
+  int_arg(name, default, lo, hi) a clamped integer query parameter
 
 Query helpers per tab land in service/admin/queries/* and are
 imported here as each phase ships."""
 from __future__ import annotations
 
 import json
+import uuid as _uuid
 from typing import Any, Optional
 
 from database import api_tx
@@ -42,6 +45,37 @@ def require_admin(s: t.SessionInfo) -> None:
     with api_tx('read committed') as tx:
         if not is_admin(tx, s.person_uuid):
             abort(403)
+
+
+def require_uuid(value: str) -> str:
+    """A path uuid that is not one answers 404, where the ::uuid cast used
+    to raise and answer 500 (TEC-1845 admin audit, Minor 26). Returns the
+    value unchanged, so the route keeps the text it was given. Call it
+    after require_admin, so a non-admin still gets 403."""
+    try:
+        _uuid.UUID(str(value))
+    except ValueError:
+        abort(404)
+    return value
+
+
+# The bounds int_arg holds days and page to: a century, and a page past any
+# table the admin reads. Both keep make_interval and OFFSET inside int4.
+MAX_DAYS = 36500
+MAX_PAGE = 1_000_000
+
+
+def int_arg(name: str, default: int, lo: int, hi: int) -> int:
+    """An integer query parameter held to [lo, hi]. A value that is not a
+    number reads as the default; one outside the range is clamped, so a
+    bookmark with an absurd page or days answers 200 instead of a 500 from
+    an interval or bigint overflow (TEC-1845 admin audit, Minor 26)."""
+    from flask import request
+    try:
+        value = int(request.args.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(lo, min(hi, value))
 
 
 # An action no admin session made: a cron tick, or a command run on the

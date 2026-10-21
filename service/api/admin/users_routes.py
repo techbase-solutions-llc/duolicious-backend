@@ -9,7 +9,7 @@ import duotypes as t
 from flask import request
 
 from service.api.decorators import aget
-from service.admin import require_admin
+from service.admin import MAX_PAGE, int_arg, require_admin, require_uuid
 from service.admin.queries import (
     Q_USERS_LIST,
     Q_USERS_COUNT,
@@ -39,10 +39,7 @@ _FILTER_KEYS = (
 def get_admin_users(s: t.SessionInfo):
     require_admin(s)
     q = (request.args.get('q') or '').strip()
-    try:
-        page = max(1, int(request.args.get('page', '1')))
-    except ValueError:
-        page = 1
+    page = int_arg('page', 1, 1, MAX_PAGE)
     filters_raw = request.args.get('filters', '')
     active_filters = set(filters_raw.split(',')) if filters_raw else set()
     params = {
@@ -71,6 +68,7 @@ def get_admin_users(s: t.SessionInfo):
 @aget('/admin/users/<uuid>')
 def get_admin_user_detail(s: t.SessionInfo, uuid: str):
     require_admin(s)
+    require_uuid(uuid)
     with api_tx('read committed') as tx:
         profile = tx.execute(Q_USER_PROFILE, dict(uuid=uuid)).fetchone()
         if profile is None:
