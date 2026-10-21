@@ -116,7 +116,12 @@ Q_ENTITLEMENT_HOLDERS = f"""
       FROM person p
      WHERE {_MEMBER_P}
        AND %(name)s = ANY(p.entitlements)
-       AND (%(expires_within_days)s = 0 OR p.subscription_expires_at < NOW() + (%(expires_within_days)s || ' days')::INTERVAL)
+       -- Expiring means not yet lapsed: between expiry and the nightly
+       -- strip a lapsed holder still holds it (TEC-1845 admin audit, Minor
+       -- 32). The unfiltered list (0) still shows them.
+       AND (%(expires_within_days)s = 0
+            OR (p.subscription_expires_at > NOW()
+                AND p.subscription_expires_at < NOW() + (%(expires_within_days)s || ' days')::INTERVAL))
      ORDER BY p.subscription_expires_at NULLS LAST
      LIMIT 200
 """
@@ -124,8 +129,10 @@ Q_ENTITLEMENT_HOLDERS = f"""
 Q_ENTITLEMENT_KPIS = f"""
     SELECT
         COUNT(*) AS holders,
-        COUNT(*) FILTER (WHERE subscription_expires_at < NOW() + INTERVAL '7 days') AS expiring_7d,
-        COUNT(*) FILTER (WHERE subscription_expires_at < NOW() + INTERVAL '30 days') AS expiring_30d
+        COUNT(*) FILTER (WHERE subscription_expires_at > NOW()
+                           AND subscription_expires_at < NOW() + INTERVAL '7 days') AS expiring_7d,
+        COUNT(*) FILTER (WHERE subscription_expires_at > NOW()
+                           AND subscription_expires_at < NOW() + INTERVAL '30 days') AS expiring_30d
       FROM person
      WHERE {_MEMBER}
        AND %(name)s = ANY(entitlements)
