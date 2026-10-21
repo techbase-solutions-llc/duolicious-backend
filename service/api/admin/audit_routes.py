@@ -7,6 +7,7 @@ from flask import request
 from service.api.decorators import aget
 from service.admin import require_admin
 from service.admin.queries import Q_AUDIT_LIST, Q_AUDIT_COUNT
+from service.admin.queries.audit import Q_AUDIT_ACTIONS, Q_AUDIT_ACTORS
 from database import api_tx
 
 
@@ -21,19 +22,28 @@ def get_audit_log(s: t.SessionInfo):
     action = (request.args.get('action') or '').strip()
     try:
         page = max(1, int(request.args.get('page', '1')))
-        days = int(request.args.get('days', '30'))
+        # 0 is all time (TEC-1845 admin audit). With no days the route still
+        # reads the last 30, which the live admin expects.
+        days = max(0, int(request.args.get('days', '30')))
     except ValueError:
         page, days = 1, 30
+    escaped = target.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
     params = {
-        'actor': actor, 'target': target, 'action': action, 'days': days,
+        'actor': actor, 'target': target, 'target_like': f'%{escaped}%',
+        'action': action, 'days': days,
         'limit': _PAGE_SIZE, 'offset': (page - 1) * _PAGE_SIZE,
     }
     with api_tx('read committed') as tx:
         rows = [dict(r) for r in tx.execute(Q_AUDIT_LIST, params).fetchall()]
         total_row = tx.execute(Q_AUDIT_COUNT, params).fetchone()
+        actors = [r['actor_email'] for r in tx.execute(Q_AUDIT_ACTORS).fetchall()]
+        actions = [r['action'] for r in tx.execute(Q_AUDIT_ACTIONS).fetchall()]
     return {
         'rows': rows,
         'total': int(total_row['total']) if total_row else 0,
         'page': page,
         'page_size': _PAGE_SIZE,
+        'days': days,
+        'actors': actors,
+        'actions': actions,
     }
