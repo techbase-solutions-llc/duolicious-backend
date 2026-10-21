@@ -41,6 +41,19 @@ _Q_COUNTS = """
 """
 
 
+def mask_email(address: str | None) -> str | None:
+    """A mentor's address as staff see it: the first letter of each part and
+    the ending, as r••••@g••••.com (export decision 6). The full address
+    never leaves the API (review, 21 Oct)."""
+    if not address or '@' not in address:
+        return None if not address else address[:1] + '••••'
+    local, domain = address.split('@', 1)
+    name, dot, tld = domain.rpartition('.')
+    if not dot:
+        name, tld = domain, ''
+    return f"{local[:1]}••••@{name[:1]}••••{'.' + tld if tld else ''}"
+
+
 def counts(tx) -> dict:
     r = {k: int(v) for k, v in tx.execute(_Q_COUNTS).fetchone().items()}
     return dict(
@@ -96,6 +109,6 @@ def connections(tx, person_id: int) -> dict:
         dict(p=person_id)).fetchone()
     mentor = None
     if m is not None:
-        mentor = dict(since=m['confirmed_at'].date().isoformat(), email=m['mentor_email'],
+        mentor = dict(since=m['confirmed_at'].date().isoformat(), email=mask_email(m['mentor_email']),
                       conversations_shared=int(m['shared']))
     return dict(alert=alert, introductions={k: int(i[k]) for k in i.keys()}, mentor=mentor)

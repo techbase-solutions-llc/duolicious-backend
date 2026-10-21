@@ -4,6 +4,7 @@ or a message. The shared database has other rows, so counts are compared
 before and after."""
 from __future__ import annotations
 
+from service.matchmaker.admin import mask_email
 import json
 from uuid import uuid4
 
@@ -100,7 +101,9 @@ def test_the_drawer_never_carries_a_note_or_a_message(client, admin_headers, sin
                    dict(m=single['mentor_account_id'], s=single['id'], a=match['id']))
     body = client.get(f"/admin/users/{single['id']}/connections", headers=admin_headers).get_json()
     assert 'Ask about' not in json.dumps(body)
-    assert body['mentor']['conversations_shared'] == 1 and body['mentor']['email'] == single['mentor_email']
+    assert body['mentor']['conversations_shared'] == 1 and body['mentor']['email'] != single['mentor_email']
+    assert body['mentor']['email'] == mask_email(single['mentor_email'])
+    assert '••••@' in body['mentor']['email']
     assert body['alert'] == {'on': True, 'criteria_line': 'Age 26 to 34, anywhere, any relocation',
                              'last_notice_at': None}
 
@@ -196,3 +199,9 @@ def test_every_change_is_audited(client, admin_headers, introducer_with_two):
                  AND metadata->>'id' = %(i)s AND metadata->>'kind' = 'introduction'""",
             dict(i=str(item['id']))).fetchall()]
     assert actions == ['matchmaker.note.reject']
+
+
+def test_a_mentor_address_is_masked_to_its_first_letters():
+    assert mask_email('rivka.levi@gmail.com') == 'r••••@g••••.com'
+    assert mask_email('a@b') == 'a••••@b••••'
+    assert mask_email(None) is None
