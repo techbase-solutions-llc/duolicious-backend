@@ -1283,3 +1283,7 @@ import service.api.admin.matchmaker_routes  # noqa: E402,F401
 import service.api.error_tally as _error_tally  # noqa: E402
 from service.api.decorators import app as _app  # noqa: E402
 _error_tally.connect(_app)
+
+# Acting on the community (TEC-1897): waiting on a reply, unfinished
+# sign-ups, the weekly funnel.
+import service.api.admin.community_routes  # noqa: E402,F401
