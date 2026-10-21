@@ -880,3 +880,18 @@ def unmatch_pair(make_person, sign_in):
     yield SimpleNamespace(a=a, b=b, a_headers=sign_in(a), b_headers=sign_in(b))
     with api_tx() as tx:
         tx.execute('DELETE FROM inbox WHERE luser = ANY(%(u)s)', dict(u=[a['uuid'], b['uuid']]))
+
+
+# Migration 0072 (TEC-1845 admin audit): the ledger's admin reasons, the admin
+# deactivation flag the sign-in queries read, and the other serious fixes. It
+# is idempotent, so applying it once per session is what the deploy does.
+
+@pytest.fixture(scope='session', autouse=True)
+def admin_fixes_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0072_admin_serious_fixes.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

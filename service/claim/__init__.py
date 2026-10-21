@@ -29,7 +29,7 @@ _SEX_TO_GENDER = {"male": "Man", "female": "Woman"}
 _AHAVAH_EXTRA_KEYS = ("assembly", "intent", "family")
 
 
-_Q_PERSON_BY_EMAIL = "SELECT id FROM person WHERE normalized_email = %(email)s"
+_Q_PERSON_BY_EMAIL = "SELECT id, admin_deactivated_at FROM person WHERE normalized_email = %(email)s"
 
 _Q_ENSURE_ONBOARDEE = """
     INSERT INTO onboardee (email) VALUES (%(email)s)
@@ -78,6 +78,12 @@ _Q_MINT_SESSION = """
 """
 
 
+class AccountDeactivated(Exception):
+    """The claim names a person an admin deactivated. A claim token never
+    expires, so without this an old invite link would sign them back in past
+    the block /check-otp keeps."""
+
+
 def _country_name(cc):
     """ISO2 -> pycountry country name (matches location.country), or None."""
     try:
@@ -104,6 +110,8 @@ def claim(tx, token: str) -> dict | None:
         return None
 
     row = tx.execute(_Q_PERSON_BY_EMAIL, dict(email=email)).fetchone()
+    if row and row["admin_deactivated_at"] is not None:
+        raise AccountDeactivated()
     person_id = row["id"] if row else None
 
     if person_id is None:

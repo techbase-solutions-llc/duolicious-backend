@@ -9,7 +9,6 @@ Endpoints:
   POST   /admin/users/:uuid/reactivate           : undo soft delete
   DELETE /admin/users/:uuid                      : hard delete (requires confirm_email)
   POST   /admin/users/:uuid/clear-onboardee      : wipe onboardee + sessions
-  POST   /admin/users/:uuid/resend-otp           : send a fresh OTP
 
 Every mutation calls require_admin(s) FIRST, then performs the mutation
 and writes one admin_audit_log row in the same api_tx EXCEPT for the
@@ -19,19 +18,19 @@ trade-off because entitlements grant/revoke is idempotent.
 """
 from __future__ import annotations
 
-import secrets
-
 import duotypes as t
-from flask import abort, request
+from flask import abort
 
 from service.api.decorators import apost, apatch, adelete, validate
 from service.admin import require_admin, record_audit
 from service import entitlements
-from service.tokens import credit as tokens_credit, debit as tokens_debit
+from service.tokens import (
+    InsufficientTokens,
+    credit as tokens_credit,
+    debit as tokens_debit,
+)
 from database import api_tx
-from duohash import sha512
 from antiabuse.antispam.signupemail import normalize_email
-from service.person.sql import Q_INSERT_DUO_SESSION
 from service.spotlight.withdrawal import withdraw_member
 from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
@@ -55,7 +54,11 @@ _Q_PERSON_BY_UUID = """
 
 _Q_SOFT_DELETE = """
     WITH deactivated AS (
-        UPDATE person SET activated = FALSE WHERE uuid = %(uuid)s::uuid
+        -- admin_deactivated_at is what keeps the member out: the sign-in
+        -- queries refuse it, while activated alone is set back to TRUE by
+        -- the next sign-in.
+        UPDATE person SET activated = FALSE, admin_deactivated_at = NOW()
+         WHERE uuid = %(uuid)s::uuid
         RETURNING id, email
     ),
     del_session AS (
@@ -72,6 +75,7 @@ _Q_REACTIVATE = """
     reactivated AS (
         UPDATE person SET
             activated = TRUE,
+            admin_deactivated_at = NULL,
             -- Pull them out of autodeactivate2's 30-50 day window, or the
             -- cron reverts this within one 300s poll (F14).
             last_online_time = NOW()
@@ -185,29 +189,34 @@ def post_token_adjust(req: t.PostTokenAdjust, s: t.SessionInfo, uuid: str):
     require_admin(s)
     if req.delta == 0:
         abort(400)
-    with api_tx() as tx:
-        row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
-        if row is None:
-            abort(404)
-        target_email = row['email']
-        amount = abs(req.delta)
-        if req.delta > 0:
-            tokens_credit(
-                tx, uuid, amount,
-                reason='admin_credit',
-                metadata={'admin': s.email, 'reason': req.reason},
+    try:
+        with api_tx() as tx:
+            row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
+            if row is None:
+                abort(404)
+            target_email = row['email']
+            amount = abs(req.delta)
+            if req.delta > 0:
+                tokens_credit(
+                    tx, uuid, amount,
+                    reason='admin_credit',
+                    metadata={'admin': s.email, 'reason': req.reason},
+                )
+            else:
+                tokens_debit(
+                    tx, uuid, amount,
+                    reason='admin_debit',
+                    metadata={'admin': s.email, 'reason': req.reason},
+                )
+            record_audit(
+                tx, s, 'token_adjust',
+                target_email=target_email, target_uuid=uuid,
+                metadata={'delta': req.delta, 'reason': req.reason},
             )
-        else:
-            tokens_debit(
-                tx, uuid, amount,
-                reason='admin_debit',
-                metadata={'admin': s.email, 'reason': req.reason},
-            )
-        record_audit(
-            tx, s, 'token_adjust',
-            target_email=target_email, target_uuid=uuid,
-            metadata={'delta': req.delta, 'reason': req.reason},
-        )
+    except InsufficientTokens:
+        # Raised before the ledger insert; leaving the with block by the
+        # exception rolls the transaction back, so nothing is written.
+        return dict(error='insufficient_tokens'), 409
     return {'ok': True, 'delta': req.delta}
 
 
@@ -249,6 +258,12 @@ def post_deactivate_admin(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
         person_row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
         if person_row is None:
             abort(404)
+        # Deactivate now blocks sign-in until an admin reactivates, and it
+        # deletes the caller's sessions with the rest, so an admin who
+        # deactivated their own account would be locked out of the admin
+        # with nobody left to reactivate them. Refused before any write.
+        if s.person_id is not None and int(person_row['id']) == int(s.person_id):
+            return dict(error='cannot_deactivate_self'), 409
         # Wave 1 F03: withdraw Spotlight before the deactivation below takes
         # effect, in the same transaction -- a deactivated member must not
         # stay queued or published.
@@ -351,48 +366,3 @@ def post_clear_onboardee(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
             metadata={'reason': req.reason},
         )
     return {'ok': True}
-
-
-@apost('/admin/users/<uuid>/resend-otp')
-@validate(t.PostLifecycle)
-def post_resend_otp_admin(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
-    require_admin(s)
-    with api_tx() as tx:
-        row = tx.execute(_Q_PERSON_BY_UUID, dict(uuid=uuid)).fetchone()
-        if row is None:
-            abort(404)
-        target_email = row['email']
-        session_token = secrets.token_hex(64)
-        session_token_hash = sha512(session_token)
-        # Q_INSERT_DUO_SESSION runs the standard _OTP_CTE (generates a
-        # 6-digit OTP, applies banned/bad-domain checks) and INSERTs one
-        # duo_session row, the same shape used by post_request_otp.
-        rows = tx.execute(
-            Q_INSERT_DUO_SESSION,
-            dict(
-                email=target_email,
-                normalized_email=normalize_email(target_email),
-                pending_club_name=None,
-                is_dev=False,
-                session_token_hash=session_token_hash,
-                ip_address=request.remote_addr or '127.0.0.1',
-            ),
-        ).fetchall()
-        otp = None
-        if rows:
-            otp = rows[0].get('otp')
-        record_audit(
-            tx, s, 'resend_otp',
-            target_email=target_email, target_uuid=uuid,
-            metadata={'reason': req.reason, 'sent': otp is not None},
-        )
-    # Send the email AFTER the tx commits so a mail-send failure can't
-    # roll back the duo_session row the user will need to redeem the OTP.
-    if otp:
-        try:
-            from service.person import _send_otp
-            _send_otp(target_email, otp)
-        except Exception:
-            # Non-fatal: the admin can retry; the row is in duo_session.
-            pass
-    return {'ok': True, 'sent': bool(otp)}

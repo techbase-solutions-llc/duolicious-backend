@@ -1,3 +1,8 @@
+# Only photos still pending (TEC-1845 admin audit). The moderation queue shows
+# a photo before it is scored, and an admin's Approve or Take down leaves
+# nsfw_score NULL, so the cron used to pick it up and set its status from the
+# score: a photo taken down came back approved after the member had been told
+# it was removed.
 Q_50_UNCHECKED_PHOTOS = """
 SELECT
     uuid
@@ -5,6 +10,8 @@ FROM
     photo
 WHERE
     nsfw_score IS NULL
+AND
+    moderation_status = 'pending'
 LIMIT
     50
 """
@@ -14,6 +21,7 @@ LIMIT
 #   score >= 0.70           -> rejected
 #   0.30 <= score < 0.70    -> manual_review
 #   score = -1.0 (download failed) -> left at 'pending' for the next tick.
+#   A photo a person has already approved or taken down is not touched.
 #
 # This statement records the face count but does not apply the face rule.
 # The rule lives in one place, service/photo_rules.py, and the cron runs it
@@ -48,4 +56,9 @@ SET
     END
 WHERE
     uuid = %(uuid)s
+AND
+    -- A person decided while the classifier ran: their decision stands and
+    -- nothing is written, so the face rule after it has nothing new to act
+    -- on either.
+    moderation_status = 'pending'
 """

@@ -105,8 +105,8 @@ def test_a_live_checkout_is_a_premium_add_wherever_livemode_sits(make_person):
     event object when the payload is stored as the object itself."""
     p = make_person(name='LiveBuyer')
     before = _series(Q_OVERVIEW_PREMIUM_30D)[-1]['adds']
-    _purchase(p['id'], '{"livemode": true}')
-    _purchase(p['id'], '{"data": {"object": {"livemode": true}}}')
+    _purchase(p['id'], '{"livemode": true, "data": {"object": {"mode": "subscription"}}}')
+    _purchase(p['id'], '{"data": {"object": {"livemode": true, "mode": "subscription"}}}')
     assert _series(Q_OVERVIEW_PREMIUM_30D)[-1]['adds'] == before + 2
 
 

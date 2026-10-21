@@ -143,7 +143,8 @@ def test_a_purchase_today_appears_on_todays_bar(make_person):
         tx.execute(
             """INSERT INTO entitlement_event
                  (event_id, event_type, app_user_id, payload, received_at)
-               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s, '{"livemode": true}'::jsonb,
+               VALUES (%(eid)s, 'checkout.session.completed', %(uid)s,
+                       '{"livemode": true, "data": {"object": {"mode": "subscription"}}}'::jsonb,
                        ((NOW() AT TIME ZONE 'America/Barbados')::date + TIME '09:00')
                        AT TIME ZONE 'America/Barbados')""",
             dict(eid=f'test-{_uuid.uuid4()}', uid=str(p['id'])))

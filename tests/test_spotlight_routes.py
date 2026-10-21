@@ -1476,6 +1476,113 @@ def test_reconcile_is_admin_only(client, make_person):
     assert client.post(f'/admin/growth/queue/{qid}/reconcile', json={}, headers=A).status_code == 400
 
 
+def _unresolved(tx, pid, state):
+    """A claimed row left with its delivery unresolved: reaped on an expired
+    lease ('attempting') or parked by a delivery_unknown receipt."""
+    rk, rows = _claimed_rows(tx, pid)
+    qid = rows[0]['id']
+    if state == 'attempting':
+        _reap(tx, qid)
+    else:
+        tx.execute("""UPDATE publishing_queue SET status = 'review', delivery_state = 'delivery_unknown',
+                             lease_until = NULL WHERE id = %(id)s""", dict(id=qid))
+    return rk, qid
+
+
+@pytest.mark.parametrize('state', ['attempting', 'delivery_unknown'])
+def test_approve_refuses_a_row_whose_delivery_is_unresolved(client, make_person, state):
+    """TEC-1845 admin audit, serious 5: a publish that timed out after the
+    platform accepted it was reaped into review and could be approved, and so
+    claimed and posted, a second time. A human checks the page and marks it
+    posted instead; Approve is refused."""
+    admin = _make_admin(make_person); A = {'Authorization': f'Bearer {_session_for(admin)}'}
+    p = _make_eligible(make_person, name='NoDoublePost')
+    with api_tx() as tx:
+        rk, qid = _unresolved(tx, p['id'], state)
+    r = client.post(f'/admin/growth/queue/{qid}/approve', json={}, headers=A)
+    assert r.status_code == 409
+    with api_tx() as tx:
+        row = tx.execute("SELECT status, delivery_state FROM publishing_queue WHERE id = %(id)s",
+                         dict(id=qid)).fetchone()
+        assert (row['status'], row['delivery_state']) == ('review', state)
+        tx.execute("UPDATE publishing_queue SET scheduled_for = NOW() - interval '1 minute' WHERE id = %(id)s",
+                   dict(id=qid))
+        claimed = [r['id'] for r in tx.execute("SELECT * FROM claim_spotlight_posts(50)").fetchall()]
+        assert qid not in claimed
+
+
+@pytest.mark.parametrize('state', ['attempting', 'delivery_unknown'])
+def test_cancel_refuses_a_row_whose_delivery_is_unresolved(client, make_person, state):
+    """Serious 6: cancelling such a row filed no removal task and made it
+    unreachable by reconcile, so a post that may be live was orphaned. The row
+    stays where it is until someone marks it posted."""
+    admin = _make_admin(make_person); A = {'Authorization': f'Bearer {_session_for(admin)}'}
+    p = _make_eligible(make_person, name='NoOrphan')
+    with api_tx() as tx:
+        rk, qid = _unresolved(tx, p['id'], state)
+    r = client.post(f'/admin/growth/queue/{qid}/cancel', json={'reason': 'x'}, headers=A)
+    assert r.status_code == 409
+    with api_tx('read committed') as tx:
+        assert tx.execute("SELECT status FROM publishing_queue WHERE id = %(id)s",
+                          dict(id=qid)).fetchone()['status'] == 'review'
+    # And it can still be marked as posted.
+    r = client.post(f'/admin/growth/queue/{qid}/reconcile', json={'external_post_id': '1_46'}, headers=A)
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize('state', ['attempting', 'delivery_unknown'])
+def test_not_posted_returns_an_unresolved_row_to_an_ordinary_review_card(client, make_person, state):
+    """With Approve and Cancel refused, a card that never went out had no way
+    off the queue, and its open status kept the member from another card of
+    its kind. Someone who checked the page and found nothing says so; the
+    row is a plain review card again and the dead lease cannot report back."""
+    from service.spotlight.queue import record_receipt
+    admin = _make_admin(make_person); A = {'Authorization': f'Bearer {_session_for(admin)}'}
+    p = _make_eligible(make_person, name='NotPosted')
+    with api_tx() as tx:
+        rk, qid = _unresolved(tx, p['id'], state)
+        lease = tx.execute("SELECT lease_token FROM publishing_queue WHERE id = %(id)s",
+                           dict(id=qid)).fetchone()['lease_token']
+    r = client.post(f'/admin/growth/queue/{qid}/not-posted', json={}, headers=A)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json() == {'ok': True, 'status': 'review'}
+    with api_tx() as tx:
+        row = tx.execute("SELECT status, delivery_state, lease_token FROM publishing_queue WHERE id = %(id)s",
+                         dict(id=qid)).fetchone()
+        assert (row['status'], row['delivery_state'], row['lease_token']) == ('review', 'none', None)
+        if lease:
+            with pytest.raises(ValueError):
+                record_receipt(tx, qid, lease, 'published', external_post_id='late')
+    # Asked again, the row is no longer unresolved.
+    assert client.post(f'/admin/growth/queue/{qid}/not-posted', json={}, headers=A).status_code == 409
+    r = client.post(f'/admin/growth/queue/{qid}/cancel', json={'reason': 'x'}, headers=A)
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+
+def test_not_posted_cancels_a_row_whose_member_has_withdrawn(client, make_person):
+    admin = _make_admin(make_person); A = {'Authorization': f'Bearer {_session_for(admin)}'}
+    p = _make_eligible(make_person, name='NotPostedWithdrawn')
+    with api_tx() as tx:
+        rk, qid = _unresolved(tx, p['id'], 'delivery_unknown')
+        tx.execute("UPDATE publishing_queue SET cancellation_requested_at = NOW() WHERE id = %(id)s",
+                   dict(id=qid))
+    r = client.post(f'/admin/growth/queue/{qid}/not-posted', json={}, headers=A)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()['status'] == 'cancelled'
+
+
+def test_not_posted_refuses_a_row_with_nothing_unresolved(client, make_person):
+    admin = _make_admin(make_person); A = {'Authorization': f'Bearer {_session_for(admin)}'}
+    p = _make_eligible(make_person, name='NotPostedPlain')
+    with api_tx() as tx:
+        rk = create_candidate(tx, kind='welcome', subject_person_id=p['id'], caption='c', created_by='t')
+        qid = tx.execute("SELECT id FROM publishing_queue WHERE request_key = %(rk)s ORDER BY id LIMIT 1",
+                         dict(rk=rk)).fetchone()['id']
+    r = client.post(f'/admin/growth/queue/{qid}/not-posted', json={}, headers=A)
+    assert r.status_code == 409
+    assert r.get_json() == {'error': 'not_reconcilable'}
+
+
 def test_purge_leaves_in_flight_rows_to_their_lease_holder(client, make_person):
     """Fix wave item 2: purge stamps every row it touches but cancels only
     what is safe to cancel. A `processing` row stays processing, and its
