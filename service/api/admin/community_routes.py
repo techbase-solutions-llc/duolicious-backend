@@ -31,3 +31,14 @@ def get_admin_community_unfinished(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         rows = [iso_row(r) for r in tx.execute(Q_UNFINISHED, dict(ex=_excluded())).fetchall()]
     return dict(count=len(rows), rows=rows)
+
+
+@aget('/admin/community/funnel')
+def get_admin_community_funnel(s: t.SessionInfo):
+    """Likes, matches, first messages and replies per Barbados week, 12
+    weeks, oldest first (frame O.1)."""
+    require_admin(s)
+    with api_tx('read committed') as tx:
+        weeks = [iso_row(r) for r in tx.execute(community.Q_WEEKLY_FUNNEL,
+                                                dict(ex=_excluded())).fetchall()]
+    return dict(weeks=weeks)

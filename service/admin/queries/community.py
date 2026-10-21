@@ -131,3 +131,50 @@ Q_WAITING_MEMBERS = f"""
      ORDER BY min(w.since), p.id
      LIMIT 200
 """
+
+
+from service.admin.queries.days import BARBADOS_TODAY  # noqa: E402
+
+
+def _week(col: str) -> str:
+    """The Monday of the Barbados week a timestamptz falls in."""
+    return f"date_trunc('week', ({col} AT TIME ZONE 'America/Barbados'))::date"
+
+
+Q_WEEKLY_FUNNEL = f"""
+    WITH weeks AS (
+        SELECT generate_series(
+                 date_trunc('week', ({BARBADOS_TODAY})::timestamp) - INTERVAL '11 weeks',
+                 date_trunc('week', ({BARBADOS_TODAY})::timestamp),
+                 INTERVAL '1 week')::date AS wk
+    ),
+    likes AS (
+        SELECT {_week('l.created_at')} AS wk
+          FROM liked l
+          JOIN person a ON a.id = l.liker_id
+          JOIN person b ON b.id = l.liked_id
+         WHERE {counted_member_sql('a', active=False)} AND {counted_member_sql('b', active=False)}
+    ),
+    matches AS (
+        SELECT {_week('m.created_at')} AS wk
+          FROM ahavah_match m
+          JOIN person ma ON ma.id = m.user_a_id
+          JOIN person mb ON mb.id = m.user_b_id
+         WHERE {counted_member_sql('ma', active=False)} AND {counted_member_sql('mb', active=False)}
+    ),
+    sent AS ({member_sent_sql(active=False)}),
+    convos AS ({_CONVOS}),
+    replies AS (
+        SELECT c.lo, c.hi, min(x.sent_at) AS replied_at
+          FROM convos c
+          JOIN sent x ON x.lo = c.lo AND x.hi = c.hi AND x.sender_id <> c.opener
+         GROUP BY c.lo, c.hi
+    )
+    SELECT w.wk AS week_start,
+           (SELECT count(*) FROM likes x WHERE x.wk = w.wk)::int                      AS likes,
+           (SELECT count(*) FROM matches x WHERE x.wk = w.wk)::int                    AS matches,
+           (SELECT count(*) FROM convos c WHERE {_week('c.opened_at')} = w.wk)::int   AS first_messages,
+           (SELECT count(*) FROM replies r WHERE {_week('r.replied_at')} = w.wk)::int AS replies
+      FROM weeks w
+     ORDER BY w.wk
+"""
