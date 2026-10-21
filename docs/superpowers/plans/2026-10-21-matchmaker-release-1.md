@@ -1578,6 +1578,16 @@ An operational task: no code beyond one flag. Each step names who acts. Nothing 
 
 ---
 
+## Owner's answers (21 Oct 2026)
+
+These override the defaults below where they differ.
+
+- **Item 30, what a mentor reads: changed from the default.** A mentor sees only messages sent after the single shares the conversation, never the history before it, and the other member is told that a mentor is reading. They see a line in the conversation, worded with /copy-pass and sent to the owner before launch (for example "{name} shared this conversation with their mentor. Messages from now on can be read by them."). Text only, voice messages as a line, no images or translations, as the default says. The tasks that build the mentor's view and the sharing line must apply this: store the share's start time and read only messages after it, and add the notice to both people's views and the other member's push or email if the plan sends one. Tests: a message from before the share is never returned to the mentor, and the other member's view shows the notice.
+- **Item 7, who an introducer can pick from:** the default, option B (matches, likes either way, profile views, the map and Spotlight in the last 8 weeks).
+- **Item 12, the matching setting:** the default, built and off by default; an existing match is untouched.
+- **Item 20, limits:** the default, 5 recommendations and 5 suggested pairs a week, an address once ever, each person once per introducer.
+- **All other items:** the defaults as written. New lines go through /copy-pass and to the owner before launch.
+
 ## Spec conflicts and decisions needing the owner
 
 Each item has the default this plan builds. The owner may change any of them.
