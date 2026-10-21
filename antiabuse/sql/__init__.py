@@ -1,10 +1,11 @@
-from service.config import API_BASE_URL, USER_IMAGES_BASE_URL
-
-
+# The last 25 messages between a reporter and the person they reported, from
+# the reporter's own archive, oldest first. Read by the dashboard's "Show
+# messages" (service/api/admin/moderation_routes.py), never by the report
+# email (TEC-1845). `held` marks a message kept in the unmatch hold.
 Q_LAST_MESSAGES = """
 WITH archive AS (
     SELECT mam_message.id, mam_message.direction, mam_message.message,
-           mam_message.search_body
+           mam_message.search_body, FALSE AS held
       FROM mam_message
       JOIN person
         ON person.id = mam_message.person_id
@@ -14,7 +15,7 @@ WITH archive AS (
     -- An unmatched conversation (TEC-1845, migration 0070) is held out of
     -- sight for exactly this: a report made after the unmatch.
     SELECT unmatched_message.id, unmatched_message.direction, unmatched_message.message,
-           unmatched_message.search_body
+           unmatched_message.search_body, TRUE AS held
       FROM unmatched_message
       JOIN person
         ON person.id = unmatched_message.person_id
@@ -29,7 +30,8 @@ WITH archive AS (
             ELSE 'accused'
         END AS sent_by,
         message,
-        search_body
+        search_body,
+        held
     FROM
         archive
     ORDER BY
@@ -37,167 +39,50 @@ WITH archive AS (
     LIMIT 25
 )
 SELECT
+    id,
     sent_by,
     message,
-    search_body
+    search_body,
+    held
 FROM
     last_messages
 ORDER BY
     id
 """
 
-Q_MAKE_REPORT = f"""
-WITH object_person_id AS (
-    SELECT
-        id
-    FROM
-        person
-    WHERE
-        uuid = %(object_uuid)s
-), subject_person_id AS (
-    SELECT
-        id
-    FROM
-        person
-    WHERE
-        uuid = %(subject_uuid)s
-), token AS (
-    INSERT INTO banned_person_admin_token (
-        person_id
-    )
-    VALUES
-        ((SELECT id FROM subject_person_id)),
-        ((SELECT id FROM object_person_id))
-    RETURNING
-        person_id,
-        token
-), photo_ban AS (
-    INSERT INTO deleted_photo_admin_token (
-        photo_uuid
-    )
-    SELECT
-        uuid AS photo_uuid
-    FROM
-        photo
-    JOIN
-        token
-    ON
-        photo.person_id = token.person_id
-    RETURNING
-        photo_uuid,
-        token
-), photo_ban_with_id AS (
-    SELECT
-        photo_ban.photo_uuid AS uuid,
-        token.person_id AS person_id,
-        photo_ban.token AS token,
-        photo.position AS position
-    FROM
-        photo_ban
-    JOIN
-        photo ON photo_ban.photo_uuid = photo.uuid
-    JOIN
-        token ON photo.person_id = token.person_id
+# What the report email says about a report (TEC-1845, 21 Oct 2026): who
+# reported whom and how many messages the two have exchanged, counted in the
+# reporter's archive and the unmatch hold as Q_LAST_MESSAGES reads them.
+#
+# It used to mint a banned_person_admin_token for both people and a
+# deleted_photo_admin_token for every photo, for the email's one-click ban
+# and photo-removal links. The email no longer carries them; moderation is
+# done in the dashboard. Tokens already in an inbox still work through
+# /admin/ban-link and /admin/delete-photo-link.
+Q_MAKE_REPORT = """
+WITH reporter AS (
+    SELECT id, uuid, name FROM person WHERE uuid = uuid_or_null(%(subject_uuid)s::TEXT)
+), reported AS (
+    SELECT id, uuid, name FROM person WHERE uuid = uuid_or_null(%(object_uuid)s::TEXT)
 )
 SELECT
-    CASE
-        WHEN id = (SELECT id FROM subject_person_id)
-        THEN 'Reporter'
-        ELSE 'Accused'
-    END AS role,
-    id,
-    uuid::TEXT,
-    location_long_friendly AS location,
-    split_part(email, '@', 2) AS email_domain,
-    ARRAY(
-        SELECT DISTINCT
-            ip_address::TEXT
-        FROM duo_session
-        WHERE person_id = p.id
-    ) AS ip_addresses,
-    count_answers,
-    ARRAY(
-        SELECT
-            '{USER_IMAGES_BASE_URL}/original-' || uuid || '.jpg'
-        FROM photo
-        WHERE photo.person_id = p.id
-        ORDER BY position
-    ) AS photo_links,
-    ARRAY(
-        SELECT
-            uuid || ': {API_BASE_URL}/admin/delete-photo-link/' || photo_ban_with_id.token
-        FROM photo_ban_with_id
-        WHERE photo_ban_with_id.person_id = p.id
-        ORDER BY position
-    ) AS photo_deletion_links,
-    EXTRACT(YEAR FROM AGE(date_of_birth))::int AS age,
-    name,
+    reporter.id           AS reporter_id,
+    reporter.uuid::TEXT   AS reporter_uuid,
+    reporter.name         AS reporter_name,
+    reported.id           AS reported_id,
+    reported.uuid::TEXT   AS reported_uuid,
+    reported.name         AS reported_name,
     (
-        select name from gender where id = gender_id
-    ) AS gender,
-    occupation,
-    education,
-    about,
-    ARRAY(
-        SELECT
-            club_name
-        FROM person_club
-        WHERE person_id = p.id
-    ) AS clubs,
-    token::text,
-    FLOOR(
-        EXTRACT(epoch FROM age(now(), sign_up_time)) / 86400
-    )::INT AS account_age_in_days,
-    (
-        SELECT
-            count(*)
-        FROM
-            skipped
-        WHERE
-            reported
-        AND
-            object_person_id = p.id
-    ) AS times_reported,
-    (
-        SELECT
-            count(*)
-        FROM
-            skipped
-        WHERE
-            reported
-        AND
-            object_person_id = p.id
-        AND
-            created_at > NOW() - INTERVAL '1 day'
-    ) AS times_reported_in_the_past_24_hours,
-    ARRAY(
-        SELECT
-            report_reason
-        FROM
-            skipped
-        WHERE
-            reported
-        AND
-            object_person_id = p.id
-        AND
-            report_reason <> ''
-    ) AS all_report_reasons,
-    (
-        SELECT
-            name
-        FROM
-            verification_level
-        WHERE
-            verification_level.id = p.verification_level_id
-    ) AS verification_level
+        (SELECT count(*) FROM mam_message
+          WHERE person_id = reporter.id
+            AND remote_bare_jid IN (%(subject_uuid)s::TEXT, %(object_uuid)s::TEXT))
+      + (SELECT count(*) FROM unmatched_message
+          WHERE person_id = reporter.id
+            AND remote_bare_jid IN (%(subject_uuid)s::TEXT, %(object_uuid)s::TEXT))
+    )::INT                AS message_count,
+    NOW()                 AS reported_at
 FROM
-    person AS p
-JOIN
-    token
-ON
-    token.person_id = p.id
-ORDER BY
-    (id = (SELECT id FROM subject_person_id)) DESC
+    reporter, reported
 """
 
 Q_INSERT_SKIPPED = """
