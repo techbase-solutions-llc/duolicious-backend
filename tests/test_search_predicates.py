@@ -32,6 +32,13 @@ EXPECTED_ADDITIONS = [
     '-- new_fit_ids (TEC-1845, matchmaker 1.13): "See who joined" puts the -- members the latest '
     'alert notice counted first. Empty on every other -- search, so the order is otherwise unchanged. ',
     '(p.id = ANY(%(new_fit_ids)s::INT[])) DESC, ',
+    # Task 11: the searcher who prefers not to be matched with members who
+    # share conversations with a mentor.
+    '-- Matchmaker (TEC-1845, 6.10): a searcher who chose "Do not match me -- with members who share '
+    'conversations with a mentor" does not see -- members with a live shared conversation. AND NOT ( '
+    'COALESCE((SELECT sp_mm.no_mentor_shared_matches FROM person sp_mm WHERE sp_mm.id = '
+    '%(searcher_person_id)s), FALSE) AND EXISTS (SELECT 1 FROM shared_conversation sc WHERE '
+    'sc.single_person_id = p.id AND sc.revoked_at IS NULL) ) ',
 ]
 
 

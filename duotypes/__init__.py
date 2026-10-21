@@ -806,6 +806,10 @@ class PatchProfileInfo(BaseModel):
     # excludes any candidate whose ahavah_verification_tier = 'none' AND
     # verification_level_id <= 1.
     verification_required: Optional[str] = None
+    # Matchmaker (TEC-1845, 6.10): "Do not match me with members who share
+    # conversations with a mentor". Off by default; an existing match is
+    # untouched.
+    no_mentor_shared_matches: Optional[bool] = None
 
     @model_validator(mode='after')
     def check_exactly_one(self):
@@ -1322,3 +1326,11 @@ class PostIntroduction(BaseModel):
     a_uuid: str = Field(max_length=64)
     b_uuid: str = Field(max_length=64)
     note: str = Field(max_length=2000)
+
+
+class PostMentorInvite(BaseModel):
+    """POST /mentor/invite: a single invites their mentor (6.1)."""
+    email: str = Field(max_length=254)
+    relation: str = Field(max_length=20)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)

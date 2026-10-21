@@ -1276,3 +1276,49 @@ def introducer_with_two(make_person, add_photo, sign_in):
     _make.member = _member
     _make.match = _match
     return _make
+
+
+@pytest.fixture
+def single_with_mentor(make_person, add_photo, sign_in):
+    """single_with_mentor() -> (single, match, h_single, h_match): Rivka is
+    matched with Samuel and has a confirmed mentor (Ruth, an account and a
+    live link). single['link_id'] and single['mentor_account_id'] name them.
+    Rows go with make_person; the mentor account goes afterwards."""
+    from uuid import uuid4
+
+    from database import api_tx
+
+    accounts: list[int] = []
+
+    def _make(single_name: str = 'Rivka Levi', match_name: str = 'Samuel Stone'):
+        def member(name, gender):
+            p = make_person(name=name, gender=gender,
+                            email=f"{name.split()[0].lower()}-{uuid4().hex[:8]}@ahavah-test.invalid")
+            with api_tx() as tx:
+                tx.execute('UPDATE person SET activated = TRUE WHERE id = %(i)s', dict(i=p['id']))
+            add_photo(p['id'])
+            return p
+        single = member(single_name, 'Woman')
+        match = member(match_name, 'Man')
+        mentor_email = f'ruth.{uuid4().hex[:8]}@ahavah-test.invalid'
+        with api_tx() as tx:
+            tx.execute('INSERT INTO ahavah_match (user_a_id, user_b_id) '
+                       'VALUES (LEAST(%(a)s::int, %(b)s::int), GREATEST(%(a)s::int, %(b)s::int))',
+                       dict(a=single['id'], b=match['id']))
+            acc = tx.execute('INSERT INTO mentor_account (email, normalized_email) VALUES (%(e)s, %(e)s) '
+                             'RETURNING id', dict(e=mentor_email)).fetchone()['id']
+            link = tx.execute(
+                """INSERT INTO mentor_link (single_person_id, mentor_email, mentor_normalized_email, relation,
+                                            mentor_account_id, invite_expires_at, confirmed_at)
+                   VALUES (%(s)s, %(e)s, %(e)s, 'parent', %(a)s, NOW() + interval '14 days', NOW())
+                   RETURNING id""", dict(s=single['id'], e=mentor_email, a=acc)).fetchone()['id']
+        accounts.append(acc)
+        single = dict(single, link_id=link, mentor_account_id=acc, mentor_email=mentor_email)
+        return single, match, sign_in(single), sign_in(match)
+
+    yield _make
+    with api_tx() as tx:
+        # A confirmed live link must name its account, so the links end first.
+        tx.execute('UPDATE mentor_link SET revoked_at = COALESCE(revoked_at, NOW()) '
+                   'WHERE mentor_account_id = ANY(%(i)s)', dict(i=accounts))
+        tx.execute('DELETE FROM mentor_account WHERE id = ANY(%(i)s)', dict(i=accounts))

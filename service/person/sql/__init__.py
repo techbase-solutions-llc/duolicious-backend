@@ -2269,7 +2269,12 @@ SELECT
         ),
 
         'flair', (SELECT j FROM flair)
-    )::jsonb AS j
+    )::jsonb || jsonb_build_object(
+        -- Privacy, Matching (TEC-1845, matchmaker 6.10): "Do not match me
+        -- with members who share conversations with a mentor".
+        'no_mentor_shared_matches',
+            (SELECT no_mentor_shared_matches FROM person WHERE id = %(person_id)s)
+    ) AS j
 """
 
 Q_DELETE_PROFILE_INFO_PHOTO = """

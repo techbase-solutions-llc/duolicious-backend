@@ -204,6 +204,16 @@ prospect_pool AS (
       -- intended this; the rewritten search lost it).
       AND NOT p.verification_required
 
+      -- Matchmaker (TEC-1845, 6.10): a searcher who chose "Do not match me
+      -- with members who share conversations with a mentor" does not see
+      -- members with a live shared conversation.
+      AND NOT (
+          COALESCE((SELECT sp_mm.no_mentor_shared_matches FROM person sp_mm
+                     WHERE sp_mm.id = %(searcher_person_id)s), FALSE)
+          AND EXISTS (SELECT 1 FROM shared_conversation sc
+                       WHERE sc.single_person_id = p.id AND sc.revoked_at IS NULL)
+      )
+
       -- A member with no approved photo is a card nobody can judge, so
       -- they leave the deck until one is approved (health review, 13 Oct
       -- 2026, finding 95; 4 of 58 members that day). Any approved photo
@@ -482,6 +492,18 @@ Q_MAP_MARKERS = """
       -- Reports/blocks hide permanently, either direction. Plain passes
       -- do NOT - they are deck state, not map state.
       AND NOT is_blocked_pair(%(searcher_person_id)s, p.id)
+      -- Matchmaker (TEC-1845, 6.10): as in the deck, a member with a live
+      -- shared conversation leaves the map of a searcher who chose not to be
+      -- matched with them. An existing match is untouched.
+      AND NOT (
+          COALESCE((SELECT sp_mm.no_mentor_shared_matches FROM person sp_mm
+                     WHERE sp_mm.id = %(searcher_person_id)s), FALSE)
+          AND EXISTS (SELECT 1 FROM shared_conversation sc
+                       WHERE sc.single_person_id = p.id AND sc.revoked_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM ahavah_match am_mm
+                           WHERE am_mm.user_a_id = LEAST(%(searcher_person_id)s, p.id)
+                             AND am_mm.user_b_id = GREATEST(%(searcher_person_id)s, p.id))
+      )
       AND p.show_my_location
       AND COALESCE((p.ahavah_extra->>'showOnMap')::boolean, TRUE)
       -- Only pin users who picked a REAL city. Country-only users sit on a

@@ -2237,6 +2237,15 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
                CASE WHEN %(field_value)s = 'Yes' THEN TRUE ELSE FALSE END)
          WHERE id = %(person_id)s
         """
+    elif field_name == 'no_mentor_shared_matches':
+        # Privacy, Matching (TEC-1845, matchmaker 6.10). Members with a live
+        # shared conversation leave this member's deck and map, cannot be
+        # introduced to them, and cannot share a conversation with them.
+        # Accepted whichever way the matchmaker switches are set.
+        q1 = """
+        UPDATE person SET no_mentor_shared_matches = %(field_value)s::BOOLEAN
+         WHERE id = %(person_id)s
+        """
     elif field_name == 'spotlight_opt_in':
         # Community Spotlight consent (spec 3.1). Delegate to
         # service.spotlight so this PATCH and the Phase B opt-out
