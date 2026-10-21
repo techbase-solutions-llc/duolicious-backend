@@ -197,3 +197,84 @@ def post_alerts_stop(req: t.PostAlertToken):
     with api_tx() as tx:
         out = alerts.stop(tx, req.token)
     return out, 200, _NO_STORE
+
+
+# ---------------------------------------------------------------------------
+# Recommend a single (5a). A member, or a visitor signed in with the code
+# (the onboardee session /check-otp leaves). 404 until matchmaker_
+# introductions.
+# ---------------------------------------------------------------------------
+
+_recommend_ip_limit = limiter.shared_limit('10 per hour', scope='mm_recommend')
+
+
+def _recommend_sender(tx, s: t.SessionInfo, typed_first_name) -> dict:
+    """The sender as service.matchmaker.recommend wants them."""
+    from service.leads import clean_email
+    from service.matchmaker import MatchmakerError, address_key, clean_first_name, first_name
+    if s.person_id is not None:
+        row = tx.execute('SELECT name, normalized_email FROM person WHERE id = %(i)s',
+                         dict(i=s.person_id)).fetchone()
+        return dict(person_id=s.person_id, first_name=first_name(row['name']),
+                    key=address_key(row['normalized_email']), normalized_email=row['normalized_email'])
+    cleaned = clean_email(s.email)
+    name = clean_first_name(typed_first_name)
+    if cleaned is None or name is None:
+        raise MatchmakerError('bad_first_name' if cleaned is not None else 'signed_out',
+                              400 if cleaned is not None else 401)
+    return dict(person_id=None, first_name=name, key=address_key(cleaned[1]),
+                normalized_email=cleaned[1])
+
+
+@apost('/recommendations', expected_onboarding_status=None,
+       limiter=[_recommend_ip_limit, shared_recipient_limit])
+@validate(t.PostRecommendation)
+def post_recommendations(req: t.PostRecommendation, s: t.SessionInfo):
+    """5a.4: "Sent" whatever happens next. A refused address (the free
+    defences) is answered the same and nothing is written."""
+    from database import api_tx
+    from service import leads
+    from service.matchmaker import MatchmakerError, recommend, surface_on
+    if not surface_on('matchmaker_introductions'):
+        return _off()
+    if s.person_id is None:
+        # A visitor names themselves before anything else is looked at.
+        from service.matchmaker import clean_first_name
+        try:
+            if clean_first_name(req.first_name) is None:
+                raise MatchmakerError('bad_first_name', 400)
+        except MatchmakerError as e:
+            return _refused(e)
+    cleaned = leads.clean_email(req.email)
+    if cleaned is None:
+        return dict(error='bad_email'), 400, _NO_STORE
+    # mail_refusal opens its own read, so it runs before the transaction.
+    if leads.mail_refusal(email=cleaned[0], ip=request.remote_addr, stamp=req.signup_stamp,
+                          website=req.website):
+        return dict(state='sent'), 201, _NO_STORE
+    try:
+        with api_tx('read committed') as tx:
+            sender = _recommend_sender(tx, s, req.first_name)
+            out = recommend.recommend(tx, sender=sender, email=cleaned[0], note=req.note)
+    except MatchmakerError as e:
+        return _refused(e)
+    return out, 201, _NO_STORE
+
+
+@aget('/recommendations/allowance', expected_onboarding_status=None)
+def get_recommendations_allowance(s: t.SessionInfo):
+    """{left, from}: the form's limit state (5a.5)."""
+    from database import api_tx
+    from service.leads import clean_email
+    from service.matchmaker import address_key, recommend, surface_on
+    if not surface_on('matchmaker_introductions'):
+        return _off()
+    with api_tx('read committed') as tx:
+        if s.person_id is not None:
+            ne = tx.execute('SELECT normalized_email FROM person WHERE id = %(i)s',
+                            dict(i=s.person_id)).fetchone()['normalized_email']
+        else:
+            cleaned = clean_email(s.email)
+            ne = cleaned[1] if cleaned else s.email
+        out = recommend.allowance(tx, address_key(ne))
+    return out, 200, _NO_STORE

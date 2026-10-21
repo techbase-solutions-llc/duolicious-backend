@@ -1304,3 +1304,13 @@ class PostVisitorAlert(BaseModel):
 class PostAlertToken(BaseModel):
     """POST /alerts/confirm and /alerts/stop: the token from the link."""
     token: str = Field(min_length=1, max_length=200)
+
+
+class PostRecommendation(BaseModel):
+    """POST /recommendations: introduce a single to Ahavah (5a). A visitor
+    must give their first name."""
+    email: str = Field(max_length=254)
+    note: Optional[str] = Field(default=None, max_length=2000)
+    first_name: Optional[str] = Field(default=None, max_length=200)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
