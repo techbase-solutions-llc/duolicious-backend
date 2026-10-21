@@ -36,6 +36,35 @@ def get_admin_growth_sources(s: t.SessionInfo):
         return dict(sources=source_rows(tx))
 
 
+@aget('/admin/growth/push')
+def get_admin_growth_push(s: t.SessionInfo):
+    """Push on, failing and new since a day (frame G.1). Members only,
+    except `with_push_counting_staff`, which the tile labels so."""
+    require_admin(s)
+    from datetime import date
+    from service.admin.queries.push import PUSH_BANNER_SHIPPED, Q_PUSH
+    from service.growth.queries import _excluded
+    since = request.args.get('since') or PUSH_BANNER_SHIPPED
+    try:
+        date.fromisoformat(since)
+    except ValueError:
+        abort(400)
+    with api_tx('read committed') as tx:
+        row = tx.execute(Q_PUSH, dict(ex=_excluded(), since=since)).fetchone()
+    return dict(row, since=since)
+
+
+@aget('/admin/growth/tiers')
+def get_admin_growth_tiers(s: t.SessionInfo):
+    """Members per verification tier, none first (frame G.1)."""
+    require_admin(s)
+    from service.admin.queries.profiles import Q_VERIFICATION_TIERS
+    from service.growth.queries import _excluded
+    with api_tx('read committed') as tx:
+        rows = tx.execute(Q_VERIFICATION_TIERS, dict(ex=_excluded())).fetchall()
+    return dict(tiers=[dict(r) for r in rows])
+
+
 @aget('/admin/growth/tools')
 def get_admin_growth_tools(s: t.SessionInfo):
     """Couple tools (TEC-1845): per mode, sessions started, completed,
