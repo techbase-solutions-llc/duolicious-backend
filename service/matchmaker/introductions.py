@@ -396,10 +396,12 @@ def _matched_answer(tx, person_id: int, other_id: int) -> dict:
 
 
 def _match_notice(person_id: int, other_first_name: str, match_id: str) -> None:
-    """The usual match notice, to the one who accepted first."""
+    """The usual match notice, to the one who accepted first. Its title has
+    no exclamation mark, unlike the generic match push's."""
     from emails.notification import new_match_email
     from service.notifications import notify
-    notify(person_id, 'match', title="It's a match!", body=f'{other_first_name} likes you back',
+    # NEW LINE: the title, waiting for /copy-pass.
+    notify(person_id, 'match', title="It's a match", body=f'{other_first_name} likes you back',
            url='/matches', tag=f'match:{match_id}', email_subject='You have a new match on Ahavah',
            email_html_factory=new_match_email, email_event_id=f'match-{match_id}')
 
