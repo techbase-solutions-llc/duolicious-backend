@@ -834,6 +834,15 @@ def events_live(monkeypatch):
 
 
 @pytest.fixture
+def mail_allowed(monkeypatch):
+    """service.leads.mail_refusal lets every address through, so a route
+    test never waits on Redis or a DNS lookup of a test domain. The rules
+    themselves are tested in tests/test_lead_mail.py."""
+    import service.leads as leads
+    monkeypatch.setattr(leads, 'mail_refusal', lambda **kw: None)
+
+
+@pytest.fixture
 def organiser(events_schema):
     """organiser(kind='fellowship_leader', approved=True) -> dict(id, email,
     token, headers): a verified organiser (approved now when asked) with a
@@ -842,7 +851,7 @@ def organiser(events_schema):
     from uuid import uuid4
 
     from database import api_tx
-    from service.leads import new_token
+    from service.events.organisers import issue_link
 
     made: list[int] = []
 
@@ -857,11 +866,7 @@ def organiser(events_schema):
                            CASE WHEN %(a)s::boolean THEN NOW() END)
                    RETURNING id""",
                 dict(n=name, k=kind, e=email, a=approved)).fetchone()['id']
-            token, hashed = new_token()
-            tx.execute(
-                """INSERT INTO organiser_link (organiser_id, token_hash, expires_at)
-                   VALUES (%(o)s, %(h)s, NOW() + interval '7 days')""",
-                dict(o=oid, h=hashed))
+            token = issue_link(tx, oid)
         made.append(oid)
         return dict(id=oid, email=email, token=token,
                     headers={'X-Organiser-Token': token})
@@ -954,3 +959,18 @@ def unmatch_pair(make_person, sign_in):
     yield SimpleNamespace(a=a, b=b, a_headers=sign_in(a), b_headers=sign_in(b))
     with api_tx() as tx:
         tx.execute('DELETE FROM inbox WHERE luser = ANY(%(u)s)', dict(u=[a['uuid'], b['uuid']]))
+
+
+@pytest.fixture
+def outbox_rows(events_schema):
+    """outbox_rows(campaign) -> the email_outbox rows of one campaign, as
+    dicts, oldest first. Rows for organisers and leads go with them."""
+    from database import api_tx
+
+    def _rows(campaign: str) -> list[dict]:
+        with api_tx('read committed') as tx:
+            return [dict(r) for r in tx.execute(
+                'SELECT * FROM email_outbox WHERE campaign = %(c)s ORDER BY id',
+                dict(c=campaign)).fetchall()]
+
+    return _rows

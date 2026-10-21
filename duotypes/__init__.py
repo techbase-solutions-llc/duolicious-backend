@@ -1172,3 +1172,26 @@ class PostTakeBackLike(BaseModel):
     person returns to the caller's discover deck. Mirrors PostDecision's
     uuid shape; POSTed to /likes/outgoing/take-back."""
     profile_uuid: str = Field(min_length=1, max_length=64)
+
+
+# ---------------------------------------------------------------------------
+# Gatherings (TEC-1845). Addresses are checked by service.leads.clean_email,
+# as every lead address is, rather than EmailStr, which refuses reserved
+# test domains. Text is cleaned again in service.events.fields.
+# ---------------------------------------------------------------------------
+
+class PostHostRequest(BaseModel):
+    """POST /host-requests: the request to host, with the address of the
+    session a sign-in code left."""
+    name: str = Field(min_length=1, max_length=80)
+    kind: Literal['assembly', 'fellowship_leader', 'ministry', 'other']
+    city: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default=None, max_length=80)
+    about: Optional[str] = Field(default=None, max_length=1000)
+
+
+class PostOrganiserLink(BaseModel):
+    """POST /organisers/link: "Send me a new link" (export 4.9)."""
+    email: str = Field(min_length=3, max_length=254)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
