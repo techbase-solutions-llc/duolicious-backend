@@ -648,8 +648,16 @@ def growth_schema():
 
     path = (Path(__file__).resolve().parent.parent
             / 'migrations' / '0066_growth_foundations.sql')
+    sql = path.read_text(encoding='utf-8')
     with api_tx() as tx:
-        tx.execute(path.read_text(encoding='utf-8'))
+        # Once 0071 has run (the shared test database), an outbox row may
+        # name an organiser, and 0066's two-recipient check would refuse it.
+        # Keep 0071's three-recipient check instead (TEC-1845).
+        if tx.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'email_outbox' "
+                      "AND column_name = 'organiser_id'").fetchone():
+            sql = sql.replace('CHECK (num_nonnulls(person_id, lead_id) = 1)',
+                              'CHECK (num_nonnulls(person_id, lead_id, organiser_id) = 1)')
+        tx.execute(sql)
 
 
 # ---------------------------------------------------------------------------
@@ -1051,28 +1059,35 @@ def published(organiser, event_cleanup):
 @pytest.fixture
 def confirmed_guest():
     """confirmed_guest(slug, *, name, email, party_size, share) -> dict(id,
-    email, token): a confirmed going RSVP with a token, inserted directly
-    (no lead). It goes with its gathering."""
+    email, token): a confirmed going RSVP with a token, inserted directly,
+    with its confirmed event:{slug} lead as a visitor's has (none for a
+    member, given person_id). It goes with its gathering; the lead with
+    event_cleanup."""
     from uuid import uuid4
 
     from database import api_tx
-    from service.leads import new_token
+    from service.leads import confirm_lead, new_token, record_lead
 
     def _make(slug: str, *, name: str = 'Hannah Okafor', email: str | None = None,
               party_size: int = 1, share: bool = False, person_id: int | None = None) -> dict:
         address = email or f'guest-{uuid4().hex[:10]}@ahavah-test.invalid'
         token, hashed = new_token()
         with api_tx() as tx:
+            lead_id = None
+            if person_id is None:
+                lead_id = record_lead(tx, email=address, source=f'event:{slug}')
+                if lead_id is not None:
+                    confirm_lead(tx, lead_id, 'link')
             rid = tx.execute(
                 """INSERT INTO event_rsvp (event_id, name, email, normalized_email, party_size,
                                            confirmed_at, token_hash, confirm_by,
-                                           share_email_with_organiser, source, person_id)
+                                           share_email_with_organiser, source, person_id, lead_id)
                    SELECT id, %(n)s, %(e)s, %(e)s, %(p)s, NOW(), %(h)s, NOW() + interval '7 days',
-                          %(sh)s, 'event:' || slug, %(pid)s
+                          %(sh)s, 'event:' || slug, %(pid)s, %(l)s
                      FROM event WHERE slug = %(slug)s
                    RETURNING id""",
                 dict(n=name, e=address, p=party_size, h=hashed, sh=share, slug=slug,
-                     pid=person_id)).fetchone()['id']
+                     pid=person_id, l=lead_id)).fetchone()['id']
         return dict(id=rid, email=address, token=token)
 
     return _make

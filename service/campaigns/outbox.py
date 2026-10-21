@@ -91,6 +91,16 @@ _Q_ENQUEUE_FOR_LEAD = """
     RETURNING id
 """
 
+# Organiser mail (TEC-1845, migration 0071): a gathering's organiser is
+# neither a member nor a lead. Its own partial unique index is the
+# idempotency point.
+_Q_ENQUEUE_FOR_ORGANISER = """
+    INSERT INTO email_outbox (campaign, campaign_id, organiser_id, email, payload, exempt, unsub_scope)
+    VALUES (%(c)s, %(cid)s, %(oid)s, %(email)s, %(payload)s, TRUE, 'notifications')
+    ON CONFLICT (campaign, campaign_id, organiser_id) WHERE organiser_id IS NOT NULL DO NOTHING
+    RETURNING id
+"""
+
 # The inner SELECT takes the row locks with SKIP LOCKED, so a second drain
 # running at the same moment simply does not see the rows this one is about
 # to reserve -- it never blocks on them, and never reserves them twice.
@@ -254,6 +264,22 @@ def enqueue_for_lead(tx, *, campaign: str, campaign_id: str, lead_id: int, email
     return row['id'] if row else None
 
 
+def enqueue_for_organiser(tx, *, campaign: str, campaign_id: str, organiser_id: int, email: str,
+                          subject: str, html: str, from_addr: Optional[str]) -> Optional[int]:
+    """Queue one message for a gathering's organiser (TEC-1845): their
+    manage link, their digest, an approval note. Always exempt: it is mail
+    about the gathering they run, with no news in it, so it has no
+    unsubscribe, cap, send log or hook. Returns the new row id, or None
+    when this exact (campaign, campaign_id, organiser_id) is already in the
+    outbox."""
+    payload = dict(subject=subject, html=html, from_addr=from_addr, list_unsubscribe=None,
+                   post_send=None, cap_days=0, requires_spotlight_opt_in=False)
+    row = tx.execute(_Q_ENQUEUE_FOR_ORGANISER, dict(
+        c=campaign, cid=campaign_id, oid=organiser_id, email=email,
+        payload=json.dumps(payload))).fetchone()
+    return row['id'] if row else None
+
+
 def reserve(tx, limit: int = BATCH) -> list[dict]:
     """Claim up to `limit` due rows for this drain and return them in full.
 
@@ -353,6 +379,15 @@ def _refusal(tx, row: dict) -> Optional[str]:
     together = row['campaign'] in CAMPAIGN_SWITCHES
     if together and not switch_on(CAMPAIGN_SWITCHES[row['campaign']]):
         return 'switched_off'
+    # Gatherings (TEC-1845): the same, for a member, a lead or an organiser.
+    from service import events
+    if row['campaign'] in events.CAMPAIGN_SWITCHES and not events.switch_on(
+            events.CAMPAIGN_SWITCHES[row['campaign']]):
+        return 'switched_off'
+    # An organiser (TEC-1845) is neither a member nor a lead: only the
+    # suppression list applies.
+    if row.get('organiser_id') is not None:
+        return 'suppressed' if is_suppressed_send(row['email']) else None
     # Lead mail (TEC-1845): there is no member to read consent, campaign
     # scopes or caps from. Suppression applies to every address. Mail the
     # visitor asked for (exempt) still goes; news is re-checked here as at

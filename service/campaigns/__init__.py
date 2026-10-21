@@ -24,7 +24,12 @@ ALLOWED_EXTERNAL_HOSTS = ('www.facebook.com', 'www.instagram.com')
 # (health review, 13 Oct 2026, finding 63), but they are not campaign mail:
 # they are queued `exempt`, so the cap never holds one back, and the cap
 # below never counts one, so a busy week of matches cannot hold back E2.
-TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message')
+# A gathering's guest emails (TEC-1845) are the same kind of mail: the
+# confirm link, the reminder, a change or a cancellation of a gathering the
+# member said they would attend. Counted here, a reminder on Sunday would
+# hold back Monday's E2.
+TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message',
+                           'event_confirm', 'event_reminder', 'event_change', 'event_cancelled')
 
 # The mail held for the owner's proof in Wave 3 (service/campaigns/held.py),
 # and the referral intro. Each keeps its own cadence where it is queued, and

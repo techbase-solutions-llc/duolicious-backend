@@ -324,6 +324,25 @@ add('together_checklist_summary', 'emails/marriage_checklist.py checklist_result
     lambda: (CL_SUBJECT, checklist_results_html('wife', _CL_SAMPLE, stored=True)), T.FROM_ADDR)
 
 # ===========================================================================
+# 8b. Gatherings (service/events/mail.py, TEC-1845), all behind switches and
+# AHAVAH_EVENTS_LIVE_ENABLED, launch pending
+from service.events import mail as EV  # noqa: E402
+_EV_HELD = 'HELD: AHAVAH_EVENTS_LIVE_ENABLED + {}, off until launch'
+for _name, _src, _aud, _switch, _build in (
+        ('event_confirm', 'confirm_email (in person)', 'member or lead', 'AHAVAH_EVENTS_CONFIRM_EMAIL_ENABLED', EV.preview_confirm),
+        ('event_confirm_online', 'confirm_email (online)', 'member or lead', 'AHAVAH_EVENTS_CONFIRM_EMAIL_ENABLED', EV.preview_confirm_online),
+        ('event_reminder', 'reminder_email (in person)', 'member or lead', 'AHAVAH_EVENTS_REMINDER_EMAIL_ENABLED', EV.preview_reminder),
+        ('event_reminder_online', 'reminder_email (online)', 'member or lead', 'AHAVAH_EVENTS_REMINDER_EMAIL_ENABLED', EV.preview_reminder_online),
+        ('event_change', 'change_email', 'member or lead', 'AHAVAH_EVENTS_CHANGE_EMAIL_ENABLED', EV.preview_change),
+        ('event_cancelled', 'cancelled_email', 'member or lead', 'AHAVAH_EVENTS_CANCEL_EMAIL_ENABLED', EV.preview_cancelled),
+        ('event_digest', 'digest_email', 'organiser', 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', EV.preview_digest),
+        ('event_manage', 'manage_email', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_manage),
+        ('event_approved', 'manage_email (approved note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_approved),
+        ('event_live', 'manage_email (live note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live)):
+    add(_name, f'service/events/mail.py {_src}', _aud, _EV_HELD.format(_switch),
+        (lambda b: lambda: b(TO))(_build), EV.FROM_ADDR)
+
+# ===========================================================================
 # 9. Personal notes (one-off CLI, sent once in Oct 2026)
 from emails import spotlight_candidates_note, warm_leads_note  # noqa: E402
 add('spotlight_candidates_note', 'emails/spotlight_candidates_note.py note_html', 'member',
