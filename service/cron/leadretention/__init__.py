@@ -66,6 +66,9 @@ def _purge_once() -> None:
         print(f"lead_retention: {n_events['links']} lapsed organiser link(s) deleted")
     if n_events['requests']:
         print(f"lead_retention: {n_events['requests']} invite request(s) deleted after 12 months")
+    if n_events['join_invites']:
+        print(f"lead_retention: {n_events['join_invites']} invitation-to-join record(s) deleted "
+              f"with the address's last lead")
     # Matchmaker (TEC-1845).
     if n_mm['recommendations_erased']:
         print(f"lead_retention: {n_mm['recommendations_erased']} recommended address(es) and note(s) erased "
