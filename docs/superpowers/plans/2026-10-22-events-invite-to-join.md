@@ -462,3 +462,7 @@ Each has the default this plan builds. He may change any of them.
 | Copy rules and new lines through /copy-pass | 10 |
 
 **Unverified while writing this plan:** the exact wording, title and widths (Task 1 returns them); whether `events_live` is on in production today (the owner's note of 22 Oct says gatherings went live; the production `.env` is not readable from the repo); that no other branch has taken migration 0076 by the time this starts (Before you start); how often the outbox drain runs, which is why the invitation keeps a 2 hour margin before a rest period rather than relying on the drain.
+
+## Owner's answer (22 Oct 2026)
+
+Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.

@@ -332,3 +332,7 @@ Each has the default this plan builds. He may change any of them.
 | Copy rules and new lines through /copy-pass | 7 |
 
 **Unverified while writing this plan:** that `make_campaign_link` accepts the kind `'welcome'` (Task 5 checks); the subhead image's width and the welcome's words (Task 1 returns them); whether `DUO_CRON_COMMUNITY_WEEKLY_ENABLED` is set in production (TEC-1306 says not yet, the `.env` is not readable from the repo); whether `events_list` is on in production today (the events plan opens it in its Task 27 Step 11, on the owner's word).
+
+## Owner's answer (22 Oct 2026)
+
+Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.
