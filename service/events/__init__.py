@@ -42,6 +42,10 @@ CAMPAIGN_SWITCHES: dict[str, str] = {
     'event_digest': 'events_digest_email',
     'event_manage': 'events_manage_email',
     'event_organiser_note': 'events_manage_email',
+    # The one invitation to join, the day after (TEC-1845). The join block
+    # has no campaign of its own: it rides in event_confirm and
+    # event_reminder and is read when they are built.
+    'event_join_invite': 'events_join_invite_email',
 }
 
 
