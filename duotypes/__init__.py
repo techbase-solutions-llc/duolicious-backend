@@ -1061,8 +1061,10 @@ class PostToolInviteEmail(BaseModel):
 
 
 class PostPushTap(BaseModel):
-    """POST /push-taps (TEC-1845): the web app landed on a ?src= URL."""
-    src: Literal['qpush', 'mpush', 'lpush']
+    """POST /push-taps (TEC-1845): the web app landed on a ?src= URL. The
+    question pushes' qpush, mpush and lpush, and the matchmaker's alert,
+    introduction and both-said-yes pushes (plan 2026-10-22, fix 11)."""
+    src: Literal['qpush', 'mpush', 'lpush', 'mmalert', 'mmintro', 'mmtold']
 
 
 class PatchAdminQuestion(BaseModel):
