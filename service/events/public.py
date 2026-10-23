@@ -9,6 +9,7 @@ Every function takes the caller's transaction and never opens one.
 """
 from __future__ import annotations
 
+import zoneinfo
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -126,3 +127,51 @@ def count_view(tx, slug: str, day: date) -> None:
             SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
             ON CONFLICT (event_id, day) DO UPDATE SET views = event_view_day.views + 1""",
         dict(s=slug, d=day))
+
+
+def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optional[str], list[dict]]:
+    """The gatherings a member email shows (TEC-1845, gatherings in the
+    member emails), for every reader at once: for each of the Map's 6
+    regions, the first `limit` gatherings in that region or online; for
+    None (a member with no country, or one we cannot place), the first
+    `limit` online ones. Only what the public may find, published, not yet
+    started and not full, by start. One query, grouped here, so a send
+    reads it once per run and never once per member.
+
+    Each item is card() with the date block under `date`. A row whose zone
+    the server does not know has no `date`; the email drops that card, so
+    one bad row never stops the run."""
+    from service.matchmaker.regions import REGIONS
+    rows = tx.execute(
+        f"""SELECT * FROM ({_SELECT}
+                 WHERE {_VISIBLE} AND e.status = 'published' AND e.starts_at > %(now)s) g
+             WHERE g.capacity IS NULL OR g.going_now < g.capacity
+             ORDER BY g.starts_at, g.id""",
+        dict(now=now)).fetchall()
+    out: dict[Optional[str], list[dict]] = {r: [] for r in REGIONS}
+    out[None] = []
+    for row in rows:
+        row = dict(row)
+        item = card(row)
+        try:
+            item['date'] = f.date_block(row['starts_at'], row['tz'])
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as e:
+            print(f"events: gathering {row['slug']} has no date block ({e!r})")
+        keys = list(REGIONS) + [None] if row['region'] == 'online' else [row['region']]
+        for k in keys:
+            if k in out and len(out[k]) < limit:
+                out[k].append(item)
+    return out
+
+
+def for_member(lists: dict, country: Optional[str]) -> tuple[list[dict], bool]:
+    """One member's list from gatherings_for_members, by the region of
+    their country (service.matchmaker.regions.region_of; none or an unknown
+    code gives the online list), and whether every card on it is online
+    while the member has a region: the email then says "Nothing near you
+    yet. These are online." """
+    from service.matchmaker.regions import region_of
+    region = region_of(country)
+    cards = list(lists.get(region) or [])
+    online_only = region is not None and bool(cards) and all(c['region'] == 'online' for c in cards)
+    return cards, online_only
