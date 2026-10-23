@@ -293,12 +293,11 @@ def test_an_address_that_joins_after_queueing_is_skipped(published, confirmed_gu
 
 
 def test_a_queued_invitation_is_sent(published, confirmed_guest, addresses, invite_on):
-    slug, ends = _dallas(published)
-    g = _guest(confirmed_guest, addresses, slug)
-    _tick(_sunday_at(ends, 10))
-    [row] = _rows(g)
+    # The drain reads the real clock, and drops an invitation past its 7
+    # days: the gathering ended yesterday.
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1))
     state, sent = _drain_only(row['id'])
-    assert state['state'] == 'accepted' and sent[0]['to_addr'] == g['email']
+    assert state['state'] == 'accepted' and sent[0]['to_addr'] == row['email']
 
 
 def test_switching_off_stops_what_is_queued(published, confirmed_guest, addresses, invite_on, monkeypatch):
@@ -377,3 +376,121 @@ def test_the_job_is_in_the_return_mail_cron():
     names = [n for n, _ in returnmail.JOBS]
     assert ('event_join_invite', jobs.queue_join_invites) in returnmail.JOBS
     assert names.index('event_join_invite') == names.index('event_digest') + 1
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (23 Oct 2026): leaving the news is read for the address, and
+# the drain reads the rest days and the 7 days again at the send.
+# ---------------------------------------------------------------------------
+
+def test_never_an_address_that_left_the_news_at_another_gathering(published, confirmed_guest, addresses,
+                                                                  invite_on):
+    """The unsubscribe stamped the rows the address had then. The tick at a
+    later gathering is a fresh event:{slug} row with consent and a confirmed
+    address, and no stamp; the address has still left the news."""
+    from service.unsubscribe import stamp_unsubscribed
+    address = f'join-left-{uuid4().hex[:8]}@ahavah-test.invalid'
+    earlier = published()
+    _guest(confirmed_guest, addresses, earlier, email=address)
+    with api_tx() as tx:
+        assert stamp_unsubscribed(tx, 'news', address)
+    slug, ends = _dallas(published)
+    g = _guest(confirmed_guest, addresses, slug, email=address)
+    from service.leads import news_refusal
+    with api_tx('read committed') as tx:
+        assert news_refusal(tx, g['lead_id']) is None  # the row alone would pass
+    _tick(_sunday_at(ends, 10))
+    assert _rows(g) == [] and _record(address) is None
+
+
+def test_an_address_that_left_the_news_on_another_row_is_skipped_at_send(published, confirmed_guest, addresses,
+                                                                         invite_on):
+    slug, ends = _dallas(published)
+    g = _guest(confirmed_guest, addresses, slug)
+    _tick(_sunday_at(ends, 10))
+    [row] = _rows(g)
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO lead (email, normalized_email, source, unsubscribed_at)
+                      VALUES (%(e)s, %(e)s, 'alert:visitor', NOW())""", dict(e=g['email']))
+    state, sent = _drain_only(row['id'])
+    assert state == dict(state='skipped', last_error='unsubscribed') and sent == []
+
+
+def _queued_now(published, confirmed_guest, addresses, *, ended_ago: timedelta, tz: str = 'America/Barbados'):
+    """An invitation already in the outbox for a gathering that ended
+    `ended_ago` before the real clock, as a drain that fell behind finds
+    it. Queued directly: when it was due is not what these tests ask."""
+    from service.events import mail
+    ends = datetime.now(timezone.utc) - ended_ago
+    slug = _gathering(published, ends_local=ends, tz=tz, tz_label='Barbados time')
+    g = _guest(confirmed_guest, addresses, slug)
+    with api_tx() as tx:
+        r = dict(tx.execute('SELECT * FROM event_rsvp WHERE id = %(i)s', dict(i=g['id'])).fetchone())
+        ev = dict(tx.execute('SELECT * FROM event WHERE slug = %(s)s', dict(s=slug)).fetchone())
+        assert mail.queue_join_invite(tx, r, ev, datetime.now(timezone.utc)) is not None
+    [row] = _rows(g)
+    return row, ev
+
+
+def _outbox_row(row_id) -> dict:
+    with api_tx('read committed') as tx:
+        return dict(tx.execute('SELECT * FROM email_outbox WHERE id = %(i)s', dict(i=row_id)).fetchone())
+
+
+def test_a_late_drain_inside_a_rest_period_holds_it_until_the_first_allowed_hour(
+        published, confirmed_guest, addresses, invite_on, monkeypatch):
+    """Queued before a rest period, drained inside it (the cron was down
+    for a deploy, say): not sent, not dropped. It waits for the first hour
+    the job itself would have queued it, 10:00 in the gathering's zone on
+    the day the rest period ends at midnight, and has spent no attempt."""
+    import service.spotlight.restdays as rd
+    row, ev = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1))
+    today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
+    monkeypatch.setattr(rd, 'REST_DAYS', (today, today + timedelta(days=1)))
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='queued', last_error='rest_day')
+    after = _outbox_row(row['id'])
+    free = today + timedelta(days=2)
+    assert after['next_attempt_at'] == datetime(free.year, free.month, free.day, 10, 0, tzinfo=BARBADOS)
+    assert after['attempts'] == 0
+    assert _record(after['email']) is not None
+
+
+def test_a_late_drain_beyond_the_known_calendar_holds_it(published, confirmed_guest, addresses, invite_on,
+                                                         monkeypatch):
+    """Past KNOWN_THROUGH the day may be a rest day nobody has entered: it
+    waits, and looks again within the hour, so a calendar extended inside
+    the 7 days lets it go."""
+    import service.spotlight.restdays as rd
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1))
+    today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', today - timedelta(days=1))
+    before = datetime.now(timezone.utc)
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='queued', last_error='unknown')
+    held = _outbox_row(row['id'])['next_attempt_at']
+    assert before < held <= datetime.now(timezone.utc) + timedelta(hours=1)
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', today + timedelta(days=30))
+    with api_tx() as tx:
+        tx.execute('UPDATE email_outbox SET next_attempt_at = NOW() WHERE id = %(i)s', dict(i=row['id']))
+    state, sent = _drain_only(row['id'])
+    assert state['state'] == 'accepted' and len(sent) == 1
+
+
+def test_a_hold_never_reaches_past_the_7_days(published, confirmed_guest, addresses, invite_on, monkeypatch):
+    """A rest period that runs past the end of the window: held until the
+    window closes, then dropped there, never sent late."""
+    import service.spotlight.restdays as rd
+    row, ev = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=6, hours=20))
+    today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
+    monkeypatch.setattr(rd, 'REST_DAYS', (today, today + timedelta(days=1)))
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='queued', last_error='rest_day')
+    assert _outbox_row(row['id'])['next_attempt_at'] == ev['ends_at'] + timedelta(days=7)
+
+
+def test_an_invitation_drained_after_its_7_days_is_dropped(published, confirmed_guest, addresses, invite_on):
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=7, hours=1))
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='skipped', last_error='lapsed')
+    assert _record(row['email']) is not None  # the address had its one invitation

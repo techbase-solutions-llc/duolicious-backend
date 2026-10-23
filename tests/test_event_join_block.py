@@ -253,3 +253,87 @@ def test_the_join_previews_carry_the_block():
                mail.preview_reminder_join, mail.preview_reminder_online_join):
         subject, html_ = fn('proof@ahavah-test.invalid')
         assert subject and '/auth/sign-up?src=event%3A' in html_
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (23 Oct 2026): leaving the news is read for the address, and
+# the block is checked again when the email is sent.
+# ---------------------------------------------------------------------------
+
+def test_no_offer_to_an_address_that_left_the_news_at_another_gathering(client, published, confirmed_guest,
+                                                                         block_on):
+    """The news unsubscribe stamps the rows the address has at that moment.
+    A later gathering's RSVP makes a fresh event:{slug} row without the
+    stamp; the address has still left the news (Owner decision 7)."""
+    from service.unsubscribe import stamp_unsubscribed
+    address = _address()
+    confirmed_guest(published(), email=address)
+    with api_tx() as tx:
+        assert stamp_unsubscribed(tx, 'news', address)
+    later = confirmed_guest(published(), email=address)
+    with api_tx('read committed') as tx:
+        assert tx.execute("""SELECT l.unsubscribed_at FROM lead l JOIN event_rsvp r ON r.lead_id = l.id
+                              WHERE r.id = %(i)s""", dict(i=later['id'])).fetchone()['unsubscribed_at'] is None
+    assert _view(client, later['token'])['rsvp']['join_offer'] is False
+
+
+def _drain_only(row_id):
+    """Send this one row through the outbox, every other due row parked."""
+    from service.campaigns import outbox
+
+    class _Smtp:
+        def __init__(self):
+            self.sent: list = []
+
+        def send(self, **kw):
+            self.sent.append(kw)
+            return 'mid'
+    with api_tx() as tx:
+        tx.execute("""UPDATE email_outbox SET next_attempt_at = NOW() + interval '1 hour'
+                       WHERE state = 'queued' AND id <> %(i)s""", dict(i=row_id))
+    smtp = _Smtp()
+    outbox.drain(api_tx, smtp, limit=5)
+    with api_tx('read committed') as tx:
+        state = tx.execute('SELECT state FROM email_outbox WHERE id = %(i)s', dict(i=row_id)).fetchone()['state']
+    return state, smtp.sent
+
+
+def test_the_block_goes_with_the_email_for_a_guest(published, confirmed_guest, block_on):
+    slug = published()
+    row_id = _reminder(confirmed_guest(slug, email=_address()))
+    state, sent = _drain_only(row_id)
+    assert state == 'accepted' and _sign_up(slug) in sent[0]['body']
+
+
+def test_the_block_is_left_out_at_send_time_once_the_address_has_joined(published, confirmed_guest,
+                                                                       make_person, block_on):
+    """Review focus 1 at the send: the reminder was queued with the block,
+    the guest finished onboarding before the drain sent it. The reminder
+    still goes, without the block."""
+    slug = published()
+    address = _address()
+    row_id = _reminder(confirmed_guest(slug, email=address))
+    with api_tx('read committed') as tx:
+        assert _sign_up(slug) in tx.execute('SELECT payload FROM email_outbox WHERE id = %(i)s',
+                                            dict(i=row_id)).fetchone()['payload']['html']
+    make_person(name='JoinedBeforeTheSend', email=address)
+    state, sent = _drain_only(row_id)
+    assert state == 'accepted'
+    body = sent[0]['body']
+    assert 'Cancel my place' in body and '/auth/sign-up' not in body
+    assert 'Ahavah is matchmaking for Torah-observant believers who hope to marry.' not in body
+
+
+def test_the_block_is_left_out_at_send_time_once_the_address_has_left_the_news(client, published, block_on,
+                                                                              mail_allowed):
+    from service.unsubscribe import stamp_unsubscribed
+    slug = published()
+    address = _address()
+    _rsvp_post(client, slug, address)
+    [row] = _rows_for('event_confirm', slug)
+    assert _sign_up(slug) in row['payload']['html']
+    with api_tx() as tx:
+        assert stamp_unsubscribed(tx, 'news', address)
+    state, sent = _drain_only(row['id'])
+    assert state == 'accepted'
+    assert 'Confirm my place' in sent[0]['body'] and '/auth/sign-up' not in sent[0]['body']

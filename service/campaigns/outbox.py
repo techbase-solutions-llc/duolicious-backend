@@ -31,12 +31,12 @@ sequence via the factory it is handed.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
-from service.leads import lead_unsubscribed, news_refusal
+from service.leads import address_unsubscribed, lead_unsubscribed, news_refusal
 
 # Backoff applied AFTER attempt n fails, indexed by n - 1. An attempt that
 # takes the row to MAX_ATTEMPTS is terminal: it goes to 'failed' instead of
@@ -159,6 +159,16 @@ _Q_ACCEPT = """
 
 _Q_SKIP = """
     UPDATE email_outbox SET state = 'skipped', last_error = %(reason)s WHERE id = %(id)s
+"""
+
+# A send-time hold (the invitation to join inside a rest period): back to
+# queued for later, and the attempt reserve() counted is given back, since
+# nothing was tried.
+_Q_HOLD = """
+    UPDATE email_outbox
+       SET state = 'queued', reserved_at = NULL, last_error = %(reason)s,
+           attempts = GREATEST(attempts - 1, 0), next_attempt_at = %(until)s
+     WHERE id = %(id)s
 """
 
 _Q_REQUEUE = """
@@ -375,12 +385,19 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
 
 def mark_skipped(tx, id: int, reason: str) -> None:
     """A send-time re-check refused this row: 'withdrawn', 'suppressed',
-    'unsubscribed', 'capped', 'switched_off' or 'member_now'. Terminal, and
+    'unsubscribed', 'capped', 'switched_off', 'member_now', 'withdrawn' or
+    'lapsed'. Terminal, and
     deliberately distinct from 'failed' -- nothing went wrong, we simply
     must not send it. The same
     state and reason string `withdraw_member` writes directly onto the
     Spotlight invites it finds still queued."""
     tx.execute(_Q_SKIP, dict(id=id, reason=reason))
+
+
+def mark_held(tx, id: int, reason: str, until: datetime) -> None:
+    """Not now, and not dropped: back to 'queued' until `until`, with the
+    reason ('rest_day' or 'unknown') in last_error and no attempt spent."""
+    tx.execute(_Q_HOLD, dict(id=id, reason=reason, until=until))
 
 
 def mark_failed_attempt(tx, id: int, error: str, attempts: int) -> None:
@@ -401,13 +418,76 @@ _Q_SPOTLIGHT_CONSENT = """
 """
 
 
-def _is_member_address(tx, email: str) -> bool:
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _normalized(email: str) -> Optional[str]:
     from service.leads import clean_email
     cleaned = clean_email(email)
-    if cleaned is None:
+    return cleaned[1] if cleaned else None
+
+
+def _is_member_address(tx, email: str) -> bool:
+    ne = _normalized(email)
+    if ne is None:
         return False
     return tx.execute('SELECT 1 FROM person WHERE normalized_email = %(ne)s LIMIT 1',
-                      dict(ne=cleaned[1])).fetchone() is not None
+                      dict(ne=ne)).fetchone() is not None
+
+
+# The invitation to join (TEC-1845) is queued with the gathering's id as its
+# campaign_id; the drain reads the gathering's end and zone for the 7 days
+# and for the hour it may be held to.
+_Q_JOIN_INVITE_EVENT = """
+    SELECT ends_at, tz FROM event WHERE id = %(i)s
+"""
+
+
+def _join_invite_event(tx, row: dict) -> Optional[dict]:
+    try:
+        event_id = int(row['campaign_id'])
+    except (TypeError, ValueError):
+        return None
+    return tx.execute(_Q_JOIN_INVITE_EVENT, dict(i=event_id)).fetchone()
+
+
+def _hold(tx, row: dict) -> Optional[tuple[str, datetime]]:
+    """(reason, until) when a row _refusal lets through must still wait,
+    else None. Only the invitation to join waits: it is queued with a 2 hour
+    margin before a rest period, and a drain that falls further behind than
+    that (a deploy, an SMTP outage, a backlog) would otherwise send it
+    inside a rest period or past the known calendar. It is held, not
+    dropped: the address's lead_join_invite record means the job never
+    queues it again. Past its 7 days _refusal drops it as 'lapsed'."""
+    if row['campaign'] != 'event_join_invite':
+        return None
+    from service.events import join
+    event = _join_invite_event(tx, row)
+    if event is None:
+        return None
+    return join.invite_hold(event['ends_at'], event['tz'], _now())
+
+
+# The join block in a gathering's confirm and reminder emails (TEC-1845).
+_JOIN_BLOCK_CAMPAIGNS = ('event_confirm', 'event_reminder')
+
+
+def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
+    """The HTML to send. A confirm or reminder email is built with its join
+    block for a guest who is not a member; if the address has joined or
+    left the news mail since it was queued, the block comes out and the
+    email still goes, since the guest asked for it. The email cannot be
+    built again here (its token is only in the HTML), so the block carries
+    markers (service.events.join.mark_block)."""
+    if row['campaign'] not in _JOIN_BLOCK_CAMPAIGNS or not html:
+        return html
+    from service.events import join
+    if not join.has_block(html):
+        return html
+    if _is_member_address(tx, row['email']) or address_unsubscribed(tx, _normalized(row['email'])):
+        return join.strip_block(html)
+    return html
 
 
 def _refusal(tx, row: dict) -> Optional[str]:
@@ -478,9 +558,20 @@ def _refusal(tx, row: dict) -> Optional[str]:
         if is_suppressed_send(row['email']):
             return 'suppressed'
         # The invitation to join a gathering's guest (TEC-1845) is never
-        # sent once the address has joined since it was queued.
-        if row['campaign'] == 'event_join_invite' and _is_member_address(tx, row['email']):
-            return 'member_now'
+        # sent once the address has joined since it was queued, nor once
+        # any lead row of the address has left the news (a later
+        # gathering's row is fresh and unstamped), nor after its 7 days.
+        if row['campaign'] == 'event_join_invite':
+            if _is_member_address(tx, row['email']):
+                return 'member_now'
+            if address_unsubscribed(tx, _normalized(row['email'])):
+                return 'unsubscribed'
+            from service.events import join
+            event = _join_invite_event(tx, row)
+            if event is None:
+                return 'withdrawn'
+            if join.invite_lapsed(event['ends_at'], _now()):
+                return 'lapsed'
         if not row['exempt']:
             return news_refusal(tx, row['lead_id'], requested=payload.get('requested') is True)
         if together and lead_unsubscribed(tx, row['lead_id']):
@@ -502,7 +593,8 @@ def _refusal(tx, row: dict) -> Optional[str]:
 
 def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
     """Send up to `limit` messages. Returns dict(reserved, accepted, skipped,
-    failed, unknown_reaped).
+    failed, held, unknown_reaped). A held row (_hold) goes back to 'queued'
+    for later and spends no attempt.
 
     Transaction shape, which is the whole point of this function: the reaper
     runs once, in its own transaction, at the start. Then each message gets
@@ -524,7 +616,7 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
     with tx_factory() as tx:
         unknown_reaped = reap_reserved(tx)
 
-    reserved = accepted = skipped = failed = 0
+    reserved = accepted = skipped = failed = held = 0
     while reserved < limit:
         with tx_factory() as tx:
             claimed = reserve(tx, limit=1)
@@ -533,17 +625,30 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
         row = claimed[0]
         reserved += 1
         payload = row['payload'] or {}
+        hold = None
+        html = payload.get('html')
         with tx_factory() as tx:
             reason = _refusal(tx, row)
             if reason is not None:
                 mark_skipped(tx, row['id'], reason)
+            else:
+                hold = _hold(tx, row)
+                if hold is not None:
+                    mark_held(tx, row['id'], *hold)
+                else:
+                    html = _send_html(tx, row, html)
         if reason is not None:
             skipped += 1
             print(f"email_outbox: skipped {row['campaign']} for {mask_email(row['email'])} ({reason})")
             continue
+        if hold is not None:
+            held += 1
+            print(f"email_outbox: held {row['campaign']} for {mask_email(row['email'])} "
+                  f"({hold[0]}) until {hold[1].isoformat()}")
+            continue
         personal = {k: payload[k] for k in _PERSONAL_FIELDS if payload.get(k)}
         try:
-            message_id = smtp.send(subject=payload.get('subject'), body=payload.get('html'),
+            message_id = smtp.send(subject=payload.get('subject'), body=html,
                                    to_addr=row['email'], from_addr=payload.get('from_addr'),
                                    list_unsubscribe=payload.get('list_unsubscribe'), **personal)
         except Exception as e:      # noqa: BLE001 -- any SMTP failure is a retryable attempt
@@ -558,7 +663,7 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
         print(f"email_outbox: sent {row['campaign']} to {mask_email(row['email'])}")
 
     return dict(reserved=reserved, accepted=accepted, skipped=skipped, failed=failed,
-                unknown_reaped=unknown_reaped)
+                held=held, unknown_reaped=unknown_reaped)
 
 
 def status(tx, campaign: str, campaign_id: str) -> dict[str, Any]:

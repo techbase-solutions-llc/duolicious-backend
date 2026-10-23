@@ -6,8 +6,9 @@ docs/superpowers/plans/2026-10-22-events-invite-to-join.md).
                      slug only, never an address or a token
   offers_join        whether one RSVP may see the "Join Ahavah" block:
                      the block's switch, a visitor (no person_id) with a
-                     lead, an address no member holds now and a lead that
-                     has not left the news mail (Owner decision 7)
+                     lead, an address no member holds now and an address
+                     no lead row of which has left the news mail (Owner
+                     decision 7)
   mail_block_allowed the rest-day rule on top, for the confirm and reminder
                      emails: never inside a rest period or past the last
                      date the owner's calendar has been read for
@@ -16,14 +17,22 @@ docs/superpowers/plans/2026-10-22-events-invite-to-join.md).
                      gathering time, never inside or within REST_MARGIN of a
                      rest period nor past the known calendar, and only
                      inside INVITE_WINDOW (Owner decisions 3 and 4)
+  invite_lapsed,     the same rules again when the outbox drain comes to
+  invite_hold        send a queued invitation: dropped once the window has
+                     closed, held (never dropped) while inside it during a
+                     rest period or past the known calendar
+  mark_block,        the join block wrapped in markers, so the drain can
+  strip_block        take it out of a queued confirm or reminder email when
+                     the address has joined or left the news since
 
 Members never: the address is checked against person at every build, so a
-guest who joined since the RSVP sees no block.
+guest who joined since the RSVP sees no block, and again at the send.
 """
 from __future__ import annotations
 
+import re
 import zoneinfo
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Optional
 from urllib.parse import quote
 
@@ -57,14 +66,15 @@ def offers_join(tx, r: dict) -> bool:
     the confirm email is built before confirming, so the callers keep those
     conditions (rsvp_view: confirmed and going)."""
     from service.events import switch_on
-    from service.leads import lead_unsubscribed
+    from service.leads import address_unsubscribed, lead_unsubscribed
     if not switch_on(BLOCK_SWITCH):
         return False
     if r.get('person_id') is not None or r.get('lead_id') is None:
         return False
     if is_member_address(tx, r.get('normalized_email')):
         return False
-    return not lead_unsubscribed(tx, r['lead_id'])
+    return not (lead_unsubscribed(tx, r['lead_id'])
+                or address_unsubscribed(tx, r.get('normalized_email')))
 
 
 def mail_block_allowed(now: datetime) -> bool:
@@ -86,3 +96,69 @@ def invite_due(ends_at: datetime, tz: str, now: datetime) -> bool:
         return False
     return not (restdays.is_rest_period(now) or restdays.is_rest_period(now + REST_MARGIN)
                 or restdays.is_beyond_known(now + REST_MARGIN))
+
+
+# ---------------------------------------------------------------------------
+# At the send (service/campaigns/outbox.py). The job queues an invitation
+# only at a moment invite_due allows, with REST_MARGIN for a drain that is a
+# little late; a drain that is much later (the cron down through a deploy,
+# an SMTP outage, a backlog) reads the rules again here.
+# ---------------------------------------------------------------------------
+
+def invite_lapsed(ends_at: datetime, now: datetime) -> bool:
+    """The 7 days after the gathering have passed: the invitation is not
+    sent at all. The address keeps its lead_join_invite record: it had its
+    one invitation."""
+    return now >= ends_at + INVITE_WINDOW
+
+
+def invite_hold(ends_at: datetime, tz: str, now: datetime) -> Optional[tuple[str, datetime]]:
+    """None when a queued invitation may go at `now`, else (reason, until):
+    'unknown' past KNOWN_THROUGH, 'rest_day' inside a rest period. `until`
+    is the first whole hour of the gathering's zone at which invite_due
+    would queue it, never past the end of the window, where invite_lapsed
+    drops it. Past the known calendar it looks again within the hour, so an
+    extended calendar lets it go inside the window."""
+    from service.spotlight import restdays
+    if restdays.is_beyond_known(now):
+        reason = 'unknown'
+    elif restdays.is_rest_period(now):
+        reason = 'rest_day'
+    else:
+        return None
+    window_end = ends_at + INVITE_WINDOW
+    if reason == 'unknown':
+        return reason, min(now + timedelta(hours=1), window_end)
+    local = now.astimezone(zoneinfo.ZoneInfo(tz))
+    at = local.replace(minute=0, second=0, microsecond=0).astimezone(now.tzinfo) + timedelta(hours=1)
+    # Past the known calendar nothing is due: from there it waits as
+    # 'unknown' does, an hour at a time.
+    unknown_from = datetime.combine(restdays.KNOWN_THROUGH + timedelta(days=1), time(0, 0),
+                                    restdays.BARBADOS)
+    while at < min(window_end, unknown_from):
+        if invite_due(ends_at, tz, at):
+            return reason, at
+        at += timedelta(hours=1)
+    return reason, min(window_end, unknown_from)
+
+
+# The join block in a queued confirm or reminder email. The email is built
+# once, with its token, and cannot be built again at the send, so the block
+# carries markers and the drain cuts it out when the address belongs to a
+# member or has left the news mail since. The email itself still goes: the
+# guest asked for it.
+BLOCK_START = '<!--ahavah-join-block-->'
+BLOCK_END = '<!--/ahavah-join-block-->'
+_BLOCK = re.compile(re.escape(BLOCK_START) + '.*?' + re.escape(BLOCK_END), re.S)
+
+
+def mark_block(block_html: str) -> str:
+    return BLOCK_START + block_html + BLOCK_END
+
+
+def has_block(html: str) -> bool:
+    return BLOCK_START in (html or '')
+
+
+def strip_block(html: str) -> str:
+    return _BLOCK.sub('', html)

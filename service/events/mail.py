@@ -101,14 +101,17 @@ JOIN_ACTION = 'Join Ahavah'  # NEW LINE
 def join_block(url: str) -> str:
     """Body size, behind a hairline; the link's tap area padded to 44 px as
     drawn. 15 px rather than the frame's 14.5, so the phone type scale
-    (emails.base) reads it; nothing at 20 px or more."""
-    return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-            f'style="margin:22px 0 0;"><tr><td style="border-top:1px solid rgba(15,11,31,0.10);'
-            f'padding-top:14px;"><p class="e-text" style="margin:0;font-family:{SANS};font-size:15px;'
-            f'line-height:1.55;color:{MUTED};">{JOIN_LINE} '
-            f'<a class="e-strong" href="{_e(url)}" target="_blank" style="color:{INK};font-weight:700;'
-            f'text-decoration:underline;display:inline-block;padding:12px 0;margin:-12px 0;">'
-            f'{JOIN_ACTION}</a></p></td></tr></table>')
+    (emails.base) reads it; nothing at 20 px or more. Between the markers
+    of join.mark_block, so the outbox drain can take it out at the send."""
+    from service.events.join import mark_block
+    return mark_block(
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:22px 0 0;"><tr><td style="border-top:1px solid rgba(15,11,31,0.10);'
+        f'padding-top:14px;"><p class="e-text" style="margin:0;font-family:{SANS};font-size:15px;'
+        f'line-height:1.55;color:{MUTED};">{JOIN_LINE} '
+        f'<a class="e-strong" href="{_e(url)}" target="_blank" style="color:{INK};font-weight:700;'
+        f'text-decoration:underline;display:inline-block;padding:12px 0;margin:-12px 0;">'
+        f'{JOIN_ACTION}</a></p></td></tr></table>')
 
 
 # 3.9, the invitation to join (handoff 10-events-join.md). Every line but
@@ -566,13 +569,14 @@ def queue_join_invite(tx, rsvp: dict, event: dict, now: datetime) -> Optional[in
     """The one invitation to join, as news to the RSVP's event:{slug} lead.
     None unless, in this order: the switch; the ticked box; a visitor's
     lead (no person_id); an address no member holds now; not suppressed;
-    news_refusal passes (confirmed, consent, not unsubscribed). Then the
+    news_refusal passes (confirmed, consent, not unsubscribed) and no lead
+    row of the address has left the news. Then the
     once-per-address record (lead_join_invite, 0076) is written in the same
     savepoint as the queue: no record row means the address had its
     invitation, and a queue that refuses takes the record back with it.
     The caller (jobs.queue_join_invites) decides when it is due."""
     from service.events import join
-    from service.leads import news_refusal
+    from service.leads import address_unsubscribed, news_refusal
     from service.unsubscribe import make_url
     if not _on(CAMPAIGN_JOIN_INVITE) or not rsvp.get('marketing_consent'):
         return None
@@ -580,7 +584,9 @@ def queue_join_invite(tx, rsvp: dict, event: dict, now: datetime) -> Optional[in
         return None
     if join.is_member_address(tx, rsvp['normalized_email']) or is_suppressed_send(rsvp['email']):
         return None
-    if news_refusal(tx, rsvp['lead_id']) is not None:
+    # The lead row alone is not enough: another gathering's row may carry
+    # the address's unsubscribe while this fresh one does not.
+    if news_refusal(tx, rsvp['lead_id']) is not None or address_unsubscribed(tx, rsvp['normalized_email']):
         return None
     tx.execute('SAVEPOINT event_join_invite')
     try:
