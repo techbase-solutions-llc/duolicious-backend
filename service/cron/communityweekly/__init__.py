@@ -74,6 +74,10 @@ def _send_once() -> None:
     # day on the send day skips that week's e2 (TEC-1845 admin audit).
     if _schedule.campaign_rest_now():
         return
+    # Past KNOWN_THROUGH the day may be a rest day nobody has entered yet:
+    # hold until the owner's calendar is extended.
+    if _schedule.campaign_beyond_known_now():
+        return
     cid = week_campaign_id(now, 'e2')
     out = run_campaign(
         api_tx, 'e2', cid, recipients(), build_for, send=True,
