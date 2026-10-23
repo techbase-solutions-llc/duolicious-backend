@@ -286,26 +286,39 @@ def preview_question_line(to: str) -> tuple[str, str]:
         question_line=e2_line(SAMPLE_QUESTION))
 
 
-# Frame 4.2's sample gatherings (GS in p11-mk.js), as gatherings_for_members
-# returns them, for the proof. Sample data only.
+# The sample gatherings of Ahavah Gatherings in Member Emails.html (GS and
+# ON in pages/p20-member-emails.js), as gatherings_for_members returns them,
+# for the proof and the phone check. Sample data only. W.1 draws the first 3.
 SAMPLE_GATHERINGS = [
     dict(slug='marriage-preparation-evening', title='Marriage preparation evening', mode='in_person',
          city='Dallas', country='United States', region='north-america',
          organiser=dict(name='Grace Fellowship', kind='assembly'), ahavah_attending=True,
          date=('Sat', '7', 'Nov')),
-    dict(slug='preparing-for-marriage-a-talk', title='Preparing for marriage: a talk and questions',
-         mode='online', city=None, country=None, region='online',
-         organiser=dict(name='Ahavah', kind='ahavah'), ahavah_attending=False, date=('Thu', '12', 'Nov')),
     dict(slug='fellowship-meal-for-singles', title='Fellowship meal for singles', mode='in_person',
          city='Atlanta', country='United States', region='north-america',
          organiser=dict(name='Living Waters Assembly', kind='assembly'), ahavah_attending=False,
          date=('Sat', '21', 'Nov')),
+    dict(slug='sabbath-afternoon-study-and-tea', title='Sabbath afternoon study and tea', mode='in_person',
+         city='Hamilton', country='Canada', region='north-america',
+         organiser=dict(name='Hamilton Torah Fellowship', kind='fellowship_leader'), ahavah_attending=False,
+         date=('Sat', '28', 'Nov')),
+]
+
+# W.3: every card online, for a member with a region.
+SAMPLE_GATHERINGS_ONLINE = [
+    dict(slug='preparing-for-marriage-a-talk', title='Preparing for marriage: a talk and questions',
+         mode='online', city=None, country=None, region='online',
+         organiser=dict(name='Ahavah', kind='ahavah'), ahavah_attending=False, date=('Thu', '12', 'Nov')),
+    dict(slug='reading-ruth-together', title='Reading Ruth together: a study for singles',
+         mode='online', city=None, country=None, region='online',
+         organiser=dict(name='Fellowship of the Way', kind='fellowship_leader'), ahavah_attending=False,
+         date=('Sun', '15', 'Nov')),
 ]
 
 
 def preview_gatherings(to: str) -> tuple[str, str]:
     """The proof of Gatherings near you (TEC-1845): E2 as every member gets
-    it, with frame 4.2's 3 sample gatherings. Reads nothing per member and
+    it, with W.1's 3 sample gatherings. Reads nothing per member and
     stores nothing; the links go straight to the pages."""
     return SUBJECT, community_weekly_html(
         [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,

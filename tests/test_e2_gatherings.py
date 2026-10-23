@@ -200,7 +200,32 @@ def test_no_typed_headline_in_the_block():
     block = cw._gatherings_block(e2.SAMPLE_GATHERINGS, True, 'https://ahavah.app/events',
                                  lambda slug: f'https://ahavah.app/e/{slug}')
     assert not re.search(r'<h[1-4]\b|font-size:\s*(2\d|[3-9]\d)px', block, re.I)
-    assert 'subhead-gatherings' in block
+    assert 'subhead-gatherings-near.png' in block and 'subhead-gatherings-near-wht.png' in block
+
+
+def test_the_block_follows_the_returned_design():
+    """W.1 of Ahavah Gatherings in Member Emails.html: the subhead image at
+    its natural 181 px, the date tile with the day at 18 px, a hairline card
+    per gathering and "See all gatherings" padded to a 44 px tap area."""
+    from emails.base import ASSETS_DIR
+    block = cw._gatherings_block(e2.SAMPLE_GATHERINGS, False, 'https://ahavah.app/events',
+                                 lambda slug: f'https://ahavah.app/e/{slug}')
+    assert 'width="181"' in block and 'max-width:181px' in block
+    assert (ASSETS_DIR / 'subhead-gatherings-near.png').is_file()
+    assert (ASSETS_DIR / 'subhead-gatherings-near-wht.png').is_file()
+    assert 'font-size:18px' in block and 'text-transform:uppercase' in block
+    assert block.count('border:1px solid') == len(e2.SAMPLE_GATHERINGS)
+    see_all = block[block.index('See all gatherings') - 400:block.index('See all gatherings')]
+    assert 'padding:12px 0' in see_all and 'line-height:20px' in see_all
+    assert 'PENDING DESIGN' not in open(cw.__file__, encoding='utf-8').read()
+
+
+def test_the_online_sample_is_w3():
+    """W.3: every card online, the line above them."""
+    block = cw._gatherings_block(e2.SAMPLE_GATHERINGS_ONLINE, True, 'https://ahavah.app/events',
+                                 lambda slug: f'https://ahavah.app/e/{slug}')
+    assert block.index('Nothing near you yet. These are online.') < block.index('Preparing for marriage')
+    assert 'Reading Ruth together: a study for singles' in block and block.count('>Online<') == 2
 
 
 def test_the_proof_shows_three_gatherings_and_writes_nothing():
@@ -211,8 +236,8 @@ def test_the_proof_shows_three_gatherings_and_writes_nothing():
     before = counts()
     subject, html = e2.preview_gatherings('owner@example.org')
     assert counts() == before and subject == 'This week on Ahavah'
-    for title in ('Marriage preparation evening', 'Preparing for marriage: a talk and questions',
-                  'Fellowship meal for singles'):
+    for title in ('Marriage preparation evening', 'Fellowship meal for singles',
+                  'Sabbath afternoon study and tea'):
         assert title in html
     assert html.count('Ahavah will be there') == 1
     assert f'{WEB_BASE_URL}/events?region=north-america' in html

@@ -6,7 +6,7 @@ import html as _html
 from typing import Callable, Optional
 from service.config import EMAIL_DOMAIN
 from service.spotlight.country import display_country
-from emails.base import render, button, chip, title_image, callout, INK, INK_SOFT, INDIGO, LIME, MUTED, PANEL, SANS
+from emails.base import render, button, chip, title_image, callout, INK, INK_SOFT, INDIGO, LIME, MUTED, SANS
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 SUBJECT = "This week on Ahavah"
@@ -109,22 +109,25 @@ def _invite_block(invite_url: Optional[str]) -> str:
 """
 
 
-# PENDING DESIGN: the subhead image and its natural width come back from
-# the Claude Design round (gatherings in the member emails, Task 1). Until
-# then the file is missing from emails/assets/, asset_src falls back to the
-# public url, and the switch stays off. 280 is the brief's wrap width.
-_GATHERINGS_TITLE = ("subhead-gatherings.png", "subhead-gatherings-wht.png", "Gatherings near you.", 280)
+# The subhead of Ahavah Gatherings in Member Emails.html (W.1), "Gatherings
+# / near you.", at its natural CSS width (handoff 20, titles.json).
+_GATHERINGS_TITLE = ("subhead-gatherings-near.png", "subhead-gatherings-near-wht.png", "Gatherings near you.", 181)
+
+# The card's hairline (the kit's --hair, light). Dark clients keep the card's
+# text readable through the e-text and e-strong classes.
+_HAIR = "rgba(15,11,31,0.08)"
+# The date tile's tint, the kit's --acc-soft as the email chip draws it.
+_ACC_SOFT = "#EDE8FE"
 
 
-def _gathering_card(g: dict, href: str) -> str:
-    """One gathering as a table row (frame 4.2): the date block, the title,
-    the city or "Online", the organiser and "Ahavah will be there". Every
-    organiser field is escaped. Raises on a card with no date (a zone the
-    server does not know) or a missing field; the caller drops that card.
-
-    PENDING DESIGN: the date block's sizes and the card's spacing follow
-    frame 4.2 with the day number held at 18 px (the frame types it at 20,
-    which the phone check rejects); Task 1 returns the email-safe block."""
+def _gathering_card(g: dict, href: str, *, last: bool = False) -> str:
+    """One gathering as a table row (W.1): a hairline card with the date
+    tile (weekday, day at 18 px and month, stacked in 56 px), the title, the
+    city and country or "Online", the organiser and "Ahavah will be there".
+    Every organiser field is escaped. Raises on a card with no date (a zone
+    the server does not know) or a missing field; the caller drops that card.
+    The design's small icons (pin, video, spark) are left out: an email
+    cannot carry them safely."""
     day_name, day, month = g['date']
     if g['mode'] == 'online':
         place = 'Online'
@@ -133,24 +136,25 @@ def _gathering_card(g: dict, href: str) -> str:
     link = _html.escape(href, quote=True)
     chip_html = ''
     if g.get('ahavah_attending'):
-        chip_html = (f'<span style="display:inline-block;margin-top:6px;padding:3px 9px;border-radius:999px;'
-                     f'background:{LIME};color:{INK};font-family:{SANS};font-size:12px;font-weight:700;">'
-                     f'Ahavah will be there</span>')
+        chip_html = (f'<div style="margin-top:6px;"><span style="display:inline-block;padding:0 10px;height:26px;'
+                     f'line-height:26px;border-radius:999px;background:{LIME};color:{INK};font-family:{SANS};'
+                     f'font-size:12px;font-weight:800;">Ahavah will be there</span></div>')
+    gap = '4px' if last else '12px'
     return f"""
-<tr><td style="padding:0 0 10px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;background:{PANEL};border-radius:14px;">
+<tr><td style="padding:0 0 {gap};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border:1px solid {_HAIR};border-radius:16px;">
     <tr>
-      <td width="56" valign="top" style="width:56px;padding:12px 0 12px 12px;">
-        <a href="{link}" style="display:block;text-decoration:none;text-align:center;border-radius:10px;background:#EDE8FE;padding:6px 0;font-family:{SANS};color:{INDIGO};">
-          <span style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">{_esc(day_name)}</span>
-          <span style="display:block;font-size:18px;line-height:1.1;font-weight:800;">{_esc(day)}</span>
-          <span style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">{_esc(month)}</span>
+      <td width="56" valign="top" style="width:56px;padding:14px 0 14px 16px;">
+        <a href="{link}" style="display:block;width:56px;text-decoration:none;text-align:center;border-radius:14px;background:{_ACC_SOFT};padding:8px 0;font-family:{SANS};">
+          <span style="display:block;font-size:11px;line-height:1.3;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:{INDIGO};">{_esc(str(day_name).upper())}</span>
+          <span style="display:block;font-size:18px;line-height:1.1;font-weight:700;color:{INK};">{_esc(day)}</span>
+          <span style="display:block;font-size:12px;line-height:1.4;color:{MUTED};">{_esc(month)}</span>
         </a>
       </td>
-      <td valign="top" style="padding:12px;font-family:{SANS};">
-        <a href="{link}" style="color:{INK};text-decoration:none;font-size:15px;line-height:1.35;font-weight:700;">{_esc(g['title'])}</a>
-        <div style="font-size:13px;line-height:1.45;color:{MUTED};margin-top:2px;">{place}</div>
-        <div style="font-size:13px;line-height:1.45;color:{MUTED};">{_esc(g['organiser']['name'])}</div>
+      <td valign="top" style="padding:14px 16px 14px 14px;font-family:{SANS};">
+        <a class="e-strong" href="{link}" style="display:block;color:{INK};text-decoration:none;font-size:15px;line-height:1.3;font-weight:700;">{_esc(g['title'])}</a>
+        <div class="e-text" style="font-size:13px;line-height:1.4;color:{MUTED};margin-top:4px;">{place}</div>
+        <div class="e-text" style="font-size:13px;line-height:1.4;color:{INK_SOFT};font-weight:700;margin-top:4px;">{_esc(g['organiser']['name'])}</div>
         {chip_html}
       </td>
     </tr>
@@ -160,35 +164,48 @@ def _gathering_card(g: dict, href: str) -> str:
 
 def _gatherings_block(gatherings: list[dict], online_only: bool, see_all_url: str,
                       card_url: Callable[[str], str]) -> str:
-    """Gatherings near you (TEC-1845, frames 4.2 to 4.5), held behind
-    AHAVAH_E2_GATHERINGS_ENABLED. Left out when the member has none (4.4,
-    4.5). Built once per recipient inside run_campaign's loop, so a card
-    that raises is dropped with a warning, as _safe_spotlight_block does,
-    and never the email."""
-    cards = []
+    """Gatherings near you (TEC-1845; W.1 to W.4 of Ahavah Gatherings in
+    Member Emails.html), held behind AHAVAH_E2_GATHERINGS_ENABLED. Left out
+    when the member has none (W.4). Built once per recipient inside
+    run_campaign's loop, so a card that raises is dropped with a warning, as
+    _safe_spotlight_block does, and never the email."""
+    # A card is tried before its link is minted, so a dropped card leaves no
+    # link behind; the last card kept is drawn with the tighter gap above
+    # "See all gatherings".
+    kept = []
     for g in gatherings or []:
         try:
-            cards.append(_gathering_card(g, card_url(g['slug'])))
+            _gathering_card(g, '')
+            kept.append(g)
+        except Exception as e:  # one card, never the send
+            print(f"community_weekly: dropping gathering {g.get('slug')!r} ({e!r})")
+    if not kept:
+        return ''
+    cards = []
+    for i, g in enumerate(kept):
+        try:
+            cards.append(_gathering_card(g, card_url(g['slug']), last=i == len(kept) - 1))
         except Exception as e:  # one card, never the send
             print(f"community_weekly: dropping gathering {g.get('slug')!r} ({e!r})")
     if not cards:
         return ''
-    # Copy 1.5 of the marketing pages, for a member with a region whose
+    # W.3, copy 1.5 of the marketing pages: for a member with a region whose
     # every card is online (owner decision 5).
     line = ''
     if online_only:
-        line = (f'<p class="e-text" style="margin:0 0 12px;font-family:{SANS};font-size:17px;'
-                f'line-height:1.55;color:{INK_SOFT};">Nothing near you yet. These are online.</p>')
+        line = (f'<p class="e-strong" style="margin:0 0 12px;font-family:{SANS};font-size:15px;'
+                f'line-height:1.5;color:{INK};">Nothing near you yet. These are online.</p>')
     see_all = _html.escape(see_all_url, quote=True)
     rows = ''.join(cards)
-    # PENDING DESIGN: the "See all gatherings" link's weight and spacing.
+    # "See all gatherings": a text link padded to a 44 px tap area (W.1).
     return f"""
+<div style="height:6px;line-height:6px;">&nbsp;</div>
 {title_image(*_GATHERINGS_TITLE)}
 {line}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">{rows}
 </table>
-<p class="e-text" style="margin:4px 0 24px;font-family:{SANS};font-size:15px;line-height:1.5;">
-  <a href="{see_all}" style="color:{INDIGO};font-weight:700;text-decoration:underline;">See all gatherings</a>
+<p style="margin:0 0 12px;font-family:{SANS};">
+  <a href="{see_all}" style="display:inline-block;padding:12px 0;font-size:15px;line-height:20px;color:{INDIGO};font-weight:700;text-decoration:underline;">See all gatherings</a>
 </p>
 """
 
