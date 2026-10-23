@@ -62,6 +62,25 @@ def canonical_tool_source(value: Optional[str]) -> Optional[str]:
     return value if value in TOOL_SOURCES else None
 
 
+def signup_source(value: object) -> Optional[str]:
+    """A /check-otp `source` as stored on a new onboardee: a tool value
+    (canonical_tool_source), or `event:{slug}` from a gathering's join
+    link when the slug is well formed, else None. The caller still checks
+    that the gathering exists (TEC-1845, inviting guests to join)."""
+    if not isinstance(value, str):
+        return None
+    tool = canonical_tool_source(value)
+    if tool:
+        return tool
+    if value.startswith('event:') and is_lead_source(value):
+        return value
+    return None
+
+
+def is_event_source(value: Optional[str]) -> bool:
+    return isinstance(value, str) and value.startswith('event:')
+
+
 def is_lead_source(value: object) -> bool:
     """The sources a lead row may carry: where someone gave an email before
     joining. intro and mentor are sign-up sources the matchmaker writes on

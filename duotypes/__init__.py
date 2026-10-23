@@ -494,10 +494,18 @@ class PostFeedback(BaseModel):
 class PostCheckOtp(BaseModel):
     otp: str = Field(pattern=r"^\d{6}$")
     # Optional acquisition tag. Only stamped onto NEW onboardees (never
-    # existing members): a couple tool's source, or the marriage
-    # checklist's old name, which is stored as tool:checklist (TEC-1845).
-    source: Optional[Literal['marriage_checklist', 'tool:game-me', 'tool:game-us',
-                             'tool:knows-me', 'tool:checklist']] = None
+    # existing members): a couple tool's source, the marriage checklist's
+    # old name, which is stored as tool:checklist, or event:{slug} from a
+    # gathering's join link (TEC-1845, service.leads.sources.signup_source).
+    # Anything else, a value over 60 characters or not a string included,
+    # reads as no source: a value the web did not expect must never be a
+    # 400 that blocks sign-in.
+    source: Optional[str] = Field(None, max_length=60)
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def _source_or_none(cls, v):
+        return v if isinstance(v, str) and len(v) <= 60 else None
 
 
 class PostFinishOnboarding(BaseModel):
