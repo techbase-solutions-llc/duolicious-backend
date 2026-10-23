@@ -15,7 +15,7 @@ from service import entitlements
 from service import metapixel
 from service import signupguard
 from service.leads import confirm_lead, record_lead, tool_leads_enabled
-from service.leads.sources import is_event_source, signup_source
+from service.leads.sources import TOOL_SOURCES, is_event_source, signup_source
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
@@ -574,7 +574,10 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
         # so: AHAVAH_TOOL_LEADS_ENABLED stays off until then.
         # A gathering's join link sends event:{slug} (TEC-1845, inviting
         # guests to join): it counts only for a gathering that exists, in
-        # any status, and writes no lead; anything else is ignored.
+        # any status, and writes no lead; anything else is ignored. The
+        # visitor alert email's sign-up link sends alert:visitor (TEC-1929),
+        # which writes no lead either: the visitor's own alert lead already
+        # exists, and only a tool records one here.
         source = signup_source(req.source)
         if is_event_source(source) and not tx.execute(
                 'SELECT 1 FROM event WHERE slug = %(s)s',
@@ -590,7 +593,7 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
                 """,
                 dict(source=source, email=s.email),
             )
-            if tool_leads_enabled() and not is_event_source(source):
+            if tool_leads_enabled() and source in TOOL_SOURCES:
                 lead_id = record_lead(tx, email=s.email, source=source)
                 if lead_id is not None:
                     confirm_lead(tx, lead_id, 'otp')
@@ -1006,6 +1009,11 @@ def post_finish_onboarding(req: t.PostFinishOnboarding, s: t.SessionInfo):
         # first touch wins). Never fails the sign-up.
         from service.matchmaker.retention import link_recommendations_to_person
         link_recommendations_to_person(tx, row['person_id'])
+        # A mentor, a host or a /families visitor sender who joins is
+        # credited 'mentor', 'host' or 'family', only when nothing above
+        # named a source; never a lead (TEC-1929). Never fails the sign-up.
+        from service.person.attribution import record_role_source
+        record_role_source(tx, row['person_id'])
 
         # Phase W map fix: Q_FINISH_ONBOARDING builds the person from the
         # onboardee but never set person.country (ISO2), so every newly-
