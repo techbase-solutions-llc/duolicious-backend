@@ -15,7 +15,7 @@ from service import entitlements
 from service import metapixel
 from service import signupguard
 from service.leads import confirm_lead, record_lead, tool_leads_enabled
-from service.leads.sources import canonical_tool_source
+from service.leads.sources import is_event_source, signup_source
 from service.person.sql import *
 from service.search.sql import *
 from service.photo_rules import Q_RECHECK_MAIN_PHOTO_FACE
@@ -572,7 +572,14 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
         # proves the address, so the tool's lead is recorded confirmed
         # (TEC-1845, service/leads), but only once the privacy page says
         # so: AHAVAH_TOOL_LEADS_ENABLED stays off until then.
-        source = canonical_tool_source(req.source)
+        # A gathering's join link sends event:{slug} (TEC-1845, inviting
+        # guests to join): it counts only for a gathering that exists, in
+        # any status, and writes no lead; anything else is ignored.
+        source = signup_source(req.source)
+        if is_event_source(source) and not tx.execute(
+                'SELECT 1 FROM event WHERE slug = %(s)s',
+                dict(s=source[len('event:'):])).fetchone():
+            source = None
         if source and row['person_id'] is None:
             tx.execute(
                 """
@@ -583,7 +590,7 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
                 """,
                 dict(source=source, email=s.email),
             )
-            if tool_leads_enabled():
+            if tool_leads_enabled() and not is_event_source(source):
                 lead_id = record_lead(tx, email=s.email, source=source)
                 if lead_id is not None:
                     confirm_lead(tx, lead_id, 'otp')

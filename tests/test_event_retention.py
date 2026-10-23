@@ -12,7 +12,7 @@ from antiabuse.antispam.signupemail import normalize_email
 from database import api_tx
 from service.events import retention
 
-pytestmark = pytest.mark.usefixtures('events_schema', 'events_live', 'no_limits')
+pytestmark = pytest.mark.usefixtures('events_schema', 'join_invite_schema', 'events_live', 'no_limits')
 NOW = datetime.now(timezone.utc)
 
 
@@ -150,4 +150,37 @@ def test_a_guest_who_joins_is_linked_and_credited_to_the_gathering(published, co
 def test_purge_counts_each_kind():
     with api_tx() as tx:
         out = retention.purge_event_data(tx)
-    assert set(out) == {'erased', 'digests', 'unconfirmed', 'links', 'requests'}
+    assert set(out) == {'erased', 'digests', 'unconfirmed', 'links', 'requests', 'join_invites'}
+
+
+def test_the_invitation_record_goes_with_the_last_lead_row():
+    """The once-per-address record (0076) is kept while Ahavah holds any
+    lead row for the address, and goes in the sweep after the last one
+    (TEC-1845, the invitation to join; Owner decision 2)."""
+    from uuid import uuid4
+    address = f'join-retention-{uuid4().hex[:10]}@ahavah-test.invalid'
+    with api_tx() as tx:
+        ids = [tx.execute(
+            """INSERT INTO lead (email, normalized_email, source) VALUES (%(e)s, %(e)s, %(s)s)
+               RETURNING id""", dict(e=address, s=s)).fetchone()['id']
+            for s in ('event:join-retention-a', 'event:join-retention-b')]
+        tx.execute('INSERT INTO lead_join_invite (normalized_email) VALUES (%(e)s)', dict(e=address))
+
+    def _held():
+        with api_tx('read committed') as tx:
+            return tx.execute('SELECT 1 FROM lead_join_invite WHERE normalized_email = %(e)s',
+                              dict(e=address)).fetchone() is not None
+
+    try:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM lead WHERE id = %(i)s', dict(i=ids[0]))
+        _purge()
+        assert _held()
+        with api_tx() as tx:
+            tx.execute('DELETE FROM lead WHERE id = %(i)s', dict(i=ids[1]))
+        assert _purge()['join_invites'] >= 1
+        assert not _held()
+    finally:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM lead WHERE normalized_email = %(e)s', dict(e=address))
+            tx.execute('DELETE FROM lead_join_invite WHERE normalized_email = %(e)s', dict(e=address))

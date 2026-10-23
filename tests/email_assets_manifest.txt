@@ -41,6 +41,8 @@ title-event-confirm-wht.png
 title-event-confirm.png
 title-event-digest-wht.png
 title-event-digest.png
+title-event-join-invite-wht.png
+title-event-join-invite.png
 title-event-manage-wht.png
 title-event-manage.png
 title-event-reminder-wht.png

@@ -111,10 +111,12 @@ def test_a_sign_in_with_no_source_records_no_lead(client, signup_env, lead_email
     assert _leads_of(email) == []
 
 
-def test_an_unknown_source_is_refused(client, signup_env, lead_emails):
+def test_an_unknown_source_is_ignored(client, signup_env, lead_emails):
+    """Was a 400; since the join link (TEC-1845, inviting guests to join)
+    a value the web did not expect is ignored, never a refused sign-in."""
     email = _new_address(lead_emails)
     token = signup_env.request(email).get_json()['session_token']
-    assert _check(client, token, 'tool:roulette').status_code == 400
+    assert _check(client, token, 'tool:roulette').status_code == 200
     assert _leads_of(email) == []
 
 

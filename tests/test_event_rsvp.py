@@ -81,7 +81,7 @@ def test_confirming_holds_the_place_and_confirms_the_lead(client, published):
     assert client.get(f'/events/{slug}').get_json()['places_left'] == 10
     r = client.get(f'/rsvp/confirm/{token}')
     assert r.status_code == 200 and r.get_json()['rsvp'] == dict(
-        name='Hannah Okafor', party_size=3, status='going', confirmed=True)
+        name='Hannah Okafor', party_size=3, status='going', confirmed=True, join_offer=False)
     assert client.get(f'/events/{slug}').get_json()['places_left'] == 7
     row = _rsvp(slug, 'c@ahavah-test.invalid')
     assert row['confirmed_at'] is not None and _lead(row['lead_id'])['confirmed_via'] == 'link'

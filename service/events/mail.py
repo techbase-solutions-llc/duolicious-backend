@@ -25,6 +25,11 @@ escaped.
 
 Lines marked NEW LINE are not in the export; they wait for /copy-pass and
 the owner (plan item 12).
+
+The "Join Ahavah" block (TEC-1845, docs/superpowers/plans/2026-10-22-
+events-invite-to-join.md) rides in the confirm and reminder emails of a
+guest who is not a member, behind events_join_block and the rest-day rule
+(service/events/join.py). Without it each email is as it was.
 """
 from __future__ import annotations
 
@@ -44,6 +49,7 @@ CAMPAIGN_CANCELLED = 'event_cancelled'
 CAMPAIGN_DIGEST = 'event_digest'
 CAMPAIGN_MANAGE = 'event_manage'
 CAMPAIGN_NOTE = 'event_organiser_note'
+CAMPAIGN_JOIN_INVITE = 'event_join_invite'
 UNSUB_SCOPE = 'notifications'
 FROM_ADDR = f'support@{EMAIL_DOMAIN}'
 
@@ -61,6 +67,9 @@ TITLES: dict[str, tuple[str, str, int]] = {
     'cancelled': ('title-event-cancelled', 'This gathering was cancelled.', 346),
     'digest': ('title-event-digest', 'New RSVPs.', 270),
     'manage': ('title-event-manage', 'Manage your gatherings.', 315),
+    # 3.9, "Meet the / community." (handoff 10-events-join.md, NEW LINE),
+    # 569 x 158 at 2x.
+    'join_invite': ('title-event-join-invite', 'Meet the community.', 285),
 }
 
 GUEST_WHY = 'You are getting this because you RSVPed to a gathering on Ahavah.'
@@ -81,6 +90,46 @@ def live_note(title: str) -> str:
 
 def live_subject(title: str) -> str:
     return f'{title} is live on Ahavah'  # NEW LINE
+
+
+# The join block (handoff 10-events-join.md, frames 3.1 to 3.3): the
+# approved line and a text link, below the gathering's own actions.
+JOIN_LINE = 'Ahavah is matchmaking for Torah-observant believers who hope to marry.'
+JOIN_ACTION = 'Join Ahavah'  # NEW LINE
+
+
+def join_block(url: str) -> str:
+    """Body size, behind a hairline; the link's tap area padded to 44 px as
+    drawn. 15 px rather than the frame's 14.5, so the phone type scale
+    (emails.base) reads it; nothing at 20 px or more. Between the markers
+    of join.mark_block, so the outbox drain can take it out at the send."""
+    from service.events.join import mark_block
+    return mark_block(
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:22px 0 0;"><tr><td style="border-top:1px solid rgba(15,11,31,0.10);'
+        f'padding-top:14px;"><p class="e-text" style="margin:0;font-family:{SANS};font-size:15px;'
+        f'line-height:1.55;color:{MUTED};">{JOIN_LINE} '
+        f'<a class="e-strong" href="{_e(url)}" target="_blank" style="color:{INK};font-weight:700;'
+        f'text-decoration:underline;display:inline-block;padding:12px 0;margin:-12px 0;">'
+        f'{JOIN_ACTION}</a></p></td></tr></table>')
+
+
+# 3.9, the invitation to join (handoff 10-events-join.md). Every line but
+# JOIN_LINE and GUEST_WHY is new there.
+# Wording approved by the owner after the copy pass on 23 Oct 2026
+# (ahavah-web docs/copy/2026-10-23-invite-join-copy-pass.md).
+JOIN_INVITE_SUBJECT = 'Meet the community on Ahavah'
+JOIN_INVITE_ABOUT = ('Members get to know one another with marriage in mind, and families can '
+                     'take part.')
+JOIN_INVITE_NEAR = ('You asked to hear about gatherings and members near you, and members see '
+                    'both on Ahavah.')
+JOIN_INVITE_WHY = (GUEST_WHY + ' You ticked “Tell me about Ahavah events and members near me”. '
+                   'We send this once.')  # NEW LINE (the second and third sentences)
+
+
+def join_invite_line(event: dict) -> str:
+    """"You RSVPed to {title}.", in person and online alike. The title escaped, bold."""
+    return f"You RSVPed to <b>{_e(event['title'])}</b>."
 
 
 def confirm_url(token: str) -> str:
@@ -198,28 +247,52 @@ def _shell(subject: str, preheader: str, body: str, footer: str) -> str:
 # The builders. `view` is rsvp.rsvp_view's {event, rsvp}.
 # ---------------------------------------------------------------------------
 
-def confirm_email(view: dict, token: str) -> tuple[str, str]:
+def confirm_email(view: dict, token: str, *, join_url: Optional[str] = None) -> tuple[str, str]:
     """3.1. No safety note: the address is not shared yet. The overline
-    repeated the title, so it is dropped (as the checklist invite's was)."""
+    repeated the title, so it is dropped (as the checklist invite's was).
+    With `join_url`, the join block after the line under the button: the
+    button stays the only one."""
     ev = view['event']
     subject = f"Confirm your place at {ev['title']}"  # NEW LINE
     share = ('We share the link once you confirm.' if ev['mode'] == 'online'  # NEW LINE
              else 'We share the address once you confirm.')
     body = (_title('confirm') + _facts(ev, shown=False) + button('Confirm my place', confirm_url(token))
-            + _after_button(share, 15))
+            + _after_button(share, 15) + (join_block(join_url) if join_url else ''))
     return subject, _shell(subject, share, body, _footer(CONFIRM_WHY))
 
 
-def reminder_email(view: dict, token: str) -> tuple[str, str]:
-    """3.2 and 3.3: the venue or the call link, the safety note in person."""
+def reminder_email(view: dict, token: str, *, join_url: Optional[str] = None) -> tuple[str, str]:
+    """3.2 and 3.3: the venue or the call link, the safety note in person.
+    With `join_url`, the join block after "Cancel my place" and the safety
+    note, before the footer."""
     ev = view['event']
     subject = f"Tomorrow: {ev['title']}"  # NEW LINE
     day, time = _when(ev)
     body = (chip('Tomorrow') + _title('reminder') + _facts(ev, shown=True)
             + button('Add to calendar', calendar_url(token))
             + '<div style="height:14px;line-height:14px;">&nbsp;</div>'
-            + _link('Cancel my place', rsvp_url(token)) + _safety(ev))
+            + _link('Cancel my place', rsvp_url(token)) + _safety(ev)
+            + (join_block(join_url) if join_url else ''))
     return subject, _shell(subject, _e(f'{day}, {time}'), body, _footer(GUEST_WHY, cancel_token=token))
+
+
+def _body(text: str) -> str:
+    """3.9's body lines: 16 px, ink, as drawn."""
+    return (f'<p class="e-text" style="margin:0 0 16px;font-family:{SANS};font-size:16px;'
+            f'line-height:1.6;color:{INK};">{text}</p>')
+
+
+def join_invite_email(event: dict, join_url: str, unsubscribe_url: str) -> tuple[str, str]:
+    """3.9: the title image, the gathering's title as a body line (no
+    organiser, Owner decision 10; no guest name; no venue or call link),
+    what Ahavah is, one "Join Ahavah" button and a news footer. It does not
+    thank the guest for coming: they may not have gone."""
+    subject = JOIN_INVITE_SUBJECT
+    body = (_title('join_invite') + _body(join_invite_line(event))
+            + _body(f'{JOIN_LINE} {JOIN_INVITE_ABOUT}') + _body(JOIN_INVITE_NEAR)
+            + '<div style="height:6px;line-height:6px;">&nbsp;</div>'
+            + button(JOIN_ACTION, _e(join_url)))
+    return subject, _shell(subject, JOIN_LINE, body, held.footer(JOIN_INVITE_WHY, _e(unsubscribe_url)))
 
 
 def _start_word(time_words: str) -> str:
@@ -377,6 +450,18 @@ def _rsvp_row(tx, rsvp_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def _join_url_for(tx, r: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """The join link for this RSVP's email, or None: a guest who is not a
+    member (join.offers_join), outside a rest period and inside the known
+    calendar (join.mail_block_allowed)."""
+    from service.events import join
+    now = now or datetime.now(timezone.utc)
+    if not join.offers_join(tx, r) or not join.mail_block_allowed(now):
+        return None
+    row = tx.execute('SELECT slug FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone()
+    return join.join_url(row['slug']) if row else None
+
+
 def queue_confirm(tx, rsvp_id: int, token: str) -> Optional[int]:
     """The confirm link, once per send (the first and each "Send it again")."""
     from service.events.rsvp import rsvp_view
@@ -388,7 +473,7 @@ def queue_confirm(tx, rsvp_id: int, token: str) -> Optional[int]:
         to = _guest_to(tx, r) if r else None
         if to is None:
             return None
-        subject, body = confirm_email(rsvp_view(tx, token), token)
+        subject, body = confirm_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r))
         return _queue_guest(tx, campaign=CAMPAIGN_CONFIRM, campaign_id=f"{rsvp_id}:{r['resends']}",
                             to=to, subject=subject, html_=body)
     return _guarded(tx, 'event_confirm', go)
@@ -473,11 +558,59 @@ def queue_reminder(tx, rsvp_id: int, token: str) -> Optional[int]:
         if to is None:
             return None
         starts = tx.execute('SELECT starts_at FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone()
-        subject, body = reminder_email(rsvp_view(tx, token), token)
+        subject, body = reminder_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r))
         return _queue_guest(tx, campaign=CAMPAIGN_REMINDER,
                             campaign_id=reminder_campaign_id(rsvp_id, starts['starts_at']),
                             to=to, subject=subject, html_=body)
     return _guarded(tx, 'event_reminder', go)
+
+
+def queue_join_invite(tx, rsvp: dict, event: dict, now: datetime) -> Optional[int]:
+    """The one invitation to join, as news to the RSVP's event:{slug} lead.
+    None unless, in this order: the switch; the ticked box; a visitor's
+    lead (no person_id); an address no member holds now; not suppressed;
+    news_refusal passes (confirmed, consent, not unsubscribed) and no lead
+    row of the address has left the news. Then the
+    once-per-address record (lead_join_invite, 0076) is written in the same
+    savepoint as the queue: no record row means the address had its
+    invitation, and a queue that refuses takes the record back with it.
+    The caller (jobs.queue_join_invites) decides when it is due."""
+    from service.events import join
+    from service.leads import address_unsubscribed, news_refusal
+    from service.unsubscribe import make_url
+    if not _on(CAMPAIGN_JOIN_INVITE) or not rsvp.get('marketing_consent'):
+        return None
+    if rsvp.get('lead_id') is None or rsvp.get('person_id') is not None or not rsvp.get('email'):
+        return None
+    if join.is_member_address(tx, rsvp['normalized_email']) or is_suppressed_send(rsvp['email']):
+        return None
+    # The lead row alone is not enough: another gathering's row may carry
+    # the address's unsubscribe while this fresh one does not.
+    if news_refusal(tx, rsvp['lead_id']) is not None or address_unsubscribed(tx, rsvp['normalized_email']):
+        return None
+    tx.execute('SAVEPOINT event_join_invite')
+    try:
+        claimed = tx.execute(
+            """INSERT INTO lead_join_invite (normalized_email, event_id) VALUES (%(ne)s, %(e)s)
+               ON CONFLICT DO NOTHING RETURNING normalized_email""",
+            dict(ne=rsvp['normalized_email'], e=event['id'])).fetchone()
+        out = None
+        if claimed is not None:
+            unsub = make_url('news', rsvp['email'], WEB_BASE_URL)
+            subject, body = join_invite_email(event, join.join_url(event['slug']), unsub)
+            out = outbox.enqueue_for_lead(
+                tx, campaign=CAMPAIGN_JOIN_INVITE, campaign_id=str(event['id']), lead_id=rsvp['lead_id'],
+                email=rsvp['email'], subject=subject, html=body, from_addr=FROM_ADDR,
+                list_unsubscribe=held.list_unsubscribe(unsub), marketing=True)
+    except Exception:
+        tx.execute('ROLLBACK TO SAVEPOINT event_join_invite')
+        print(traceback.format_exc())
+        return None
+    if out is None:
+        tx.execute('ROLLBACK TO SAVEPOINT event_join_invite')
+        return None
+    tx.execute('RELEASE SAVEPOINT event_join_invite')
+    return out
 
 
 def reminder_already(tx, rsvp_id: int, starts_at: datetime) -> bool:
@@ -596,6 +729,42 @@ def preview_reminder(to: str) -> tuple[str, str]:
 
 def preview_reminder_online(to: str) -> tuple[str, str]:
     return reminder_email(sample_view(online=True, confirmed=True), _SAMPLE_TOKEN)
+
+
+def _sample_join_url(online: bool = False) -> str:
+    from service.events.join import join_url
+    return join_url((sample_online_event() if online else sample_event())['slug'])
+
+
+def preview_confirm_join(to: str) -> tuple[str, str]:
+    return confirm_email(sample_view(), _SAMPLE_TOKEN, join_url=_sample_join_url())
+
+
+def preview_confirm_online_join(to: str) -> tuple[str, str]:
+    return confirm_email(sample_view(online=True), _SAMPLE_TOKEN, join_url=_sample_join_url(True))
+
+
+def preview_reminder_join(to: str) -> tuple[str, str]:
+    return reminder_email(sample_view(confirmed=True), _SAMPLE_TOKEN, join_url=_sample_join_url())
+
+
+def preview_reminder_online_join(to: str) -> tuple[str, str]:
+    return reminder_email(sample_view(online=True, confirmed=True), _SAMPLE_TOKEN,
+                          join_url=_sample_join_url(True))
+
+
+def _preview_join_invite(to: str, ev: dict) -> tuple[str, str]:
+    from service.events.join import join_url
+    from service.unsubscribe import make_url
+    return join_invite_email(ev, join_url(ev['slug']), make_url('news', to, WEB_BASE_URL))
+
+
+def preview_join_invite(to: str) -> tuple[str, str]:
+    return _preview_join_invite(to, sample_event())
+
+
+def preview_join_invite_online(to: str) -> tuple[str, str]:
+    return _preview_join_invite(to, sample_online_event())
 
 
 def preview_change(to: str) -> tuple[str, str]:

@@ -91,6 +91,12 @@ SWITCHES = {
     'events_cancel_email': 'AHAVAH_EVENTS_CANCEL_EMAIL_ENABLED',
     'events_digest_email': 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED',
     'events_manage_email': 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED',
+    # Inviting gathering guests who are not members to join (TEC-1845): the
+    # block on the confirmed page and in the confirm and reminder emails,
+    # and the one invitation the day after; each off until the owner has
+    # seen its proof, each needs events_live.
+    'events_join_block': 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED',
+    'events_join_invite_email': 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED',
     # Matchmaker (TEC-1845), the master switch: until launch every
     # /matchmaker, /alerts, /introductions, /recommendations, /mentor and
     # /conversations/<uuid>/share route but /matchmaker/status answers 404,

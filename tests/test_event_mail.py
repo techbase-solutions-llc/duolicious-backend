@@ -242,4 +242,5 @@ def test_every_email_uses_title_images_and_no_typed_headline():
             assert 'error' not in s, s
             assert 'e-title-light' in s['html'], s['name']
     assert {k: v[2] for k, v in mail.TITLES.items()} == dict(
-        confirm=318, reminder=251, change=242, cancelled=346, digest=270, manage=315)
+        confirm=318, reminder=251, change=242, cancelled=346, digest=270, manage=315,
+        join_invite=285)  # 3.9, the invitation to join (TEC-1845)

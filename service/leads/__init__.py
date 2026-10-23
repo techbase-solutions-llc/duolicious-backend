@@ -190,6 +190,21 @@ def lead_unsubscribed(tx, lead_id: int) -> bool:
     return True if row is None else bool(row['u'])
 
 
+def address_unsubscribed(tx, normalized_email: Optional[str]) -> bool:
+    """True when any lead row of this normalised address has left the news
+    mail. The news unsubscribe stamps the rows the address has at that
+    moment; a later source (another gathering's event:{slug}) is a fresh
+    row without the stamp, so a check on one row alone would read a guest
+    who left as one who never did. A tick on a resubscribed row does not
+    lift this while an older row keeps its stamp: it fails towards not
+    mailing."""
+    if not normalized_email:
+        return False
+    return tx.execute(
+        'SELECT 1 FROM lead WHERE normalized_email = %(ne)s AND unsubscribed_at IS NOT NULL LIMIT 1',
+        dict(ne=normalized_email)).fetchone() is not None
+
+
 # The live marriage checklist, and later the couple tools, confirm an
 # address with a sign-in code. Recording that as a lead stores data the
 # privacy page must describe first, so it is off until the release that

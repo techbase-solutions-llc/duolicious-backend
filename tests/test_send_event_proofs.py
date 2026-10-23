@@ -11,7 +11,9 @@ from database import api_tx
 from scripts import send_event_proofs as ep
 
 ORDER = ['event_confirm', 'event_confirm_online', 'event_reminder', 'event_reminder_online', 'event_change',
-         'event_cancelled', 'event_digest', 'event_manage', 'event_approved', 'event_live']
+         'event_cancelled', 'event_digest', 'event_manage', 'event_approved', 'event_live',
+         'event_confirm_join', 'event_confirm_online_join', 'event_reminder_join',
+         'event_reminder_online_join', 'event_join_invite', 'event_join_invite_online']
 _TABLES = ('email_outbox', 'email_send_log', 'event_rsvp', 'organiser_link', 'lead')
 
 
@@ -36,7 +38,7 @@ def smtp(monkeypatch, events_schema):
     return s
 
 
-def test_the_plan_lists_the_10_emails_in_order():
+def test_the_plan_lists_the_16_emails_in_order():
     assert [e['name'] for e in ep.plan()] == ORDER
     assert all(e['subject'].startswith('[PROOF] ') for e in ep.plan())
 
@@ -47,7 +49,7 @@ def test_every_proof_goes_to_the_owner_only(smtp, monkeypatch):
             monkeypatch.delenv(env)
     env_before, before = dict(os.environ), _counts()
     ep.main(['--send'])
-    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 10
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 16
     assert _counts() == before and dict(os.environ) == env_before
 
 
@@ -77,7 +79,7 @@ def test_no_switch_is_read(monkeypatch, capsys):
     def refuse(name):
         raise AssertionError(f'read the switch {name}')
     monkeypatch.setattr(switches, 'enabled', refuse)
-    assert len(ep.plan()) == 10
+    assert len(ep.plan()) == 16
     ep.main([])
 
 
@@ -93,3 +95,12 @@ def test_it_will_not_send_while_a_title_image_is_missing(smtp, monkeypatch, tmp_
 
 def test_the_title_images_are_all_here_now():
     assert ep.missing_titles() == []
+
+
+def test_the_join_links_are_inert():
+    """A proof click credits nothing (TEC-1845, inviting guests to join)."""
+    joins = [e for e in ep.plan() if 'join' in e['name']]
+    assert len(joins) == 6
+    for e in joins:
+        assert '/auth/sign-up' not in e['html'] and 'src=event' not in e['html'], e['name']
+        assert ep.PROOF_LINK_DISABLED in e['html'], e['name']

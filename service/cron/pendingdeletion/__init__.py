@@ -21,6 +21,7 @@ from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
     Q_DELETE_EVENT_DATA_OF,
     Q_DELETE_INBOX_OF,
+    Q_DELETE_JOIN_INVITES_OF,
     Q_DELETE_LEADS_OF,
     Q_DELETE_MATCHMAKER_DATA_OF,
     Q_DELETE_TOOL_DATA_OF,
@@ -198,6 +199,9 @@ async def hard_delete_expired_once():
                 # row; this takes the ones only the address names, however
                 # it was typed.
                 await tx.execute(Q_DELETE_LEADS_OF,
+                                 dict(nes=[normalize_email(e) for e in emails]))
+                # And the invitation to join's record, with its last lead.
+                await tx.execute(Q_DELETE_JOIN_INVITES_OF,
                                  dict(nes=[normalize_email(e) for e in emails]))
 
     if rows:
