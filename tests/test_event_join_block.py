@@ -337,3 +337,43 @@ def test_the_block_is_left_out_at_send_time_once_the_address_has_left_the_news(c
     state, sent = _drain_only(row['id'])
     assert state == 'accepted'
     assert 'Confirm my place' in sent[0]['body'] and '/auth/sign-up' not in sent[0]['body']
+
+
+def test_the_block_is_left_out_at_send_time_inside_a_rest_period_or_beyond_the_calendar(
+        published, confirmed_guest, block_on, monkeypatch):
+    """Queued on an ordinary day, drained inside a rest period or past the
+    known calendar: the reminder still goes, without the block (Global
+    Constraints, rest days)."""
+    from datetime import datetime, timedelta, timezone
+    import service.spotlight.restdays as rd
+    from service.spotlight.restdays import BARBADOS
+    today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
+    slug = published()
+
+    def queued_with_the_block():
+        row_id = _reminder(confirmed_guest(slug, email=_address()))
+        with api_tx('read committed') as tx:
+            assert _sign_up(slug) in tx.execute('SELECT payload FROM email_outbox WHERE id = %(i)s',
+                                                dict(i=row_id)).fetchone()['payload']['html']
+        return row_id
+    inside = queued_with_the_block()
+    monkeypatch.setattr(rd, 'REST_DAYS', (today, today + timedelta(days=1)))
+    state, sent = _drain_only(inside)
+    assert state == 'accepted'
+    assert 'Cancel my place' in sent[0]['body'] and '/auth/sign-up' not in sent[0]['body']
+    monkeypatch.setattr(rd, 'REST_DAYS', ())
+    beyond = queued_with_the_block()
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', today - timedelta(days=1))
+    state, sent = _drain_only(beyond)
+    assert state == 'accepted'
+    assert 'Cancel my place' in sent[0]['body'] and '/auth/sign-up' not in sent[0]['body']
+
+
+def test_the_block_is_left_out_at_send_time_once_its_switch_is_off(published, confirmed_guest, block_on,
+                                                                   monkeypatch):
+    slug = published()
+    row_id = _reminder(confirmed_guest(slug, email=_address()))
+    monkeypatch.delenv(BLOCK_ENV)
+    state, sent = _drain_only(row_id)
+    assert state == 'accepted'
+    assert 'Cancel my place' in sent[0]['body'] and '/auth/sign-up' not in sent[0]['body']

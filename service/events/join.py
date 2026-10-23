@@ -20,10 +20,12 @@ docs/superpowers/plans/2026-10-22-events-invite-to-join.md).
   invite_lapsed,     the same rules again when the outbox drain comes to
   invite_hold        send a queued invitation: dropped once the window has
                      closed, held (never dropped) while inside it during a
-                     rest period or past the known calendar
+                     rest period, past the known calendar or outside the
+                     hours (in_invite_hours, the test invite_due uses)
   mark_block,        the join block wrapped in markers, so the drain can
   strip_block        take it out of a queued confirm or reminder email when
-                     the address has joined or left the news since
+                     the address has joined or left the news since, the
+                     block's switch is off or the rest days forbid it
 
 Members never: the address is checked against person at every build, so a
 guest who joined since the RSVP sees no block, and again at the send.
@@ -82,17 +84,22 @@ def mail_block_allowed(now: datetime) -> bool:
     return not restdays.is_rest_period(now) and not restdays.is_beyond_known(now)
 
 
+def in_invite_hours(ends_at: datetime, tz: str, now: datetime) -> bool:
+    """The hour test of Owner decision 3: a local day after the one the
+    gathering ended on, and a local hour in INVITE_HOURS, both in the
+    gathering's own zone."""
+    zone = zoneinfo.ZoneInfo(tz)
+    local_now = now.astimezone(zone)
+    first, last = INVITE_HOURS
+    return local_now.date() > ends_at.astimezone(zone).date() and first <= local_now.hour < last
+
+
 def invite_due(ends_at: datetime, tz: str, now: datetime) -> bool:
     """True when the invitation for a gathering that ended at `ends_at` may
     be queued at `now`. Past KNOWN_THROUGH nothing is due (Owner decision
     4): an invitation whose window closes in that time is never sent."""
     from service.spotlight import restdays
-    zone = zoneinfo.ZoneInfo(tz)
-    local_now = now.astimezone(zone)
-    first, last = INVITE_HOURS
-    if local_now.date() <= ends_at.astimezone(zone).date():
-        return False
-    if not first <= local_now.hour < last or now >= ends_at + INVITE_WINDOW:
+    if not in_invite_hours(ends_at, tz, now) or now >= ends_at + INVITE_WINDOW:
         return False
     return not (restdays.is_rest_period(now) or restdays.is_rest_period(now + REST_MARGIN)
                 or restdays.is_beyond_known(now + REST_MARGIN))
@@ -114,7 +121,8 @@ def invite_lapsed(ends_at: datetime, now: datetime) -> bool:
 
 def invite_hold(ends_at: datetime, tz: str, now: datetime) -> Optional[tuple[str, datetime]]:
     """None when a queued invitation may go at `now`, else (reason, until):
-    'unknown' past KNOWN_THROUGH, 'rest_day' inside a rest period. `until`
+    'unknown' past KNOWN_THROUGH, 'rest_day' inside a rest period,
+    'out_of_hours' outside 10:00 to 20:00 gathering time. `until`
     is the first whole hour of the gathering's zone at which invite_due
     would queue it, never past the end of the window, where invite_lapsed
     drops it. Past the known calendar it looks again within the hour, so an
@@ -124,6 +132,8 @@ def invite_hold(ends_at: datetime, tz: str, now: datetime) -> Optional[tuple[str
         reason = 'unknown'
     elif restdays.is_rest_period(now):
         reason = 'rest_day'
+    elif not in_invite_hours(ends_at, tz, now):
+        reason = 'out_of_hours'
     else:
         return None
     window_end = ends_at + INVITE_WINDOW

@@ -385,8 +385,8 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
 
 def mark_skipped(tx, id: int, reason: str) -> None:
     """A send-time re-check refused this row: 'withdrawn', 'suppressed',
-    'unsubscribed', 'capped', 'switched_off', 'member_now', 'withdrawn' or
-    'lapsed'. Terminal, and
+    'unsubscribed', 'capped', 'switched_off', 'member_now', 'withdrawn',
+    'cancelled' or 'lapsed'. Terminal, and
     deliberately distinct from 'failed' -- nothing went wrong, we simply
     must not send it. The same
     state and reason string `withdraw_member` writes directly onto the
@@ -396,7 +396,8 @@ def mark_skipped(tx, id: int, reason: str) -> None:
 
 def mark_held(tx, id: int, reason: str, until: datetime) -> None:
     """Not now, and not dropped: back to 'queued' until `until`, with the
-    reason ('rest_day' or 'unknown') in last_error and no attempt spent."""
+    reason ('rest_day', 'unknown' or 'out_of_hours') in last_error and no
+    attempt spent."""
     tx.execute(_Q_HOLD, dict(id=id, reason=reason, until=until))
 
 
@@ -437,10 +438,15 @@ def _is_member_address(tx, email: str) -> bool:
 
 
 # The invitation to join (TEC-1845) is queued with the gathering's id as its
-# campaign_id; the drain reads the gathering's end and zone for the 7 days
-# and for the hour it may be held to.
+# campaign_id; the drain reads the gathering's state, end and zone for the
+# 7 days and for the hour it may be held to, and the guest's RSVP there (by
+# the RSVP's event:{slug} lead, which an erasure keeps).
 _Q_JOIN_INVITE_EVENT = """
-    SELECT ends_at, tz FROM event WHERE id = %(i)s
+    SELECT ends_at, tz, status, paused_at FROM event WHERE id = %(i)s
+"""
+_Q_JOIN_INVITE_RSVP = """
+    SELECT status, erased_at FROM event_rsvp WHERE event_id = %(e)s AND lead_id = %(l)s
+     ORDER BY id LIMIT 1
 """
 
 
@@ -450,6 +456,25 @@ def _join_invite_event(tx, row: dict) -> Optional[dict]:
     except (TypeError, ValueError):
         return None
     return tx.execute(_Q_JOIN_INVITE_EVENT, dict(i=event_id)).fetchone()
+
+
+def _join_invite_withdrawn(tx, row: dict, event: dict) -> Optional[str]:
+    """The gathering and the guest's place, read again at the send: the job
+    queues only for a published, unpaused gathering and a confirmed going
+    RSVP, and either may have changed since. 'cancelled' when the organiser
+    cancelled the gathering or the guest their place; 'withdrawn' when the
+    gathering is paused or no longer published, or the RSVP is erased or
+    gone."""
+    if event['status'] == 'cancelled':
+        return 'cancelled'
+    if event['status'] != 'published' or event['paused_at'] is not None:
+        return 'withdrawn'
+    rsvp = tx.execute(_Q_JOIN_INVITE_RSVP, dict(e=int(row['campaign_id']), l=row['lead_id'])).fetchone()
+    if rsvp is None or rsvp['erased_at'] is not None:
+        return 'withdrawn'
+    if rsvp['status'] != 'going':
+        return 'cancelled'
+    return None
 
 
 def _hold(tx, row: dict) -> Optional[tuple[str, datetime]]:
@@ -475,17 +500,21 @@ _JOIN_BLOCK_CAMPAIGNS = ('event_confirm', 'event_reminder')
 
 def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
     """The HTML to send. A confirm or reminder email is built with its join
-    block for a guest who is not a member; if the address has joined or
-    left the news mail since it was queued, the block comes out and the
-    email still goes, since the guest asked for it. The email cannot be
-    built again here (its token is only in the HTML), so the block carries
-    markers (service.events.join.mark_block)."""
+    block for a guest who is not a member; the block comes out, and the
+    email still goes since the guest asked for it, when at the send the
+    block's switch (events_join_block) is off, the moment is inside a rest
+    period or past the known calendar (join.mail_block_allowed), or the
+    address has joined or left the news mail since it was queued. The email
+    cannot be built again here (its token is only in the HTML), so the
+    block carries markers (service.events.join.mark_block)."""
     if row['campaign'] not in _JOIN_BLOCK_CAMPAIGNS or not html:
         return html
-    from service.events import join
+    from service.events import join, switch_on
     if not join.has_block(html):
         return html
-    if _is_member_address(tx, row['email']) or address_unsubscribed(tx, _normalized(row['email'])):
+    if (not switch_on(join.BLOCK_SWITCH) or not join.mail_block_allowed(_now())
+            or _is_member_address(tx, row['email'])
+            or address_unsubscribed(tx, _normalized(row['email']))):
         return join.strip_block(html)
     return html
 
@@ -560,7 +589,8 @@ def _refusal(tx, row: dict) -> Optional[str]:
         # The invitation to join a gathering's guest (TEC-1845) is never
         # sent once the address has joined since it was queued, nor once
         # any lead row of the address has left the news (a later
-        # gathering's row is fresh and unstamped), nor after its 7 days.
+        # gathering's row is fresh and unstamped), nor once the gathering
+        # or the guest's place there has ended, nor after its 7 days.
         if row['campaign'] == 'event_join_invite':
             if _is_member_address(tx, row['email']):
                 return 'member_now'
@@ -570,6 +600,9 @@ def _refusal(tx, row: dict) -> Optional[str]:
             event = _join_invite_event(tx, row)
             if event is None:
                 return 'withdrawn'
+            withdrawn = _join_invite_withdrawn(tx, row, event)
+            if withdrawn is not None:
+                return withdrawn
             if join.invite_lapsed(event['ends_at'], _now()):
                 return 'lapsed'
         if not row['exempt']:

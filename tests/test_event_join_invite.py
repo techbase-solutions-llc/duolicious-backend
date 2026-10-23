@@ -295,7 +295,7 @@ def test_an_address_that_joins_after_queueing_is_skipped(published, confirmed_gu
 def test_a_queued_invitation_is_sent(published, confirmed_guest, addresses, invite_on):
     # The drain reads the real clock, and drops an invitation past its 7
     # days: the gathering ended yesterday.
-    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1))
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1), tz=_zone_at(14))
     state, sent = _drain_only(row['id'])
     assert state['state'] == 'accepted' and sent[0]['to_addr'] == row['email']
 
@@ -432,6 +432,13 @@ def _queued_now(published, confirmed_guest, addresses, *, ended_ago: timedelta, 
     return row, ev
 
 
+def _zone_at(hour: int) -> str:
+    """A fixed-offset zone whose local hour on the real clock is `hour`,
+    so a drain test does not depend on when the suite runs."""
+    o = (hour - datetime.now(timezone.utc).hour + 12) % 24 - 12
+    return 'Etc/GMT' if o == 0 else f'Etc/GMT{-o:+d}'
+
+
 def _outbox_row(row_id) -> dict:
     with api_tx('read committed') as tx:
         return dict(tx.execute('SELECT * FROM email_outbox WHERE id = %(i)s', dict(i=row_id)).fetchone())
@@ -462,7 +469,7 @@ def test_a_late_drain_beyond_the_known_calendar_holds_it(published, confirmed_gu
     waits, and looks again within the hour, so a calendar extended inside
     the 7 days lets it go."""
     import service.spotlight.restdays as rd
-    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1))
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1), tz=_zone_at(14))
     today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
     monkeypatch.setattr(rd, 'KNOWN_THROUGH', today - timedelta(days=1))
     before = datetime.now(timezone.utc)
@@ -494,3 +501,55 @@ def test_an_invitation_drained_after_its_7_days_is_dropped(published, confirmed_
     state, sent = _drain_only(row['id'])
     assert sent == [] and state == dict(state='skipped', last_error='lapsed')
     assert _record(row['email']) is not None  # the address had its one invitation
+
+
+# ---------------------------------------------------------------------------
+# At the send: the hours (Owner decision 3) and the gathering's and the
+# RSVP's state, read again.
+# ---------------------------------------------------------------------------
+
+def test_invite_hold_keeps_to_the_hours():
+    from service.events.join import invite_hold
+    ends = datetime(2026, 10, 17, 22, 0, tzinfo=CHICAGO)
+    tz = 'America/Chicago'
+    assert invite_hold(ends, tz, datetime(2026, 10, 18, 12, 0, tzinfo=CHICAGO)) is None
+    assert invite_hold(ends, tz, datetime(2026, 10, 18, 7, 30, tzinfo=CHICAGO)) == (
+        'out_of_hours', datetime(2026, 10, 18, 10, 0, tzinfo=CHICAGO))
+    assert invite_hold(ends, tz, datetime(2026, 10, 18, 20, 0, tzinfo=CHICAGO)) == (
+        'out_of_hours', datetime(2026, 10, 19, 10, 0, tzinfo=CHICAGO))
+    # The last evening of the window: never past it, where the drain drops it.
+    assert invite_hold(ends, tz, datetime(2026, 10, 24, 20, 30, tzinfo=CHICAGO)) == (
+        'out_of_hours', ends + timedelta(days=7))
+
+
+def test_a_drain_outside_the_hours_holds_it_until_10_in_the_gatherings_zone(
+        published, confirmed_guest, addresses, invite_on):
+    """Queued in the day, drained at 03:00 gathering time (the cron fell
+    behind): held, no attempt spent, until 10:00 that day in the
+    gathering's zone."""
+    tz = _zone_at(3)
+    row, _ = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1), tz=tz)
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='queued', last_error='out_of_hours')
+    after = _outbox_row(row['id'])
+    local = datetime.now(timezone.utc).astimezone(ZoneInfo(tz))
+    assert after['next_attempt_at'] == local.replace(hour=10, minute=0, second=0, microsecond=0)
+    assert after['attempts'] == 0
+
+
+@pytest.mark.parametrize('change, reason', [
+    ("UPDATE event SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(e)s", 'cancelled'),
+    ('UPDATE event SET paused_at = NOW() WHERE id = %(e)s', 'withdrawn'),
+    ("UPDATE event SET status = 'draft' WHERE id = %(e)s", 'withdrawn'),
+    ('DELETE FROM event WHERE id = %(e)s', 'withdrawn'),
+    ("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE event_id = %(e)s", 'cancelled'),
+    ("""UPDATE event_rsvp SET name = NULL, email = NULL, normalized_email = NULL, token_hash = NULL,
+                              erased_at = NOW() WHERE event_id = %(e)s""", 'withdrawn'),
+])
+def test_a_gathering_or_place_that_ended_since_queueing_is_skipped(published, confirmed_guest, addresses,
+                                                                    invite_on, change, reason):
+    row, ev = _queued_now(published, confirmed_guest, addresses, ended_ago=timedelta(days=1), tz=_zone_at(14))
+    with api_tx() as tx:
+        tx.execute(change, dict(e=ev['id']))
+    state, sent = _drain_only(row['id'])
+    assert sent == [] and state == dict(state='skipped', last_error=reason)
