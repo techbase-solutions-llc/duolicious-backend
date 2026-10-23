@@ -9,9 +9,11 @@ scripts/send_proofs.py, whose address and helpers this reuses: to
 PROOF_TO only, straight through the mailer, never the outbox; sample data
 only (Grace Fellowship, Marriage preparation evening, Hannah Okafor); no
 switch read or changed. Every link that would carry a token (confirm,
-cancel, the calendar file, the manage link, unsubscribe) points at
-PROOF_LINK_DISABLED. It refuses to send while any of the 6 title images
-is missing from emails/assets (it prints their stems and exits 1).
+cancel, the calendar file, the manage link, unsubscribe) and every join
+link (sign-up with a gathering's source, so a proof click credits nothing)
+points at PROOF_LINK_DISABLED. It refuses to send while any of the title
+images in mail.TITLES is missing from emails/assets (it prints their stems
+and exits 1).
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ def _inert_event_links(name: str, html: str) -> str:
         b = re.escape(base)
         html = re.sub(b + r'/rsvp/[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
         html = re.sub(b + r'/host/gatherings\?t=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
+        html = re.sub(b + r'/auth/sign-up\?src=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
     return _inert(name, html)
 
 
@@ -51,6 +54,15 @@ def plan() -> list[dict]:
         ('event_manage', 'Your manage link (3.8)', mail.preview_manage),
         ('event_approved', 'Request to host approved (plan item 15)', mail.preview_approved),
         ('event_live', 'Gathering live (plan item 15)', mail.preview_live),
+        # Inviting guests who are not members to join (TEC-1845).
+        ('event_confirm_join', 'Confirm your place with the join block (3.1)', mail.preview_confirm_join),
+        ('event_confirm_online_join', 'Confirm your place with the join block, online',
+         mail.preview_confirm_online_join),
+        ('event_reminder_join', 'Reminder with the join block (3.2)', mail.preview_reminder_join),
+        ('event_reminder_online_join', 'Reminder with the join block, online (3.3)',
+         mail.preview_reminder_online_join),
+        ('event_join_invite', 'Invitation to join (3.9)', mail.preview_join_invite),
+        ('event_join_invite_online', 'Invitation to join, online gathering', mail.preview_join_invite_online),
     ]
     out = []
     for name, label, build in builders:
