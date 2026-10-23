@@ -92,6 +92,18 @@ def test_a_push_tap_is_recorded_once_per_10_minutes(client, make_person, sign_in
     assert [r['src'] for r in rows] == ['qpush', 'lpush']
 
 
+def test_a_matchmaker_push_tap_is_recorded(client, make_person, sign_in):
+    """Plan 2026-10-22 fix 11: the alert, introduction and both-said-yes
+    pushes' sources are taps like the question pushes'."""
+    me = _member(make_person, sign_in, 'MmTapper')
+    for src in ('mmalert', 'mmintro', 'mmtold'):
+        assert client.post('/push-taps', headers=me['headers'], json=dict(src=src)).status_code == 204
+    with api_tx('read committed') as tx:
+        rows = tx.execute('SELECT src FROM push_tap WHERE person_id = %(p)s ORDER BY id',
+                          dict(p=me['id'])).fetchall()
+    assert [r['src'] for r in rows] == ['mmalert', 'mmintro', 'mmtold']
+
+
 def test_an_unknown_source_is_refused(client, make_person, sign_in):
     me = _member(make_person, sign_in, 'TapBad')
     assert client.post('/push-taps', headers=me['headers'], json=dict(src='email')).status_code == 400

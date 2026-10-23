@@ -99,12 +99,23 @@ def test_the_mentor_invitation_says_what_they_see():
 
 
 def test_the_pushes():
-    assert mail.alert_push(1)['url'] == '/discover?fits=1' and mail.alert_push(1)['tag'] == 'mm-alert'
+    # Plan 2026-10-22 fix 11: each push carries its own ?src=, appended to
+    # any query the link already has, so a tap on it can be recorded.
+    assert mail.alert_push(1)['url'] == '/discover?fits=1&src=mmalert' and mail.alert_push(1)['tag'] == 'mm-alert'
     assert mail.alert_push(3)['body'] != mail.alert_push(1)['body']
     p = mail.intro_push(7, 'Hannah', 'Daniel')
     assert p == dict(title='Ahavah', body='Hannah thinks you and Daniel might be a good fit',
-                     url='/matches?intro=7', tag='mm-intro-7')
-    assert mail.introducer_push(7, 'Miriam', 'Daniel')['body'] == 'Miriam and Daniel both said yes.'
+                     url='/matches?intro=7&src=mmintro', tag='mm-intro-7')
+    told = mail.introducer_push(7, 'Miriam', 'Daniel')
+    assert told['body'] == 'Miriam and Daniel both said yes.'
+    assert told['url'] == '/matches?src=mmtold' and told['tag'] == 'mm-told-7'
+
+
+def test_a_push_source_joins_the_query_the_link_has():
+    assert mail.with_src('/matches', 'mmtold') == '/matches?src=mmtold'
+    assert mail.with_src('/discover?fits=1', 'mmalert') == '/discover?fits=1&src=mmalert'
+    assert mail.without_src('/discover?fits=1&src=mmalert') == '/discover?fits=1'
+    assert mail.without_src('/matches?src=mmtold') == '/matches'
 
 
 def test_a_recommendation_goes_to_its_own_recipient_through_the_outbox(recommendation, outbox_rows):

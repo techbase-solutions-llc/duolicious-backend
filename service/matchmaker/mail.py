@@ -34,6 +34,7 @@ import html
 import traceback
 from contextlib import contextmanager
 from typing import Callable, Literal, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from emails.base import INK, MUTED, SANS, button, chip, render, title_image
 from service.campaigns import held
@@ -271,21 +272,43 @@ def mentor_invite_email(single: str, pronoun: Pronoun, accept_url: str) -> tuple
 # ---------------------------------------------------------------------------
 # Pushes, each -> dict(title, body, url, tag)
 # ---------------------------------------------------------------------------
+# Each push's link carries its own ?src=, which the web app posts to
+# POST /push-taps on landing, as the question pushes' qpush, mpush and
+# lpush (plan 2026-10-22, fix 11). duotypes.PostPushTap accepts them.
+
+ALERT_SRC = 'mmalert'
+INTRO_SRC = 'mmintro'
+TOLD_SRC = 'mmtold'
+
+
+def with_src(url: str, src: str) -> str:
+    """`url` with ?src=`src`, joined to any query it already has."""
+    parts = urlsplit(url)
+    query = parse_qsl(parts.query, keep_blank_values=True) + [('src', src)]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def without_src(url: str) -> str:
+    """`url` with no ?src=, for a proof push whose tap must count as nothing."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != 'src']
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
 
 def alert_push(n: int) -> dict:
     """1.11 and 1.12."""
-    return dict(title='Ahavah', body=fits_line(n), url='/discover?fits=1', tag='mm-alert')
+    return dict(title='Ahavah', body=fits_line(n), url=with_src('/discover?fits=1', ALERT_SRC), tag='mm-alert')
 
 
 def intro_push(intro_id: int, introducer: str, other: str) -> dict:
     """The 5c heading."""
     return dict(title='Ahavah', body=f'{introducer} thinks you and {other} might be a good fit',
-                url=f'/matches?intro={intro_id}', tag=f'mm-intro-{intro_id}')
+                url=with_src(f'/matches?intro={intro_id}', INTRO_SRC), tag=f'mm-intro-{intro_id}')
 
 
 def introducer_push(intro_id: int, a: str, b: str) -> dict:
     """5c.8."""
-    return dict(title='Ahavah', body=f'{a} and {b} both said yes.', url='/matches',
+    return dict(title='Ahavah', body=f'{a} and {b} both said yes.', url=with_src('/matches', TOLD_SRC),
                 tag=f'mm-told-{intro_id}')
 
 

@@ -101,6 +101,8 @@ def test_the_pushes_go_to_the_owners_device_only(pushed, capsys):
     assert bodies == ['2 new members fit what you are looking for',
                       'Hannah thinks you and Miriam might be a good fit', 'Miriam and Daniel both said yes.']
     assert all(p['title'].startswith('[Proof] ') for _, p in pushed) and _counts() == before
+    assert not [p for _, p in pushed if 'src=' in p['url']], 'a proof tap would count as a member tap'
+    assert [p['url'] for _, p in pushed] == ['/discover?fits=1', '/matches?intro=1', '/matches']
 
 
 def test_no_switch_is_read(monkeypatch, capsys):
