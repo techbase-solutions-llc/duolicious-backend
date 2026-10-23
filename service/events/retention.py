@@ -55,11 +55,21 @@ _Q_REQUESTS = "DELETE FROM ahavah_invite_request WHERE updated_at < %(now)s - %(
 
 # The once-per-address record of the invitation to join (0076) is kept
 # while Ahavah holds any lead row for the address, and goes with the last
-# one (TEC-1845, Owner decision 2 of the invite-to-join plan). The lead
-# sweep runs first in the same transaction (service/cron/leadretention).
+# one, in the same transaction (TEC-1845, Owner decision 2 of the
+# invite-to-join plan). Two paths delete lead rows, and each takes the
+# record with them: the lead sweep runs first in this sweep's transaction
+# (service/cron/leadretention), and an account's deletion runs
+# Q_DELETE_JOIN_INVITES_OF beside service.hard_delete.Q_DELETE_LEADS_OF.
 _Q_JOIN_INVITES = """
     DELETE FROM lead_join_invite j
      WHERE NOT EXISTS (SELECT 1 FROM lead l WHERE l.normalized_email = j.normalized_email)
+"""
+
+# The account's deletion: the record goes with the address's lead rows,
+# not in the next day's sweep. The caller binds `nes` as for
+# Q_DELETE_LEADS_OF and runs it right after that.
+Q_DELETE_JOIN_INVITES_OF = """
+    DELETE FROM lead_join_invite WHERE normalized_email = ANY(%(nes)s::text[])
 """
 
 
