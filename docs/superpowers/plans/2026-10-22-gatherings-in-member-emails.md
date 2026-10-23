@@ -336,3 +336,17 @@ Each has the default this plan builds. He may change any of them.
 ## Owner's answer (22 Oct 2026)
 
 Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.
+
+## Build notes (23 Oct 2026, Tasks 2 to 4)
+
+Built on branch `gatherings-in-emails` from `ahavah/main` 6cdce74, then rebased onto 4762b16 (push-src merged), dark. Tasks 1 and 5 to 8 are not built: the design round has not returned, and no proof was sent. No migration.
+
+Rulings made while building:
+
+- The 2 switches sit at the end of `SWITCHES` and after `AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED` in both compose blocks, away from the lines `events-invite-to-join` adds beside the events switches, so the two branches merge without a conflict.
+- `fields.date_block` raises on an unknown zone, as planned, but `gatherings_for_members` catches it: that read is the whole run's, so a bad row leaves its card without `date` and the email drops that card with a printed warning (`test_a_bad_zone_leaves_the_card_without_a_date_not_the_read`, `test_a_bad_gathering_drops_its_card_not_the_send`).
+- `online_only` is False for a member with no region, so "Nothing near you yet" is never said to someone we cannot place.
+- `_gathering_parts` reads the switch again per recipient, so turning it off stops a run already under way. `_week_context` takes an optional `now` so tests read as of a far-future date and never see gatherings other tests left on the shared database.
+- A preview row (person 0) gets the online list, and its links carry no person, as the E2 button's do.
+- The markup is minimal and marked `# PENDING DESIGN`: the subhead image `subhead-gatherings.png` (and `-wht`) at a placeholder width of 280, the date block with the day at 18 px, the card spacing and the "See all gatherings" link. The image files are not in `emails/assets/`, so `asset_src` falls back to the public url. Nothing is typed at 20 px or more; `test_the_proof_fits_a_phone` runs the phone check's rules on the proof until Task 6 adds the sample rows.
+- The preheader with the section is marked `# NEW LINE` for Task 7.
