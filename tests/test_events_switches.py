@@ -61,7 +61,8 @@ def test_every_gathering_route_answers_404_while_dark(app, client, monkeypatch):
             r = client.open(path, method=method, json={'image': '!!', 'content_type': 'image/png'})
             seen.append((method, rule.rule))
             assert r.status_code == 404, (method, rule.rule, r.status_code)
-    assert len(seen) == 23
+    # 23, and GET /rsvp/mine and /rsvp/mine/<id> (in-app entry plan, release 2).
+    assert len(seen) == 25
 
 
 def test_status_says_dark_until_live(client, monkeypatch):
