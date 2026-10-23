@@ -136,6 +136,10 @@ services:
       AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
       AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
       AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
+      # The new in-app entries (TEC-1845, service/app_entries.py): off, owner
+      # (only the ids or addresses in the allow list) or on. Off by default.
+      AHAVAH_APP_ENTRIES: ${AHAVAH_APP_ENTRIES:-off}
+      AHAVAH_APP_ENTRIES_ALLOW: ${AHAVAH_APP_ENTRIES_ALLOW:-}
       # Quick questions (TEC-1845). Off until the owner confirms each proof.
       # The api needs them too: Admin > Questions shows their state and E2
       # is built here for the Send button.
@@ -354,6 +358,10 @@ services:
       AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
       AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
       AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
+      # The new in-app entries (TEC-1845, service/app_entries.py): off, owner
+      # (only the ids or addresses in the allow list) or on. Off by default.
+      AHAVAH_APP_ENTRIES: ${AHAVAH_APP_ENTRIES:-off}
+      AHAVAH_APP_ENTRIES_ALLOW: ${AHAVAH_APP_ENTRIES_ALLOW:-}
       # Quick questions (TEC-1845): the cron sends the pushes and the launch
       # email. Off until the owner confirms each proof.
       AHAVAH_QUESTIONS_LIVE_ENABLED: ${AHAVAH_QUESTIONS_LIVE_ENABLED:-0}
