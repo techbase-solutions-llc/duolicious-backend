@@ -11,13 +11,19 @@ docs/superpowers/plans/2026-10-22-events-invite-to-join.md).
   mail_block_allowed the rest-day rule on top, for the confirm and reminder
                      emails: never inside a rest period or past the last
                      date the owner's calendar has been read for
+  invite_due         when the one invitation to join may be queued: the
+                     gathering's local days after it ends, 10:00 to 20:00
+                     gathering time, never inside or within REST_MARGIN of a
+                     rest period nor past the known calendar, and only
+                     inside INVITE_WINDOW (Owner decisions 3 and 4)
 
 Members never: the address is checked against person at every build, so a
 guest who joined since the RSVP sees no block.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import zoneinfo
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import quote
 
@@ -25,6 +31,13 @@ from service.config import WEB_BASE_URL
 from service.leads.sources import event_source
 
 BLOCK_SWITCH = 'events_join_block'
+
+# The invitation (Owner decision 3): local hours in the gathering's own
+# zone, [first, last); the window after ends_at; the margin kept before a
+# rest period, because the outbox drain may send a while after queueing.
+INVITE_HOURS = (10, 20)
+INVITE_WINDOW = timedelta(days=7)
+REST_MARGIN = timedelta(hours=2)
 
 
 def join_url(slug: str) -> str:
@@ -57,3 +70,19 @@ def offers_join(tx, r: dict) -> bool:
 def mail_block_allowed(now: datetime) -> bool:
     from service.spotlight import restdays
     return not restdays.is_rest_period(now) and not restdays.is_beyond_known(now)
+
+
+def invite_due(ends_at: datetime, tz: str, now: datetime) -> bool:
+    """True when the invitation for a gathering that ended at `ends_at` may
+    be queued at `now`. Past KNOWN_THROUGH nothing is due (Owner decision
+    4): an invitation whose window closes in that time is never sent."""
+    from service.spotlight import restdays
+    zone = zoneinfo.ZoneInfo(tz)
+    local_now = now.astimezone(zone)
+    first, last = INVITE_HOURS
+    if local_now.date() <= ends_at.astimezone(zone).date():
+        return False
+    if not first <= local_now.hour < last or now >= ends_at + INVITE_WINDOW:
+        return False
+    return not (restdays.is_rest_period(now) or restdays.is_rest_period(now + REST_MARGIN)
+                or restdays.is_beyond_known(now + REST_MARGIN))

@@ -63,6 +63,9 @@ JOBS = [
     # daily digest, each behind its email's switch and events_live.
     ('event_reminder', event_jobs.queue_reminders),
     ('event_digest', event_jobs.queue_digests),
+    # The one invitation to join, the day after a gathering, to guests who
+    # asked for news (TEC-1845), behind its switch and events_live.
+    ('event_join_invite', event_jobs.queue_join_invites),
 ]
 
 print(f'Hello from cron module: {__name__}')

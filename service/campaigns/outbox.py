@@ -477,6 +477,10 @@ def _refusal(tx, row: dict) -> Optional[str]:
     if row.get('lead_id') is not None:
         if is_suppressed_send(row['email']):
             return 'suppressed'
+        # The invitation to join a gathering's guest (TEC-1845) is never
+        # sent once the address has joined since it was queued.
+        if row['campaign'] == 'event_join_invite' and _is_member_address(tx, row['email']):
+            return 'member_now'
         if not row['exempt']:
             return news_refusal(tx, row['lead_id'], requested=payload.get('requested') is True)
         if together and lead_unsubscribed(tx, row['lead_id']):
