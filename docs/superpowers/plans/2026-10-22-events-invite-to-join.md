@@ -482,3 +482,7 @@ Rulings on the plan:
 - That change makes `tests/test_lead_signup.py::test_an_unknown_source_is_refused` (a 400 for `tool:roulette`) wrong by design; it is now `test_an_unknown_source_is_ignored` (200, no lead).
 - The `join_invite_schema` fixture is session-scoped and autouse (the plan did not say autouse): `purge_event_data` now reads `lead_join_invite`, and `tests/test_tool_retention.py` runs the whole sweep without asking for the gathering tables.
 - The email block is 15 px, not the frame's 14.5: the phone type scale in `emails.base` reads whole pixels only. The handoff gives no subject for 3.9; `An invitation to join Ahavah` is marked `NEW LINE` for Task 10.
+
+## Owner's answer (22 Oct 2026)
+
+Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.

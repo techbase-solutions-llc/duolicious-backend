@@ -690,9 +690,10 @@ def questions_schema(growth_schema):
 
     from database import api_tx
 
-    path = Path(__file__).resolve().parent.parent / 'migrations' / '0067_quick_questions.sql'
-    with api_tx() as tx:
-        tx.execute(path.read_text(encoding='utf-8'))
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in ('0067_quick_questions.sql', '0077_push_tap_matchmaker_sources.sql'):
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))
 
 
 @pytest.fixture

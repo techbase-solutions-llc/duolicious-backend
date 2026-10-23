@@ -63,11 +63,13 @@ def plan() -> list[dict]:
 
 def pushes() -> list[dict]:
     """The alert push, the introduction push and the introducer's, with
-    sample names."""
+    sample names. Their links carry no ?src=, so a proof tap counts as
+    nothing (as the question proofs')."""
     from service.matchmaker import mail
-    return [dict(mail.alert_push(2), kind='mm_alert'),
-            dict(mail.intro_push(1, 'Hannah', 'Miriam'), kind='mm_intro'),
-            dict(mail.introducer_push(1, 'Miriam', 'Daniel'), kind='mm_told')]
+    out = [dict(mail.alert_push(2), kind='mm_alert'),
+           dict(mail.intro_push(1, 'Hannah', 'Miriam'), kind='mm_intro'),
+           dict(mail.introducer_push(1, 'Miriam', 'Daniel'), kind='mm_told')]
+    return [dict(p, url=mail.without_src(p['url'])) for p in out]
 
 
 def missing_titles() -> list[str]:
