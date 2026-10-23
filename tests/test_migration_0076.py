@@ -54,3 +54,35 @@ def test_the_gathering_may_go_and_the_record_stays(published, addresses):
         row = tx.execute('SELECT * FROM lead_join_invite WHERE normalized_email = %(a)s',
                          dict(a=a)).fetchone()
     assert row is not None and row['event_id'] is None and row['invited_at'] is not None
+
+
+def test_it_waits_at_most_5_seconds_for_its_lock_on_event():
+    """The foreign key takes SHARE ROW EXCLUSIVE on event. Behind a deploy
+    that finds an organiser's edit still open, the CREATE gives up after 5
+    seconds rather than queue every later write on event behind it, as
+    0077 does for push_tap. The same SQL under a scratch name, so the
+    shared table is never dropped."""
+    import time
+
+    import database
+    scratch = f'lead_join_invite_locktest_{uuid4().hex[:8]}'
+    holder = psycopg.connect(database._api_conninfo)
+    runner = psycopg.connect(database._api_conninfo)
+    try:
+        # The test connections cancel any statement after 5 seconds
+        # (database._api_conninfo); the deploy's psql does not.
+        runner.execute("SET statement_timeout = '30s'")
+        runner.commit()
+        holder.execute('LOCK TABLE event IN ROW EXCLUSIVE MODE')
+        started = time.monotonic()
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            runner.execute(SQL.replace('lead_join_invite', scratch))
+        assert time.monotonic() - started < 15
+        runner.rollback()
+        holder.rollback()
+        runner.execute(SQL.replace('lead_join_invite', scratch))
+        assert runner.execute('SHOW lock_timeout').fetchone()[0] in ('0', '0ms')
+        runner.rollback()
+    finally:
+        holder.close()
+        runner.close()
