@@ -154,5 +154,7 @@ def test_signup_source_reads_each_kind():
     assert signup_source('marriage_checklist') == 'tool:checklist'
     assert signup_source('tool:knows-me') == 'tool:knows-me'
     assert signup_source('event:marriage-evening-a1b2c3') == 'event:marriage-evening-a1b2c3'
-    for bad in ('event:', 'event:Bad_Slug', 'event:<b>', 'utm:facebook', 'alert:visitor', None, 7):
+    # The visitor alert email's sign-up link (TEC-1929, fix 8).
+    assert signup_source('alert:visitor') == 'alert:visitor'
+    for bad in ('event:', 'event:Bad_Slug', 'event:<b>', 'utm:facebook', 'alert:other', None, 7):
         assert signup_source(bad) is None, bad

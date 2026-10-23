@@ -495,8 +495,9 @@ class PostCheckOtp(BaseModel):
     otp: str = Field(pattern=r"^\d{6}$")
     # Optional acquisition tag. Only stamped onto NEW onboardees (never
     # existing members): a couple tool's source, the marriage checklist's
-    # old name, which is stored as tool:checklist, or event:{slug} from a
-    # gathering's join link (TEC-1845, service.leads.sources.signup_source).
+    # old name, which is stored as tool:checklist, event:{slug} from a
+    # gathering's join link (TEC-1845), or alert:visitor from the visitor
+    # alert email's sign-up link (TEC-1929); service.leads.sources.signup_source.
     # Anything else, a value over 60 characters or not a string included,
     # reads as no source: a value the web did not expect must never be a
     # 400 that blocks sign-in.
