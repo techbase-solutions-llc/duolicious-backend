@@ -350,3 +350,14 @@ Rulings made while building:
 - A preview row (person 0) gets the online list, and its links carry no person, as the E2 button's do.
 - The markup is minimal and marked `# PENDING DESIGN`: the subhead image `subhead-gatherings.png` (and `-wht`) at a placeholder width of 280, the date block with the day at 18 px, the card spacing and the "See all gatherings" link. The image files are not in `emails/assets/`, so `asset_src` falls back to the public url. Nothing is typed at 20 px or more; `test_the_proof_fits_a_phone` runs the phone check's rules on the proof until Task 6 adds the sample rows.
 - The preheader with the section is marked `# NEW LINE` for Task 7.
+
+## Build notes (23 Oct 2026, the design, Tasks 5 and 6)
+
+The design round returned as `ahavah-web/Claude Design/Ahavah Gatherings in Member Emails.html` (`pages/p20-member-emails.js`), copy `handoff/copy/20-gatherings-in-member-emails.md`. Built on `gatherings-in-emails` after merging `origin/ahavah/main` (7f32a3c, no conflict). Tracked as TEC-1931. No proof sent, no switch changed.
+
+- The title images are named `subhead-gatherings-near` (181 px) and `subhead-gather-community` (252 px), not the placeholder `subhead-gatherings`. Both are in `ahavah-web/public/email/` (branch `gatherings-email-titles`) and `emails/assets/`, and in `tests/email_assets_manifest.txt`.
+- Every `# PENDING DESIGN` in `emails/community_weekly.py` is replaced by W.1: a hairline card, the 56 px date tile with the weekday in capitals, the day at 18 px and the month in small type, "See all gatherings" padded to 44 px. A card is tried before its link is minted, so a dropped card leaves no link. The design's small icons (pin, video, spark) are left out: an email cannot carry them safely. `white-space:nowrap` on the chip is left out too, as the phone check requires.
+- The proof's 3 sample gatherings are W.1's (Dallas, Atlanta, Hamilton); W.3's 2 online ones are `SAMPLE_GATHERINGS_ONLINE`.
+- The weekly section stays after the community line and before the button, as Task 4 placed it. The welcome's mention goes after the existing content, below the tip, as M.1 draws it.
+- The welcome's link is a campaign link of kind `welcome`, the welcome's own campaign key.
+- Owner decision 1 stands: M.2 ("2 things to try first") is not built.

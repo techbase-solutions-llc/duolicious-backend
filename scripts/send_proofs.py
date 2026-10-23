@@ -54,7 +54,7 @@ def _inert(name: str, html: str) -> str:
 
 
 def _emails() -> list[dict]:
-    from emails import (friend_joined, likes_waiting_weekly, one_photo_nudge,
+    from emails import (friend_joined, likes_waiting_weekly, member_welcome, one_photo_nudge,
                         profile_views_weekly, referral_intro, reminders,
                         send_community_weekly, send_spotlight_resend)
     from emails.spotlight_card_ready import FROM_ADDR as E4_FROM, SUBJECT as E4_SUBJECT, card_ready_html
@@ -79,13 +79,35 @@ def _emails() -> list[dict]:
         ('e1_spotlight', 'Spotlight announcement and its resend, new copy (79, 80, 82)',
          send_spotlight_resend.preview, send_spotlight_resend.FROM_ADDR),
         ('e4_card_ready', 'Spotlight card ready, new copy (79, 82)', lambda to: e4(), E4_FROM),
+        ('e2_gatherings', 'Weekly email with Gatherings near you (events item 20)',
+         send_community_weekly.preview_gatherings, send_community_weekly.FROM_ADDR),
+        ('welcome_gatherings', 'Member welcome with the gatherings mention (events item 20)',
+         member_welcome.preview_welcome_gatherings, member_welcome.FROM_ADDR),
     ]
+    waiting = missing_titles()
     out = []
     for name, label, build, from_addr in builders:
+        if waiting and name in _GATHERINGS_PROOFS:
+            continue
         subject, html = build(PROOF_TO)
         out.append(dict(name=name, label=label, subject=f"[PROOF] {subject}",
                         html=_inert(name, html), from_addr=from_addr))
     return out
+
+
+# The title images of the gatherings round (handoff 20). A proof without its
+# title is not the email the owner would approve, so these 2 wait for them.
+_GATHERINGS_PROOFS = ('e2_gatherings', 'welcome_gatherings')
+GATHERINGS_TITLES = ('subhead-gatherings-near', 'subhead-gather-community')
+
+
+def missing_titles() -> list[str]:
+    """The stems of the gatherings title images (light or dark) not in
+    emails/assets."""
+    from emails import base
+    return [stem for stem in GATHERINGS_TITLES
+            if not ((base.ASSETS_DIR / f'{stem}.png').is_file()
+                    and (base.ASSETS_DIR / f'{stem}-wht.png').is_file())]
 
 
 def _pushes() -> list[dict]:
@@ -125,6 +147,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     a = ap.parse_args(argv)
     emails, pushes = plan()
     mode = 'SEND' if a.send else 'DRY RUN'
+    waiting = missing_titles()
+    if waiting:
+        print(f"waiting for title images: {', '.join(waiting)}")
     print(f"{mode}: {len(emails)} proof emails to {PROOF_TO}, "
           f"{len(pushes)} proof pushes to account {PUSH_PERSON_ID}")
     for e in emails:
