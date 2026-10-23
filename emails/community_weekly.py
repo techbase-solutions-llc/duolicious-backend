@@ -3,10 +3,10 @@ Copy rules: NO em dashes. Sentence case."""
 from __future__ import annotations
 
 import html as _html
-from typing import Optional
+from typing import Callable, Optional
 from service.config import EMAIL_DOMAIN
 from service.spotlight.country import display_country
-from emails.base import render, button, chip, title_image, callout, INK_SOFT, MUTED, SANS
+from emails.base import render, button, chip, title_image, callout, INK, INK_SOFT, INDIGO, LIME, MUTED, PANEL, SANS
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 SUBJECT = "This week on Ahavah"
@@ -109,13 +109,105 @@ def _invite_block(invite_url: Optional[str]) -> str:
 """
 
 
+# PENDING DESIGN: the subhead image and its natural width come back from
+# the Claude Design round (gatherings in the member emails, Task 1). Until
+# then the file is missing from emails/assets/, asset_src falls back to the
+# public url, and the switch stays off. 280 is the brief's wrap width.
+_GATHERINGS_TITLE = ("subhead-gatherings.png", "subhead-gatherings-wht.png", "Gatherings near you.", 280)
+
+
+def _gathering_card(g: dict, href: str) -> str:
+    """One gathering as a table row (frame 4.2): the date block, the title,
+    the city or "Online", the organiser and "Ahavah will be there". Every
+    organiser field is escaped. Raises on a card with no date (a zone the
+    server does not know) or a missing field; the caller drops that card.
+
+    PENDING DESIGN: the date block's sizes and the card's spacing follow
+    frame 4.2 with the day number held at 18 px (the frame types it at 20,
+    which the phone check rejects); Task 1 returns the email-safe block."""
+    day_name, day, month = g['date']
+    if g['mode'] == 'online':
+        place = 'Online'
+    else:
+        place = ', '.join(_esc(v) for v in (g.get('city'), g.get('country')) if v)
+    link = _html.escape(href, quote=True)
+    chip_html = ''
+    if g.get('ahavah_attending'):
+        chip_html = (f'<span style="display:inline-block;margin-top:6px;padding:3px 9px;border-radius:999px;'
+                     f'background:{LIME};color:{INK};font-family:{SANS};font-size:12px;font-weight:700;">'
+                     f'Ahavah will be there</span>')
+    return f"""
+<tr><td style="padding:0 0 10px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;background:{PANEL};border-radius:14px;">
+    <tr>
+      <td width="56" valign="top" style="width:56px;padding:12px 0 12px 12px;">
+        <a href="{link}" style="display:block;text-decoration:none;text-align:center;border-radius:10px;background:#EDE8FE;padding:6px 0;font-family:{SANS};color:{INDIGO};">
+          <span style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">{_esc(day_name)}</span>
+          <span style="display:block;font-size:18px;line-height:1.1;font-weight:800;">{_esc(day)}</span>
+          <span style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">{_esc(month)}</span>
+        </a>
+      </td>
+      <td valign="top" style="padding:12px;font-family:{SANS};">
+        <a href="{link}" style="color:{INK};text-decoration:none;font-size:15px;line-height:1.35;font-weight:700;">{_esc(g['title'])}</a>
+        <div style="font-size:13px;line-height:1.45;color:{MUTED};margin-top:2px;">{place}</div>
+        <div style="font-size:13px;line-height:1.45;color:{MUTED};">{_esc(g['organiser']['name'])}</div>
+        {chip_html}
+      </td>
+    </tr>
+  </table>
+</td></tr>"""
+
+
+def _gatherings_block(gatherings: list[dict], online_only: bool, see_all_url: str,
+                      card_url: Callable[[str], str]) -> str:
+    """Gatherings near you (TEC-1845, frames 4.2 to 4.5), held behind
+    AHAVAH_E2_GATHERINGS_ENABLED. Left out when the member has none (4.4,
+    4.5). Built once per recipient inside run_campaign's loop, so a card
+    that raises is dropped with a warning, as _safe_spotlight_block does,
+    and never the email."""
+    cards = []
+    for g in gatherings or []:
+        try:
+            cards.append(_gathering_card(g, card_url(g['slug'])))
+        except Exception as e:  # one card, never the send
+            print(f"community_weekly: dropping gathering {g.get('slug')!r} ({e!r})")
+    if not cards:
+        return ''
+    # Copy 1.5 of the marketing pages, for a member with a region whose
+    # every card is online (owner decision 5).
+    line = ''
+    if online_only:
+        line = (f'<p class="e-text" style="margin:0 0 12px;font-family:{SANS};font-size:17px;'
+                f'line-height:1.55;color:{INK_SOFT};">Nothing near you yet. These are online.</p>')
+    see_all = _html.escape(see_all_url, quote=True)
+    rows = ''.join(cards)
+    # PENDING DESIGN: the "See all gatherings" link's weight and spacing.
+    return f"""
+{title_image(*_GATHERINGS_TITLE)}
+{line}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">{rows}
+</table>
+<p class="e-text" style="margin:4px 0 24px;font-family:{SANS};font-size:15px;line-height:1.5;">
+  <a href="{see_all}" style="color:{INDIGO};font-weight:700;text-decoration:underline;">See all gatherings</a>
+</p>
+"""
+
+
 def community_weekly_html(new_members: list[dict], total_members: int, spotlight: Optional[dict], cta_url: str, unsubscribe_url: str,
                           *, personal_line: Optional[str] = None, invite_url: Optional[str] = None,
-                          cta_label: str = "Open Discover", question_line: Optional[str] = None) -> str:
+                          cta_label: str = "Open Discover", question_line: Optional[str] = None,
+                          gatherings: Optional[list[dict]] = None, gatherings_online_only: bool = False,
+                          gatherings_see_all_url: Optional[str] = None,
+                          gathering_url: Optional[Callable[[str], str]] = None) -> str:
     """`personal_line`, `invite_url` and `cta_label` are the held personal
     parts (AHAVAH_E2_PERSONAL_ENABLED); `question_line` is this week's quick
-    question (AHAVAH_E2_QUESTION_LINE_ENABLED); left out, the email is as it
-    was."""
+    question (AHAVAH_E2_QUESTION_LINE_ENABLED); `gatherings` and the three
+    after it are Gatherings near you (AHAVAH_E2_GATHERINGS_ENABLED); left
+    out, the email is as it was."""
+    gatherings_html = ''
+    if gatherings and gatherings_see_all_url:
+        gatherings_html = _gatherings_block(gatherings, gatherings_online_only, gatherings_see_all_url,
+                                            gathering_url or (lambda slug: gatherings_see_all_url))
     body = f"""
 {chip("Community")}
 
@@ -132,7 +224,7 @@ def community_weekly_html(new_members: list[dict], total_members: int, spotlight
 <p class="e-text" style="margin:0 0 20px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK_SOFT};">
   The community is now <strong>{total_members} members</strong> across borders.
 </p>
-
+{gatherings_html}
 {button(cta_label, cta_url)}
 
 {_invite_block(invite_url)}
@@ -150,4 +242,7 @@ You're receiving the weekly community email as a member of Ahavah.
   <a href="https://ahavah.app/faq" style="color:{MUTED};font-weight:600;text-decoration:underline;">Help</a>
 </div>
 """
-    return render(title=SUBJECT, preheader="New members, community size, and this week's spotlight.", body_html=body, footer_html=footer)
+    preheader = "New members, community size, and this week's spotlight."
+    if gatherings_html:
+        preheader = "New members, gatherings near you and this week's spotlight."  # NEW LINE
+    return render(title=SUBJECT, preheader=preheader, body_html=body, footer_html=footer)

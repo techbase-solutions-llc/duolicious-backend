@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.community_weekly import community_weekly_html, SUBJECT, FROM_ADDR
@@ -28,7 +29,7 @@ CAP_DAYS = 6
 # recipient_count() never overstates what a real
 # run would send.
 _Q_RECIPIENTS = f"""
-    SELECT p.id AS person_id, p.email, p.name FROM person p
+    SELECT p.id AS person_id, p.email, p.name, p.country FROM person p
      WHERE p.activated AND p.deletion_requested_at IS NULL
        AND lower(p.email) <> ALL(%(ex)s)
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
@@ -91,12 +92,25 @@ def _spotlight_from_row(row) -> dict:
                 image_url=row['image_url'],
                 post_url=f"https://www.facebook.com/{row['external_post_id']}")
 
-def _week_context() -> dict:
+def _week_gatherings(tx, now: datetime) -> dict:
+    """Gatherings near you (TEC-1845), every region's list read once for
+    the run, or {} while AHAVAH_E2_GATHERINGS_ENABLED (or the events live
+    and list switches) is off, which leaves the section out of every
+    email."""
+    from service.events import member_email_on, public
+    if not member_email_on('e2_gatherings'):
+        return {}
+    return public.gatherings_for_members(tx, now=now)
+
+
+def _week_context(now: Optional[datetime] = None) -> dict:
+    now = now or datetime.now(timezone.utc)
     with api_tx('read committed') as tx:
         spotlight_row = tx.execute(_Q_SPOTLIGHT).fetchone()
         return dict(new_members=[dict(r) for r in tx.execute(_Q_NEW, dict(ex=_excluded())).fetchall()],
                     total=int(tx.execute(_Q_TOTAL, dict(ex=_excluded())).fetchone()['n']),
-                    spotlight=_spotlight_from_row(spotlight_row) if spotlight_row else None)
+                    spotlight=_spotlight_from_row(spotlight_row) if spotlight_row else None,
+                    gatherings=_week_gatherings(tx, now))
 
 def recipients() -> list[dict]:
     """Each row carries the week context this run renders. It is computed
@@ -186,6 +200,32 @@ def personal_parts(likes: int, unread: int, fits: int) -> dict:
     return dict(subject=SUBJECT, line=line, cta_label='Open Discover', target=f"{WEB_BASE_URL}/discover")
 
 
+def _gathering_parts(tx, row: dict, week: dict, dry: bool) -> dict:
+    """The reader's Gatherings near you, as community_weekly_html's keyword
+    arguments: their region's list (online only with no country), the
+    see-all link to /events on their region and one link per card, each
+    minted as an E2 campaign link so the click counts for E2 and never as
+    an event:{slug} lead. {} when the week has no lists (the switch is off)
+    or the reader has no gathering: nothing is minted then. The switch is
+    read again here, so turning it off stops a run already under way."""
+    from service.events import member_email_on, public
+    from service.matchmaker.regions import region_of
+    lists = week.get('gatherings')
+    if not lists or not member_email_on('e2_gatherings'):
+        return {}
+    country = row.get('country') if row.get('person_id') else None
+    cards, online_only = public.for_member(lists, country)
+    if not cards:
+        return {}
+    pid = row.get('person_id') or None
+    region = region_of(country)
+    see_all = f"{WEB_BASE_URL}/events?region={region}" if region else f"{WEB_BASE_URL}/events"
+    return dict(
+        gatherings=cards, gatherings_online_only=online_only,
+        gatherings_see_all_url=make_campaign_link(tx, 'e2', see_all, pid, dry_run=dry),
+        gathering_url=lambda slug: make_campaign_link(tx, 'e2', f"{WEB_BASE_URL}/e/{slug}", pid, dry_run=dry))
+
+
 def _build_personal(row: dict) -> tuple[str, str]:
     week = row['week']
     dry = row.get('dry_run', False)
@@ -199,11 +239,13 @@ def _build_personal(row: dict) -> tuple[str, str]:
                   if r['referral_code'] else None)
         new_members = newcomers_for(tx, pid, week)
         question_line = e2_question_line(tx, pid, datetime.now(timezone.utc))
-    return parts['subject'], community_weekly_html(
-        new_members, week['total'], week['spotlight'], cta,
-        _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
-        personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'],
-        question_line=question_line)
+        # Built inside the transaction: the card links are minted as the
+        # block is built.
+        return parts['subject'], community_weekly_html(
+            new_members, week['total'], week['spotlight'], cta,
+            _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
+            personal_line=parts['line'], invite_url=invite, cta_label=parts['cta_label'],
+            question_line=question_line, **_gathering_parts(tx, row, week, dry))
 
 
 def build_for(row: dict) -> tuple[str, str]:
@@ -216,9 +258,10 @@ def build_for(row: dict) -> tuple[str, str]:
         new_members = newcomers_for(tx, row['person_id'], week)
         question_line = (e2_question_line(tx, row['person_id'], datetime.now(timezone.utc))
                          if row.get('person_id') else None)
-    return SUBJECT, community_weekly_html(new_members, week['total'], week['spotlight'], cta,
-                                          _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
-                                          question_line=question_line)
+        return SUBJECT, community_weekly_html(new_members, week['total'], week['spotlight'], cta,
+                                              _unsub_url(UNSUB_SCOPE, row['email'], WEB_BASE_URL),
+                                              question_line=question_line,
+                                              **_gathering_parts(tx, row, week, row.get('dry_run', False)))
 
 
 def preview_personal(to: str) -> tuple[str, str]:
@@ -241,6 +284,34 @@ def preview_question_line(to: str) -> tuple[str, str]:
         [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
         f"{WEB_BASE_URL}/discover", _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
         question_line=e2_line(SAMPLE_QUESTION))
+
+
+# Frame 4.2's sample gatherings (GS in p11-mk.js), as gatherings_for_members
+# returns them, for the proof. Sample data only.
+SAMPLE_GATHERINGS = [
+    dict(slug='marriage-preparation-evening', title='Marriage preparation evening', mode='in_person',
+         city='Dallas', country='United States', region='north-america',
+         organiser=dict(name='Grace Fellowship', kind='assembly'), ahavah_attending=True,
+         date=('Sat', '7', 'Nov')),
+    dict(slug='preparing-for-marriage-a-talk', title='Preparing for marriage: a talk and questions',
+         mode='online', city=None, country=None, region='online',
+         organiser=dict(name='Ahavah', kind='ahavah'), ahavah_attending=False, date=('Thu', '12', 'Nov')),
+    dict(slug='fellowship-meal-for-singles', title='Fellowship meal for singles', mode='in_person',
+         city='Atlanta', country='United States', region='north-america',
+         organiser=dict(name='Living Waters Assembly', kind='assembly'), ahavah_attending=False,
+         date=('Sat', '21', 'Nov')),
+]
+
+
+def preview_gatherings(to: str) -> tuple[str, str]:
+    """The proof of Gatherings near you (TEC-1845): E2 as every member gets
+    it, with frame 4.2's 3 sample gatherings. Reads nothing per member and
+    stores nothing; the links go straight to the pages."""
+    return SUBJECT, community_weekly_html(
+        [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
+        f"{WEB_BASE_URL}/discover", _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
+        gatherings=SAMPLE_GATHERINGS, gatherings_see_all_url=f"{WEB_BASE_URL}/events?region=north-america",
+        gathering_url=lambda slug: f"{WEB_BASE_URL}/e/{slug}")
 
 
 def preview_row(to: str) -> dict:
