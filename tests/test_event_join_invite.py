@@ -347,7 +347,21 @@ def test_the_title_is_escaped_and_no_venue_or_name_appears():
     online = mail.sample_online_event()
     _, html_online = mail.join_invite_email(online, 'https://ahavah.app/auth/sign-up?src=event%3Aa-b',
                                             'https://ahavah.app/u/token')
-    assert 'meet.example.com' not in html_online and ', online.' in html_online
+    assert 'meet.example.com' not in html_online and ', online.' not in html_online
+
+
+def test_the_owner_s_approved_wording():
+    # The copy pass the owner approved on 23 Oct 2026.
+    from service.events import mail
+    for event in (mail.sample_event(), mail.sample_online_event()):
+        subject, html_ = mail.join_invite_email(event, 'https://ahavah.app/auth/sign-up?src=event%3Aa-b',
+                                                'https://ahavah.app/u/token')
+        assert subject == 'Meet the community on Ahavah'
+        assert f"You RSVPed to <b>{event['title']}</b>." in html_
+        assert 'Members get to know one another with marriage in mind, and families can take part.' in html_
+        assert ('You asked to hear about gatherings and members near you, and members see both on Ahavah.'
+                in html_)
+        assert 'families involved' not in html_ and 'which is what you asked' not in html_
 
 
 def test_the_previews_build_from_sample_data():

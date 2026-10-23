@@ -113,19 +113,20 @@ def join_block(url: str) -> str:
 
 # 3.9, the invitation to join (handoff 10-events-join.md). Every line but
 # JOIN_LINE and GUEST_WHY is new there.
-JOIN_INVITE_SUBJECT = 'An invitation to join Ahavah'  # NEW LINE (the handoff gives no subject)
-JOIN_INVITE_ABOUT = ('Members get to know one another with marriage in mind, through courtship and '
-                     'with their families involved.')  # NEW LINE
-JOIN_INVITE_NEAR = ('They also find gatherings and members near them, which is what you asked to '
-                    'hear about.')  # NEW LINE
+# Wording approved by the owner after the copy pass on 23 Oct 2026
+# (ahavah-web docs/copy/2026-10-23-invite-join-copy-pass.md).
+JOIN_INVITE_SUBJECT = 'Meet the community on Ahavah'
+JOIN_INVITE_ABOUT = ('Members get to know one another with marriage in mind, and families can '
+                     'take part.')
+JOIN_INVITE_NEAR = ('You asked to hear about gatherings and members near you, and members see '
+                    'both on Ahavah.')
 JOIN_INVITE_WHY = (GUEST_WHY + ' You ticked “Tell me about Ahavah events and members near me”. '
                    'We send this once.')  # NEW LINE (the second and third sentences)
 
 
 def join_invite_line(event: dict) -> str:
-    """"You RSVPed to {title}." or "..., online." The title escaped, bold."""
-    online = ', online' if event.get('mode') == 'online' else ''
-    return f"You RSVPed to <b>{_e(event['title'])}</b>{online}."  # NEW LINE
+    """"You RSVPed to {title}.", in person and online alike. The title escaped, bold."""
+    return f"You RSVPed to <b>{_e(event['title'])}</b>."
 
 
 def confirm_url(token: str) -> str:
