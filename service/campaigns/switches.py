@@ -131,6 +131,12 @@ SWITCHES = {
     # down sends, queued through the outbox by the cron. Off until the
     # owner decides automatic takedowns should be announced.
     'auto_photo_removed_email': 'AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED',
+    # The gatherings section in E2 and the welcome's mention (TEC-1845),
+    # each off until the owner has seen its proof; each needs events_live
+    # and events_list, since both link to /events
+    # (service.events.member_email_on).
+    'e2_gatherings': 'AHAVAH_E2_GATHERINGS_ENABLED',
+    'welcome_gatherings': 'AHAVAH_WELCOME_GATHERINGS_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

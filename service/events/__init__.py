@@ -68,3 +68,10 @@ def surface_on(name: Literal['events_hosting', 'events_list', 'events_invite']) 
 def switch_on(name: str) -> bool:
     """A switch (an email's, usually) which counts only once live."""
     return live() and enabled(name)
+
+
+def member_email_on(name: Literal['e2_gatherings', 'welcome_gatherings']) -> bool:
+    """Gatherings in a member email: the section in E2 or the welcome's
+    mention. Each links to /events, which answers 404 until the list is
+    open, so each needs events_live and events_list as well as its own."""
+    return surface_on('events_list') and enabled(name)
