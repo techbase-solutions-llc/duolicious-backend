@@ -109,3 +109,147 @@ def test_mail_block_allowed_follows_the_rest_days(monkeypatch):
     # 17:00 Barbados (21:00 UTC) the evening before: inside the rest period.
     assert not mail_block_allowed(datetime(2026, 11, 6, 21, 30, tzinfo=timezone.utc))
     assert not mail_block_allowed(datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# Task 6: the block in the confirm and reminder emails
+# ---------------------------------------------------------------------------
+
+def _rows_for(campaign, slug):
+    with api_tx('read committed') as tx:
+        return [dict(r) for r in tx.execute(
+            """SELECT o.* FROM email_outbox o JOIN event_rsvp r
+                   ON r.id = split_part(o.campaign_id, ':', 1)::bigint
+                 JOIN event e ON e.id = r.event_id
+                WHERE o.campaign = %(c)s AND e.slug = %(s)s ORDER BY o.id""",
+            dict(c=campaign, s=slug)).fetchall()]
+
+
+def _rsvp_post(client, slug, email, headers=None):
+    r = client.post(f'/events/{slug}/rsvp', headers=headers or {},
+                    json=dict(name='Hannah Okafor', email=email, party_size=1))
+    assert r.status_code in (200, 201), r.get_data(as_text=True)
+
+
+def _reminder(g):
+    from service.events import mail, rsvp
+    with api_tx() as tx:
+        token = rsvp.reissue_token(tx, g['id'])
+        return mail.queue_reminder(tx, g['id'], token)
+
+
+def _sign_up(slug):
+    return f'/auth/sign-up?src=event%3A{slug}'
+
+
+def test_off_the_confirm_and_reminder_are_unchanged(client, published, confirmed_guest, mail_allowed,
+                                                    monkeypatch):
+    monkeypatch.delenv(BLOCK_ENV, raising=False)
+    slug = published()
+    _rsvp_post(client, slug, _address())
+    _reminder(confirmed_guest(slug))
+    for campaign in ('event_confirm', 'event_reminder'):
+        [row] = _rows_for(campaign, slug)
+        assert '/auth/sign-up' not in row['payload']['html']
+
+
+def test_the_builders_are_unchanged_without_a_link():
+    from service.events import mail
+    v = mail.sample_view()
+    assert mail.confirm_email(v, 't' * 32) == mail.confirm_email(v, 't' * 32, join_url=None)
+    assert '/auth/sign-up' not in mail.confirm_email(v, 't' * 32)[1]
+
+
+def test_on_a_visitors_confirm_email_carries_the_block_below_the_button(client, published, block_on,
+                                                                        mail_allowed):
+    slug = published()
+    _rsvp_post(client, slug, _address())
+    [row] = _rows_for('event_confirm', slug)
+    html = row['payload']['html']
+    assert html.count(_sign_up(slug)) == 1
+    # The share line is the preheader too, so its last place is the body's.
+    assert html.index('Confirm my place') < html.rindex('We share the address once you confirm.') \
+        < html.index(_sign_up(slug))
+    assert 'Ahavah is matchmaking for Torah-observant believers who hope to marry.' in html
+    assert html.count('Confirm my place') == 1 and html.count('padding:18px 32px') == 1  # one button
+
+
+def test_on_the_reminder_carries_it_for_a_visitor(published, confirmed_guest, block_on):
+    from service.events import mail
+    slug = published()
+    assert _reminder(confirmed_guest(slug)) is not None
+    [row] = _rows_for('event_reminder', slug)
+    html = row['payload']['html']
+    assert html.index('Cancel my place') < html.index(mail.SAFETY) < html.index(_sign_up(slug))
+
+
+def test_a_member_guest_gets_no_block(client, published, confirmed_guest, make_person, block_on,
+                                      mail_allowed):
+    slug = published()
+    address = _address()
+    p = make_person(name='JoinBlockMember', email=address)
+    _rsvp_post(client, slug, address)
+    [confirm] = _rows_for('event_confirm', slug)
+    assert confirm['person_id'] == p['id'] and '/auth/sign-up' not in confirm['payload']['html']
+    other = published()
+    _reminder(confirmed_guest(other, person_id=p['id'], email=address))
+    [reminder] = _rows_for('event_reminder', other)
+    assert '/auth/sign-up' not in reminder['payload']['html']
+
+
+def test_no_block_once_the_address_has_joined(published, confirmed_guest, make_person, block_on, monkeypatch):
+    """A guest who joined between the RSVP and the reminder: the reminder
+    job builds it without the block (Review focus 1)."""
+    from datetime import datetime, timedelta, timezone
+    from service.events import jobs
+    now = datetime.now(timezone.utc)
+    slug = published(starts_at=now + timedelta(hours=30), tz='UTC', tz_label='UTC')
+    address = _address()
+    confirmed_guest(slug, email=address)
+    make_person(name='JoinedBeforeReminder', email=address)
+    day_before = (now + timedelta(hours=30)).date() - timedelta(days=1)
+    tick = datetime.combine(day_before, datetime.min.time(), timezone.utc) + timedelta(hours=12)
+    with api_tx() as tx:
+        jobs.queue_reminders(tx, tick)
+    rows = _rows_for('event_reminder', slug)
+    assert len(rows) == 1 and '/auth/sign-up' not in rows[0]['payload']['html']
+
+
+def test_no_block_inside_a_rest_period_or_beyond_the_calendar(client, published, block_on, mail_allowed,
+                                                              monkeypatch):
+    from datetime import date, datetime, timedelta, timezone
+    import service.spotlight.restdays as rd
+    from service.spotlight.restdays import BARBADOS
+    today = datetime.now(timezone.utc).astimezone(BARBADOS).date()
+    monkeypatch.setattr(rd, 'REST_DAYS', (today, today + timedelta(days=1)))
+    inside = published()
+    _rsvp_post(client, inside, _address())
+    [row] = _rows_for('event_confirm', inside)
+    assert '/auth/sign-up' not in row['payload']['html']
+    monkeypatch.setattr(rd, 'REST_DAYS', ())
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', today - timedelta(days=1))
+    beyond = published()
+    _rsvp_post(client, beyond, _address())
+    [row] = _rows_for('event_confirm', beyond)
+    assert 'Confirm my place' in row['payload']['html'] and '/auth/sign-up' not in row['payload']['html']
+
+
+def test_the_block_carries_no_venue_and_escapes_the_title():
+    from service.events import mail
+    from service.events.join import join_url
+    block = mail.join_block(join_url('marriage-evening-a1b2c3'))
+    assert 'Elm Street' not in block and 'meet.example.com' not in block
+    assert 'src=event%3Amarriage-evening-a1b2c3' in block
+    assert '<h1' not in block and '<h2' not in block
+    view = mail.sample_view(title='<b>x</b> & "y"', confirmed=True)
+    _, html_ = mail.reminder_email(view, 't' * 32, join_url=join_url('marriage-evening-a1b2c3'))
+    assert '<b>x</b>' not in html_ and '&lt;b&gt;x&lt;/b&gt; &amp; &quot;y&quot;' in html_
+    assert html_.count('src=event%3Amarriage-evening-a1b2c3') == 1
+
+
+def test_the_join_previews_carry_the_block():
+    from service.events import mail
+    for fn in (mail.preview_confirm_join, mail.preview_confirm_online_join,
+               mail.preview_reminder_join, mail.preview_reminder_online_join):
+        subject, html_ = fn('proof@ahavah-test.invalid')
+        assert subject and '/auth/sign-up?src=event%3A' in html_
