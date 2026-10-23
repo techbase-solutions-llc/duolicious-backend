@@ -846,6 +846,23 @@ def events_schema(together_schema):
         tx.execute(sql)
 
 
+# Migration 0076 (TEC-1845, inviting gathering guests to join): one
+# invitation per address. Idempotent, applied here as the deploy does.
+# Autouse, as unmatch_schema is: the lead retention sweep
+# (service/events/retention.py) reads lead_join_invite, and tests that run
+# the whole sweep do not ask for the gathering tables by name.
+
+@pytest.fixture(scope='session', autouse=True)
+def join_invite_schema(events_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0076_lead_join_invite.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
 _EVENT_SWITCH_VARS = (
     'AHAVAH_EVENTS_LIVE_ENABLED', 'AHAVAH_EVENTS_HOSTING_ENABLED',
     'AHAVAH_EVENTS_LIST_ENABLED', 'AHAVAH_EVENTS_INVITE_ENABLED',

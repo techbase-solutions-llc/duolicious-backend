@@ -65,3 +65,24 @@ def test_the_weekly_cron_skips_a_rest_period(monkeypatch):
     monkeypatch.setattr(cron, 'run_campaign', lambda *a, **k: called.append(1))
     cron._send_once()
     assert called == []
+
+
+@pytest.mark.real_calendar
+def test_a_day_beyond_the_known_calendar_counts_as_unknown():
+    # 16 Nov 2026 is after KNOWN_THROUGH (9 Nov): nobody has read the
+    # owner's calendar for it, so the weekly email must not assume it is free.
+    from service.campaigns import schedule
+    assert schedule.is_campaign_beyond_known(datetime(2026, 11, 16, 12, tzinfo=timezone.utc))
+    assert not schedule.is_campaign_beyond_known(datetime(2026, 10, 21, 12, tzinfo=timezone.utc))
+
+
+def test_the_weekly_cron_holds_beyond_the_known_calendar(monkeypatch):
+    import service.cron.communityweekly as cron
+    from service.campaigns import schedule
+    monkeypatch.setattr(cron, 'is_send_window', lambda now: True)
+    monkeypatch.setattr(schedule, 'campaign_rest_now', lambda: False)
+    monkeypatch.setattr(schedule, 'campaign_beyond_known_now', lambda: True)
+    called = []
+    monkeypatch.setattr(cron, 'run_campaign', lambda *a, **k: called.append(1))
+    cron._send_once()
+    assert called == []

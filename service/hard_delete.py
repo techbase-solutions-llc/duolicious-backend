@@ -99,6 +99,11 @@ Q_DELETE_TOOL_DATA_OF = """
 # Q_DELETE_TOOL_DATA_OF, binding `nes` and `ids` the same way.
 from service.events.retention import Q_DELETE_EVENT_DATA_OF  # noqa: E402,F401
 
+# The invitation to join's once-per-address record (0076) goes with the
+# address's last lead row: every caller runs it right after
+# Q_DELETE_LEADS_OF, binding the same `nes`.
+from service.events.retention import Q_DELETE_JOIN_INVITES_OF  # noqa: E402,F401
+
 # Matchmaker (TEC-1845): the account's mentor link, recommendations sent to
 # its address, its own pending ones, and a mentor account with its address.
 # Defined in service/matchmaker/retention.py. Runs before the person delete,

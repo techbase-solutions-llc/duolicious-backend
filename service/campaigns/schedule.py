@@ -117,3 +117,18 @@ def is_campaign_rest_period(at: datetime) -> bool:
 
 def campaign_rest_now() -> bool:
     return is_campaign_rest_period(datetime.now(timezone.utc))
+
+
+# After KNOWN_THROUGH nobody has read the owner's calendar, so a day there
+# may be a rest day. The weekly e2 cron holds until the calendar is extended
+# rather than assume the day is free (23 Oct 2026, when the owner asked for
+# the schedule to be switched on and its next Mondays fell past 9 Nov).
+
+def is_campaign_beyond_known(at: datetime) -> bool:
+    """True after the last date the owner's calendar has been read for."""
+    from service.spotlight.restdays import is_beyond_known
+    return is_beyond_known(at)
+
+
+def campaign_beyond_known_now() -> bool:
+    return is_campaign_beyond_known(datetime.now(timezone.utc))

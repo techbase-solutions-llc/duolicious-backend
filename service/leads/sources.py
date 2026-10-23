@@ -7,6 +7,12 @@ or `<kind>:<detail>`:
   tool:game-me  tool:game-us  tool:knows-me  tool:checklist
   event:{slug}  alert:visitor  intro  mentor
   referral:{code}  utm:{source}/{campaign}  site:{host}
+  host  family
+
+`host` and `family` (TEC-1929), like `intro` and `mentor`, are written
+only on person.lead_source at sign-up, never on a lead: a host, a mentor
+and a /families visitor sender did not come to marry, so they are never
+leads and never receive news.
 
 `site:{host}` is not in the spec's list. Before this, a referring host was
 written bare ('www.google.com'), and it needs a kind like every other value.
@@ -21,6 +27,8 @@ TOOL_SOURCES = ('tool:game-me', 'tool:game-us', 'tool:knows-me', 'tool:checklist
 ALERT_VISITOR = 'alert:visitor'
 INTRO = 'intro'
 MENTOR = 'mentor'
+HOST = 'host'
+FAMILY = 'family'
 # What the marriage checklist page sends to /check-otp today.
 LEGACY_CHECKLIST = 'marriage_checklist'
 
@@ -62,9 +70,32 @@ def canonical_tool_source(value: Optional[str]) -> Optional[str]:
     return value if value in TOOL_SOURCES else None
 
 
+def signup_source(value: object) -> Optional[str]:
+    """A /check-otp `source` as stored on a new onboardee: a tool value
+    (canonical_tool_source), `event:{slug}` from a gathering's join link
+    when the slug is well formed, or alert:visitor from the visitor alert
+    email's "Join to see them" (TEC-1929, plan 2026-10-22 fix 8), else
+    None. The caller still checks that the gathering exists (TEC-1845,
+    inviting guests to join)."""
+    if not isinstance(value, str):
+        return None
+    tool = canonical_tool_source(value)
+    if tool:
+        return tool
+    if value == ALERT_VISITOR:
+        return value
+    if value.startswith('event:') and is_lead_source(value):
+        return value
+    return None
+
+
+def is_event_source(value: Optional[str]) -> bool:
+    return isinstance(value, str) and value.startswith('event:')
+
+
 def is_lead_source(value: object) -> bool:
     """The sources a lead row may carry: where someone gave an email before
-    joining. intro and mentor are sign-up sources the matchmaker writes on
+    joining. intro, mentor, host and family are sign-up sources written on
     person.lead_source; nobody gives their own email there."""
     if not isinstance(value, str):
         return False

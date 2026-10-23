@@ -338,7 +338,15 @@ for _name, _src, _aud, _switch, _build in (
         ('event_digest', 'digest_email', 'organiser', 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', EV.preview_digest),
         ('event_manage', 'manage_email', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_manage),
         ('event_approved', 'manage_email (approved note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_approved),
-        ('event_live', 'manage_email (live note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live)):
+        ('event_live', 'manage_email (live note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live),
+        # Inviting guests who are not members to join (TEC-1845): the join
+        # block in 3.1 to 3.3, and the invitation (3.9).
+        ('event_confirm_join', 'confirm_email (in person, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_confirm_join),
+        ('event_confirm_online_join', 'confirm_email (online, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_confirm_online_join),
+        ('event_reminder_join', 'reminder_email (in person, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_reminder_join),
+        ('event_reminder_online_join', 'reminder_email (online, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_reminder_online_join),
+        ('event_join_invite', 'join_invite_email (in person)', 'lead', 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED', EV.preview_join_invite),
+        ('event_join_invite_online', 'join_invite_email (online)', 'lead', 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED', EV.preview_join_invite_online)):
     add(_name, f'service/events/mail.py {_src}', _aud, _EV_HELD.format(_switch),
         (lambda b: lambda: b(TO))(_build), EV.FROM_ADDR)
 

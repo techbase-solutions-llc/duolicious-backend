@@ -1,6 +1,7 @@
 """The gathering jobs (TEC-1845), run hourly by the return-mail cron
-(service/cron/returnmail): the reminder the day before and the organiser's
-daily digest.
+(service/cron/returnmail): the reminder the day before, the organiser's
+daily digest and the one invitation to join the day after (TEC-1845,
+service/events/join.py).
 
 Neither is ever queued inside one of the owner's rest periods
 (service/spotlight/restdays.is_rest_period). The reminder waits for the
@@ -82,3 +83,34 @@ def queue_digests(tx, now: datetime) -> int:
         dict(since=now - timedelta(days=1))).fetchall()
     day = now.date()
     return sum(1 for ev in events if mail.queue_digest(tx, ev['id'], day) is not None)
+
+
+def queue_join_invites(tx, now: datetime) -> int:
+    """The invitation to join, for the confirmed going guests who ticked
+    the box at a published gathering that ended in the last 7 days, when
+    join.invite_due says so in the gathering's own zone. A cancelled or
+    paused gathering sends none. Returns how many were queued."""
+    from service.events import join, switch_on
+    from service.events import CAMPAIGN_SWITCHES
+    if not switch_on(CAMPAIGN_SWITCHES[mail.CAMPAIGN_JOIN_INVITE]):
+        return 0
+    events = tx.execute(
+        """SELECT id, slug, title, mode, ends_at, tz FROM event
+            WHERE status = 'published' AND paused_at IS NULL
+              AND ends_at <= %(now)s AND ends_at > %(since)s
+            ORDER BY id""",
+        dict(now=now, since=now - join.INVITE_WINDOW)).fetchall()
+    n = 0
+    for ev in events:
+        if not join.invite_due(ev['ends_at'], ev['tz'], now):
+            continue
+        guests = tx.execute(
+            """SELECT * FROM event_rsvp WHERE event_id = %(e)s AND status = 'going'
+                  AND confirmed_at IS NOT NULL AND erased_at IS NULL AND marketing_consent
+                  AND person_id IS NULL AND lead_id IS NOT NULL
+                ORDER BY id""",
+            dict(e=ev['id'])).fetchall()
+        for r in guests:
+            if mail.queue_join_invite(tx, dict(r), dict(ev), now) is not None:
+                n += 1
+    return n

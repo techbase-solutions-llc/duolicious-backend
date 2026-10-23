@@ -220,8 +220,14 @@ def rsvp_view(tx, token: str, now: Optional[datetime] = None) -> dict:
             event['venue'] = event_row['venue']
         if event_row['mode'] == 'online':
             event['online_url'] = event_row['online_url']
+    # The "Join Ahavah" block on the confirmed page (TEC-1845, inviting
+    # guests to join): a guest who is not a member, confirmed and going.
+    # The page builds the link from event.slug.
+    from service.events.join import offers_join
+    join_offer = confirmed and r['status'] == 'going' and offers_join(tx, r)
     return dict(event=event, rsvp=dict(name=r['name'], party_size=r['party_size'],
-                                       status=r['status'], confirmed=confirmed))
+                                       status=r['status'], confirmed=confirmed,
+                                       join_offer=join_offer))
 
 
 def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:

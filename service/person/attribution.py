@@ -128,3 +128,48 @@ def record_attribution(tx, person_id: int, first_touch: Any, heard_about: Any) -
         tx.execute('ROLLBACK TO SAVEPOINT record_attribution')
     else:
         tx.execute('RELEASE SAVEPOINT record_attribution')
+
+
+# A mentor, a host and a /families visitor sender gave an address without
+# coming to marry, so none of them is a lead (TEC-1929, ahavah-web plan
+# 2026-10-22, section 8, fix 10). When one of them joins, the sign-up is
+# credited to that entry, in this order, only if nothing else named a
+# source. The CASE is NULL when the address is none of them.
+_ROLE_SOURCE_SQL = """
+    UPDATE person p
+       SET lead_source = CASE
+             WHEN EXISTS (SELECT 1 FROM mentor_account m
+                           WHERE m.normalized_email = p.normalized_email) THEN %(mentor)s
+             WHEN EXISTS (SELECT 1 FROM organiser o
+                           WHERE o.normalized_email = p.normalized_email) THEN %(host)s
+             WHEN EXISTS (SELECT 1 FROM recommendation r
+                           WHERE r.sender_key = %(key)s
+                             AND r.sender_person_id IS NULL) THEN %(family)s
+           END
+     WHERE p.id = %(p)s AND p.lead_source IS NULL
+"""
+
+
+def record_role_source(tx, person_id: int) -> None:
+    """At finish-onboarding, after every other source: 'mentor', 'host' or
+    'family' when the new member's address is a mentor account, an
+    organiser or a recommendation's visitor sender. Attribution only: it
+    writes no lead, so it makes nobody eligible for news. Behind a
+    savepoint: it never undoes the sign-up."""
+    from service.leads.sources import FAMILY, HOST, MENTOR
+    from service.matchmaker import address_key
+    tx.execute('SAVEPOINT record_role_source')
+    try:
+        row = tx.execute(
+            'SELECT normalized_email FROM person WHERE id = %(p)s AND lead_source IS NULL',
+            dict(p=person_id)).fetchone()
+        if row and row['normalized_email']:
+            tx.execute(_ROLE_SOURCE_SQL, dict(
+                p=person_id, key=address_key(row['normalized_email']),
+                mentor=MENTOR, host=HOST, family=FAMILY))
+    except Exception:
+        import traceback
+        print(traceback.format_exc())
+        tx.execute('ROLLBACK TO SAVEPOINT record_role_source')
+    else:
+        tx.execute('RELEASE SAVEPOINT record_role_source')

@@ -147,3 +147,50 @@ def test_the_admin_hard_delete_deletes_the_members_leads(make_person, client):
     assert r.status_code == 200, r.get_data(as_text=True)
     assert not _exists(linked)
     assert not _exists(unlinked)
+
+
+def _invitation_record(tx, email: str) -> None:
+    """The once-per-address record of the invitation to join (0076)."""
+    from antiabuse.antispam.signupemail import normalize_email
+    tx.execute('INSERT INTO lead_join_invite (normalized_email) VALUES (%(ne)s) ON CONFLICT DO NOTHING',
+               dict(ne=normalize_email(email)))
+
+
+def _invitation_held(email: str) -> bool:
+    from antiabuse.antispam.signupemail import normalize_email
+    with api_tx('read committed') as tx:
+        return tx.execute('SELECT 1 FROM lead_join_invite WHERE normalized_email = %(ne)s',
+                          dict(ne=normalize_email(email))).fetchone() is not None
+
+
+def test_the_deletion_cron_deletes_the_invitation_record_with_the_leads(make_person):
+    """The record goes in the same transaction as the address's lead rows,
+    as every other table keyed only on the address does, not in the next
+    day's retention sweep."""
+    p = make_person(name='InviteLeaver', gender='Woman')
+    email = _email_of(p['id'])
+    with api_tx() as tx:
+        lead = _insert_lead(tx, email, 'event:sukkot-2027')
+        _invitation_record(tx, email)
+        tx.execute(
+            "UPDATE person SET activated = FALSE, "
+            "deletion_requested_at = NOW() - INTERVAL '8 days', "
+            "sign_in_time = NOW() - INTERVAL '9 days' "
+            "WHERE id = %(p)s", dict(p=p['id']))
+    asyncio.run(hard_delete_expired_once())
+    assert not _exists(lead)
+    assert not _invitation_held(email)
+
+
+def test_the_admin_hard_delete_deletes_the_invitation_record(make_person, client):
+    headers = _admin_headers(make_person)
+    p = make_person(name='InviteAdminDeleted', gender='Woman')
+    email = _email_of(p['id'])
+    with api_tx() as tx:
+        lead = _insert_lead(tx, email, 'event:sukkot-2027')
+        _invitation_record(tx, email)
+    r = client.delete(f"/admin/users/{p['uuid']}",
+                      json={'confirm_email': email, 'reason': 'test'}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert not _exists(lead)
+    assert not _invitation_held(email)

@@ -463,6 +463,37 @@ Each has the default this plan builds. He may change any of them.
 
 **Unverified while writing this plan:** the exact wording, title and widths (Task 1 returns them); whether `events_live` is on in production today (the owner's note of 22 Oct says gatherings went live; the production `.env` is not readable from the repo); that no other branch has taken migration 0076 by the time this starts (Before you start); how often the outbox drain runs, which is why the invitation keeps a 2 hour margin before a rest period rather than relying on the drain.
 
+## Build notes (Tasks 2 to 5)
+
+Built 22 Oct 2026 on branch `events-invite-to-join` (from `origin/ahavah/main`; the local `ahavah/main` ref was 346 commits behind and had no `service/events/`). Each owner decision was built to its stated default; this is where a different answer would go.
+
+- Decision 2 (once while any lead row exists): `migrations/0076_lead_join_invite.sql` keys on `normalized_email`; `service/events/retention.py` `_Q_JOIN_INVITES` deletes the record once no `lead` row has the address (run after the lead sweep in `service/cron/leadretention`). A permanent record would drop that query and hash the address instead.
+- Decision 5 (the join link wins, 30 days on the device): `service/person/__init__.py` `/check-otp` stamps `event:{slug}` on a new onboardee with `lead_source IS NULL`, so it beats the first touch and an older lead's source at finish-onboarding (`COALESCE`). "First touch wins" would mean not stamping it here. The 30 days live in the web (`src/lib/events/join.ts`); a Together carry wins there (`verify-email`).
+- Decision 7 (no block for an address that left the news): `service/events/join.py` `offers_join` checks `lead_unsubscribed` and, since the review of 23 Oct, `address_unsubscribed`. One condition to remove.
+- Decision 8 (one switch for the page and both email blocks): `events_join_block` is read by `offers_join`, which the page flag and the email blocks share. A separate page switch would be a second name in `SWITCHES` and a second check in `rsvp_view`.
+- Decisions 3 and 4 (10:00 to 20:00 gathering time, 2 hours before a rest period, 7 days, nothing past `KNOWN_THROUGH`): `service/events/join.py` `INVITE_HOURS`, `REST_MARGIN`, `INVITE_WINDOW`, `invite_due`, and `mail_block_allowed` for the email block. (Task 7.)
+- Decision 1 (every confirmed guest who ticked the box, attendance ignored): `service/events/jobs.py` `queue_join_invites` does not read `attended_at`. (Task 7.)
+- Decisions 6 and 10: members keep the quiet line (web `rsvp-status.tsx`); the invitation names the gathering only (`mail.join_invite_line`).
+- Decisions 9 and 11 need no code.
+
+Rulings on the plan:
+
+- Task 4 says `PostCheckOtp.source` is `Field(None, max_length=60)` and that a 61 character value answers 200. A plain `max_length` answers 400, so a `mode='before'` validator turns any value that is not a string of at most 60 characters into None. The cap and the "never a 400" both hold.
+- That change makes `tests/test_lead_signup.py::test_an_unknown_source_is_refused` (a 400 for `tool:roulette`) wrong by design; it is now `test_an_unknown_source_is_ignored` (200, no lead).
+- The `join_invite_schema` fixture is session-scoped and autouse (the plan did not say autouse): `purge_event_data` now reads `lead_join_invite`, and `tests/test_tool_retention.py` runs the whole sweep without asking for the gathering tables.
+- The email block is 15 px, not the frame's 14.5: the phone type scale in `emails.base` reads whole pixels only. The handoff gives no subject for 3.9; `An invitation to join Ahavah` is marked `NEW LINE` for Task 10.
+
 ## Owner's answer (22 Oct 2026)
 
 Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.
+
+## Review fixes (23 Oct 2026)
+
+- Leaving the news is read for the address, not the one lead row. The news unsubscribe stamps the rows an address has at that moment, and a later gathering's RSVP makes a fresh `event:{slug}` row without the stamp. `service.leads.address_unsubscribed` refuses when any lead row of the normalised address has `unsubscribed_at`; `join.offers_join`, `mail.queue_join_invite` and the outbox's `event_join_invite` branch all read it. A tick that resubscribes one row does not lift it while an older row keeps its stamp, which errs towards not mailing.
+- The drain reads the rest days and the 7 days again for `event_join_invite`. Past `ends_at + INVITE_WINDOW` it is skipped `lapsed` (the address keeps its record). Inside a rest period it is held, not dropped: back to `queued` with `last_error` 'rest_day', no attempt spent, until the first whole hour of the gathering's zone at which `invite_due` would queue it, never past the window. Past `KNOWN_THROUGH` it is held as 'unknown' an hour at a time, so a calendar extended inside the 7 days lets it go. `join.invite_hold`, `outbox._hold`, `outbox.mark_held`; `drain` reports `held`.
+- The join block in a queued confirm or reminder email is checked again at the send. Those emails cannot be built again in the drain (the token exists only in the stored HTML), so the block sits between markers (`join.mark_block`) and `outbox._send_html` cuts it out when the address belongs to a member or has left the news since. The email itself still goes, since the guest asked for it.
+- An account's deletion takes the address's `lead_join_invite` record in the same transaction as its lead rows: `Q_DELETE_JOIN_INVITES_OF` (`service/events/retention.py`, named in `service/hard_delete.py`) runs right after `Q_DELETE_LEADS_OF` in the deletion cron and the admin hard delete. The retention sweep already deleted it in the lead sweep's transaction.
+- Migration 0076 waits at most 5 seconds for the lock its foreign key takes on `event` (`SET lock_timeout = '5s'` ... `RESET lock_timeout`, as 0077 does).
+- The send-time cut of the join block also reads the rest days and the switch. `outbox._send_html` takes the block out of a queued confirm or reminder email when `join.mail_block_allowed(now)` refuses (inside a rest period or past `KNOWN_THROUGH`) or `events_join_block` is off at the send, as well as for a member or an address that left the news. The email itself still goes.
+- The drain keeps the invitation to Owner decision 3's hours. Outside 10:00 to 20:00 in the gathering's zone (or on the day it ended) it is held as 'out_of_hours', attempts not counted, until the first hour at which `invite_due` would queue it, never past the window, where it is dropped `lapsed`. `join.in_invite_hours` is the hour test `invite_due` and `invite_hold` share.
+- The drain reads the gathering and the guest's place again for `event_join_invite`. A cancelled gathering or a cancelled RSVP is skipped 'cancelled'; a paused, unpublished or deleted gathering, or an erased or missing RSVP (found by the gathering and the RSVP's `event:{slug}` lead, which an erasure keeps), is skipped 'withdrawn'. `outbox._join_invite_withdrawn`.
