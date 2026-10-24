@@ -101,14 +101,50 @@ _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 # late in the window the send landed.
 _OVERDUE_AFTER = timedelta(days=8)
 
+# The cron skips a Monday in a rest period and holds every Monday past
+# KNOWN_THROUGH (service/cron/communityweekly). The row follows the same two
+# rules (23 Oct 2026 review, LT-2): it names the first Monday the cron will
+# really send on, says `held` with no date when that Monday is past the known
+# calendar, and counts only a free Monday as a missed week. Without this the
+# row promised 26 Oct, a rest day, and from 10 Nov printed a Monday that
+# would never send and then called it missed.
+_HELD_SCAN_WEEKS = 520
+
+
+def _cron_would_send(slot: datetime) -> bool:
+    return not (campaign_schedule.is_campaign_rest_period(slot)
+                or campaign_schedule.is_campaign_beyond_known(slot))
+
+
 def _schedule_for(campaign: str, now: datetime, last_sent_at: datetime | None) -> dict | None:
     if campaign != 'e2':
         return None
     if not COMMUNITY_WEEKLY_ENABLED:
-        return dict(enabled=False, next_send_at=None, overdue=False)
-    overdue = last_sent_at is None or (now - last_sent_at) > _OVERDUE_AFTER
-    return dict(enabled=True, next_send_at=next_send_at(now).isoformat(),
-                overdue=overdue)
+        return dict(enabled=False, next_send_at=None, overdue=False, held=False)
+    nxt = next_send_at(now)
+    for _ in range(_HELD_SCAN_WEEKS):
+        if not campaign_schedule.is_campaign_rest_period(nxt):
+            break
+        nxt += timedelta(days=7)
+    held = campaign_schedule.is_campaign_beyond_known(nxt)
+    if last_sent_at is None:
+        overdue = True
+    elif (now - last_sent_at) <= _OVERDUE_AFTER:
+        overdue = False
+    else:
+        # Missed only when a Monday the cron would have sent on has passed,
+        # with a day of slack for the window, since the last send.
+        overdue = False
+        slot = next_send_at(last_sent_at)
+        for _ in range(_HELD_SCAN_WEEKS):
+            if slot + timedelta(days=1) > now:
+                break
+            if _cron_would_send(slot):
+                overdue = True
+                break
+            slot += timedelta(days=7)
+    return dict(enabled=True, next_send_at=None if held else nxt.isoformat(),
+                overdue=overdue, held=held)
 
 _Q_LAST_SENT = """
     SELECT campaign, max(sent_at) AS at,
@@ -242,8 +278,9 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     # admin audit). A dry run sends nothing, so it still runs.
     if not dry and campaign_schedule.campaign_rest_now():
         return dict(error='rest_day'), 409
-    # Past KNOWN_THROUGH nobody has read the owner's calendar, so the day may
-    # be a rest day: the button holds there as the weekly cron does.
+    # Past KNOWN_THROUGH nobody has read the owner's calendar, so today may
+    # be a rest day: the cron holds e2 there, and a by-hand send of any
+    # campaign waits too until the calendar is extended (LT-2).
     if not dry and campaign_schedule.campaign_beyond_known_now():
         return dict(error='unknown'), 409
     from service.campaigns.runner import run_campaign
