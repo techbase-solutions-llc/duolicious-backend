@@ -149,16 +149,36 @@ def get_moderation_rude_messages(s: t.SessionInfo):
 # 2026-10-20-admin-report-messages.md). The report email no longer carries
 # them. Staff only, only for a pair with a report on file, and every opening
 # is audited, because it reads members' private messages.
+#
+# The pair's emails name both members in the audit row (handoff 18), and
+# unmatched_at says when they unmatched, if they did: the hold keeps the
+# whole conversation, so a message is "after unmatching" only when it was
+# sent after that time, never merely for being held (report messages review
+# A1, GAP-1, SEC-1).
 _Q_REPORT_PAIR = """
 SELECT reporter.uuid::TEXT AS reporter_uuid, reporter.name AS reporter_name,
-       reported.uuid::TEXT AS reported_uuid, reported.name AS reported_name
+       reporter.email AS reporter_email,
+       reported.uuid::TEXT AS reported_uuid, reported.name AS reported_name,
+       reported.email AS reported_email,
+       u.unmatched_at
   FROM person_report r
   JOIN person reporter ON reporter.id = r.reporter_id
   JOIN person reported ON reported.id = r.reported_id
+  LEFT JOIN unmatched_pair u
+    ON u.user_a_id = LEAST(r.reporter_id, r.reported_id)
+   AND u.user_b_id = GREATEST(r.reporter_id, r.reported_id)
  WHERE reporter.uuid = %(reporter)s::uuid
    AND reported.uuid = %(reported)s::uuid
+   AND (%(a)s::INT IS NULL
+        OR (r.reporter_id = %(a)s AND r.reported_id = %(b)s
+            AND to_char(r.reported_at, 'YYYYMMDDHH24MISSUS') = %(ts)s))
  LIMIT 1
 """
+
+# Where the opening was made from, for the audit row's opened_from.
+_OPENED_FROM = ('moderation/reports',)
+
+_NO_STORE = {'Cache-Control': 'no-store'}
 
 
 def _uuid_arg(name: str) -> str:
@@ -171,41 +191,75 @@ def _uuid_arg(name: str) -> str:
 
 @aget('/admin/reports/messages')
 def get_report_messages(s: t.SessionInfo):
+    """?reporter=&reported= and, from the dashboard, &report=<report_key>
+    and &from=moderation/reports. Answers the last 25 messages oldest first,
+    `total` (every message between the two), `has_more`, `unmatched_at` and
+    `audit_id`, the row this opening wrote.
+
+    The audit row is written before any message is read, and the response
+    is never cached: it carries members' private words (SEC-3, SEC-4)."""
     require_admin(s)
     reporter, reported = _uuid_arg('reporter'), _uuid_arg('reported')
+    key = request.args.get('report') or None
+    opened_from = request.args.get('from') or None
+    if opened_from not in _OPENED_FROM:
+        opened_from = None
 
     from datetime import datetime, timezone
 
     from antiabuse.lodgereport import first_name, message_text
     from antiabuse.sql import Q_LAST_MESSAGES
+    from service.moderation import parse_report_key
+
+    parsed = parse_report_key(key) if key else None
+    if key and parsed is None:
+        abort(404)
+    a, b, ts = parsed or (None, None, None)
 
     with api_tx() as tx:
-        pair = tx.execute(_Q_REPORT_PAIR, dict(reporter=reporter, reported=reported)).fetchone()
+        pair = tx.execute(_Q_REPORT_PAIR, dict(reporter=reporter, reported=reported,
+                                               a=a, b=b, ts=ts)).fetchone()
         if pair is None:
             abort(404)
-        rows = tx.execute(
-            Q_LAST_MESSAGES, dict(subject_uuid=reporter, object_uuid=reported)).fetchall()
-        record_audit(
+        audit_id = record_audit(
             tx, s, 'view_report_messages',
-            target_email=None, target_uuid=reported,
-            metadata={'reporter_uuid': reporter, 'reported_uuid': reported,
-                      'count': len(rows)},
+            target_email=f"{pair['reporter_email']}, {pair['reported_email']}",
+            target_uuid=reported,
+            metadata={'report_id': key, 'opened_from': opened_from,
+                      'reporter_uuid': reporter, 'reported_uuid': reported},
         )
+        unmatched_at = pair['unmatched_at']
+        names = {'reporter': first_name(pair['reporter_name']),
+                 'reported': first_name(pair['reported_name'])}
+        messages = []
+        total = 0
+        for r in tx.execute(Q_LAST_MESSAGES, dict(subject_uuid=reporter, object_uuid=reported)):
+            who = 'reporter' if r['sent_by'] == 'reporter' else 'reported'
+            sent_at = datetime.fromtimestamp((int(r['id']) >> 8) / 1_000_000, tz=timezone.utc)
+            total = int(r['total'])
+            messages.append({
+                'from': who,
+                'first_name': names[who],
+                'sent_at': sent_at.isoformat(),
+                'text': message_text(r),
+                'after_unmatch': unmatched_at is not None and sent_at > unmatched_at,
+            })
+        after = sum(1 for m in messages if m['after_unmatch'])
+        tx.execute(
+            """UPDATE admin_audit_log
+                  SET metadata = metadata || jsonb_build_object(
+                          'messages_shown', %(n)s::INT, 'after_unmatching', %(after)s::INT)
+                WHERE id = %(id)s::uuid""",
+            dict(n=len(messages), after=after, id=audit_id))
 
-    names = {'reporter': first_name(pair['reporter_name']),
-             'reported': first_name(pair['reported_name'])}
-    messages = []
-    for r in rows:
-        who = 'reporter' if r['sent_by'] == 'reporter' else 'reported'
-        sent_at = datetime.fromtimestamp((int(r['id']) >> 8) / 1_000_000, tz=timezone.utc)
-        messages.append({
-            'from': who,
-            'first_name': names[who],
-            'sent_at': sent_at.isoformat(),
-            'text': message_text(r),
-            'after_unmatch': bool(r['held']),
-        })
-    return {'count': len(messages), 'messages': messages}
+    return {
+        'count': len(messages),
+        'total': total,
+        'has_more': total > len(messages),
+        'unmatched_at': unmatched_at.isoformat() if unmatched_at else None,
+        'messages': messages,
+        'audit_id': audit_id,
+    }, 200, _NO_STORE
 
 
 @apost('/admin/reports/<report_key>/resolve')
