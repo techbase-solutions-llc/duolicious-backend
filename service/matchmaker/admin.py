@@ -37,7 +37,12 @@ _Q_COUNTS = """
         WHERE l.revoked_at IS NULL AND l.confirmed_at IS NOT NULL
           AND a.last_seen_at > NOW() - interval '30 days') AS active,
       (SELECT count(*) FROM mentor_link WHERE confirmed_at IS NOT NULL AND revoked_at IS NOT NULL) AS removed,
-      (SELECT count(*) FROM person WHERE no_mentor_shared_matches) AS chose_not_to_match
+      (SELECT count(*) FROM person WHERE no_mentor_shared_matches) AS chose_not_to_match,
+      -- Taps on the matchmaker's pushes (fix 11, migration 0077), all time,
+      -- as the question pushes' qpush, mpush and lpush are counted.
+      (SELECT count(*) FROM push_tap WHERE src = 'mmalert') AS push_taps,
+      (SELECT count(*) FROM push_tap WHERE src = 'mmintro') AS intro_push_taps,
+      (SELECT count(*) FROM push_tap WHERE src = 'mmtold') AS told_push_taps
 """
 
 
@@ -57,9 +62,11 @@ def mask_email(address: str | None) -> str | None:
 def counts(tx) -> dict:
     r = {k: int(v) for k, v in tx.execute(_Q_COUNTS).fetchone().items()}
     return dict(
-        alerts={k: r[k] for k in ('member_on', 'visitor_confirmed', 'notices_sent', 'visitor_signups')},
+        alerts={k: r[k] for k in ('member_on', 'visitor_confirmed', 'notices_sent', 'visitor_signups',
+                                  'push_taps')},
         introductions={k: r[k] for k in ('recommendations_sent', 'singles_joined', 'suggestions_made',
-                                         'accepted_by_both', 'conversations_followed')},
+                                         'accepted_by_both', 'conversations_followed',
+                                         'intro_push_taps', 'told_push_taps')},
         mentors={k: r[k] for k in ('invited', 'confirmed', 'active', 'removed', 'chose_not_to_match')},
         live=dict(alerts=surface_on('matchmaker_alerts'),
                   introductions=surface_on('matchmaker_introductions'),
