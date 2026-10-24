@@ -86,3 +86,100 @@ def test_the_weekly_cron_holds_beyond_the_known_calendar(monkeypatch):
     monkeypatch.setattr(cron, 'run_campaign', lambda *a, **k: called.append(1))
     cron._send_once()
     assert called == []
+
+
+# ---------------------------------------------------------------------------
+# The Send button and the Growth > Emails schedule keep the same hold as the
+# cron (23 Oct 2026 review, LT-2 and E2-SENDBUTTON). Past KNOWN_THROUGH the
+# cron holds e2, so a by-hand send must not go out on that unchecked day, and
+# the row must not promise a Monday the cron will skip.
+# ---------------------------------------------------------------------------
+
+def test_a_real_send_is_refused_past_the_known_calendar(client, admin_headers, monkeypatch):
+    from service.campaigns import schedule
+    import service.campaigns.runner as runner
+    monkeypatch.setattr(schedule, 'campaign_rest_now', lambda: False)
+    monkeypatch.setattr(schedule, 'campaign_beyond_known_now', lambda: True)
+    called = []
+    monkeypatch.setattr(runner, 'run_campaign', lambda *a, **k: called.append(1))
+    r = client.post('/admin/growth/emails/e2/send', headers=admin_headers,
+                    json=dict(campaign_id='unknown-test', dry_run=False))
+    assert r.status_code == 409
+    assert r.get_json()['error'] == 'unknown'
+    assert called == []
+
+
+def test_a_dry_run_still_runs_past_the_known_calendar(client, admin_headers, monkeypatch):
+    from service.campaigns import schedule
+    import service.campaigns.runner as runner
+    monkeypatch.setattr(schedule, 'campaign_rest_now', lambda: False)
+    monkeypatch.setattr(schedule, 'campaign_beyond_known_now', lambda: True)
+    monkeypatch.setattr(runner, 'run_campaign', lambda *a, **k: dict(
+        campaign_id='unknown-dry', dry_run=True, queued=0, built=0,
+        skipped=0, error=None))
+    try:
+        r = client.post('/admin/growth/emails/e2/send', headers=admin_headers,
+                        json=dict(campaign_id='unknown-dry', dry_run=True))
+        assert r.status_code == 200, r.get_data(as_text=True)
+    finally:
+        with api_tx() as tx:
+            tx.execute("DELETE FROM admin_audit_log WHERE metadata->>'campaign_id' = 'unknown-dry'")
+
+
+def _calendar(monkeypatch, rest, known_through):
+    from datetime import date
+    import service.spotlight.restdays as rd
+    monkeypatch.setattr(rd, 'REST_DAYS', tuple(date.fromisoformat(d) for d in rest))
+    monkeypatch.setattr(rd, 'KNOWN_THROUGH', date.fromisoformat(known_through))
+
+
+def _utc(*a):
+    return datetime(*a, tzinfo=timezone.utc)
+
+
+def test_the_schedule_skips_a_rest_day_monday(monkeypatch):
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
+    s = gr._schedule_for('e2', _utc(2026, 10, 23, 9), _utc(2026, 10, 19, 12))
+    assert s['next_send_at'] == _utc(2026, 11, 2, 12).isoformat()
+    assert s['held'] is False
+
+
+def test_the_schedule_is_held_past_the_known_calendar(monkeypatch):
+    # 23 Oct 2026: 26 Oct, 2 Nov and 9 Nov are rest days and 16 Nov is past
+    # KNOWN_THROUGH, so the cron sends nothing until the calendar is extended.
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26', '2026-11-02', '2026-11-09'], '2026-11-09')
+    s = gr._schedule_for('e2', _utc(2026, 10, 23, 9), _utc(2026, 10, 19, 12))
+    assert s['held'] is True
+    assert s['next_send_at'] is None
+    assert s['overdue'] is False
+
+
+def test_a_week_skipped_for_a_rest_day_is_not_overdue(monkeypatch):
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
+    s = gr._schedule_for('e2', _utc(2026, 10, 28, 9), _utc(2026, 10, 19, 12))
+    assert s['overdue'] is False
+
+
+def test_a_held_week_is_not_called_missed(monkeypatch):
+    # From 17 Nov the last send (19 Oct) is four weeks old, but every Monday
+    # since was a rest day or held. Nothing was missed; the row says held.
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26', '2026-11-02', '2026-11-09'], '2026-11-09')
+    s = gr._schedule_for('e2', _utc(2026, 11, 17, 9), _utc(2026, 10, 19, 12))
+    assert s['held'] is True
+    assert s['overdue'] is False
+
+
+def test_a_free_monday_that_went_unsent_is_still_overdue(monkeypatch):
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
+    s = gr._schedule_for('e2', _utc(2026, 11, 3, 13), _utc(2026, 10, 19, 12))
+    assert s['overdue'] is True
