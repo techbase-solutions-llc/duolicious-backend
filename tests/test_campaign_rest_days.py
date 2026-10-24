@@ -86,3 +86,19 @@ def test_the_weekly_cron_holds_beyond_the_known_calendar(monkeypatch):
     monkeypatch.setattr(cron, 'run_campaign', lambda *a, **k: called.append(1))
     cron._send_once()
     assert called == []
+
+
+def test_a_real_send_is_refused_beyond_the_known_calendar(client, admin_headers, monkeypatch):
+    """The Send button holds where the cron holds: past KNOWN_THROUGH nobody
+    has read the owner's calendar, so the day may be a rest day."""
+    from service.campaigns import schedule
+    import service.campaigns.runner as runner
+    monkeypatch.setattr(schedule, 'campaign_rest_now', lambda: False)
+    monkeypatch.setattr(schedule, 'campaign_beyond_known_now', lambda: True)
+    called = []
+    monkeypatch.setattr(runner, 'run_campaign', lambda *a, **k: called.append(1))
+    r = client.post('/admin/growth/emails/e2/send', headers=admin_headers,
+                    json=dict(campaign_id='unknown-test', dry_run=False))
+    assert r.status_code == 409
+    assert r.get_json()['error'] == 'unknown'
+    assert called == []

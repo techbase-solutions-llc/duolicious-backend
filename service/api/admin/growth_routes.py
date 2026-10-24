@@ -242,6 +242,10 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     # admin audit). A dry run sends nothing, so it still runs.
     if not dry and campaign_schedule.campaign_rest_now():
         return dict(error='rest_day'), 409
+    # Past KNOWN_THROUGH nobody has read the owner's calendar, so the day may
+    # be a rest day: the button holds there as the weekly cron does.
+    if not dry and campaign_schedule.campaign_beyond_known_now():
+        return dict(error='unknown'), 409
     from service.campaigns.runner import run_campaign
     from service.unsubscribe import make_url as _unsub_url
     from service.config import WEB_BASE_URL
