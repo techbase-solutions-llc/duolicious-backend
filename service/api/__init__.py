@@ -1287,3 +1287,6 @@ _error_tally.connect(_app)
 # Acting on the community (TEC-1897): waiting on a reply, unfinished
 # sign-ups, the weekly funnel.
 import service.api.admin.community_routes  # noqa: E402,F401
+
+# The new in-app entries' switch, for a member (TEC-1845).
+import service.api.app_entries_routes  # noqa: E402,F401

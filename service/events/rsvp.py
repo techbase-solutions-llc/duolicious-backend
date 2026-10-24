@@ -202,9 +202,13 @@ def _by_token(tx, token: object, *, lock: bool = False) -> dict:
 def rsvp_view(tx, token: str, now: Optional[datetime] = None) -> dict:
     """{event, rsvp}: the gathering as its page shows it, with the venue
     and the call link once the guest has confirmed."""
+    return _view_of_rsvp(tx, _by_token(tx, token), _now(now))
+
+
+def _view_of_rsvp(tx, r: dict, now: datetime) -> dict:
+    """rsvp_view for an RSVP row already read, by its token or by its
+    member."""
     from service.events import public
-    now = _now(now)
-    r = _by_token(tx, token)
     row = tx.execute('SELECT slug FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone()
     event_row = public.event_row(tx, row['slug'])
     if event_row['ends_at'] + VIEW_AFTER_END <= now:
@@ -269,6 +273,95 @@ def cancel(tx, token: str, now: Optional[datetime] = None) -> dict:
     return rsvp_view(tx, token, now)
 
 
+# Your gatherings > Going (TEC-1845, in-app entry plan, release 2): how many
+# places each list shows. A member has few; the caps keep one answer small.
+GOING_UPCOMING_MAX = 50
+GOING_PAST_MAX = 20
+
+# The member's own places, by the RSVP's person (set when a member RSVPs,
+# and at sign-up by retention.link_rsvps_to_person for places booked
+# before joining). Confirmed and not erased, on a gathering the public may
+# find (a paused one, or one sent back for approval, is left out until it
+# is back). Public fields only: never the venue, the call link or the
+# guest's own name and address.
+_Q_MEMBER_PLACES = """
+    SELECT r.id, r.status, r.party_size, e.slug, e.title, e.starts_at, e.ends_at, e.tz, e.tz_label,
+           e.mode, e.city, e.country, e.status AS event_status
+      FROM event_rsvp r JOIN event e ON e.id = r.event_id
+     WHERE r.person_id = %(pid)s AND r.erased_at IS NULL AND r.confirmed_at IS NOT NULL
+       AND {visible} AND {when}
+     ORDER BY {order}
+     LIMIT %(n)s
+"""
+
+
+def _place(row: dict, now: datetime) -> dict:
+    from service.events.public import _iso
+    open_ = row['ends_at'] + VIEW_AFTER_END > now
+    return dict(
+        id=row['id'], state=row['status'], party_size=row['party_size'],
+        gathering=dict(slug=row['slug'], title=row['title'], starts_at=_iso(row['starts_at']),
+                       ends_at=_iso(row['ends_at']), tz=row['tz'], tz_label=row['tz_label'],
+                       mode=row['mode'], city=row['city'], country=row['country'],
+                       cancelled=row['event_status'] == 'cancelled'),
+        # The member's own view of the place (member_place), while the
+        # guest's emailed link would still show it.
+        place_path=f"/rsvp/mine/{row['id']}" if open_ else None)
+
+
+def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
+    """{upcoming, past, more_upcoming, more_past}: the member's places.
+    Upcoming is every gathering not yet ended, soonest first; past the
+    ended ones, most recent first. Each list is capped, and says when
+    there is more."""
+    from service.events.public import _VISIBLE
+    now = _now(now)
+    out: dict = {}
+    for key, when, order, cap in (
+            ('upcoming', 'e.ends_at > %(now)s', 'e.starts_at, r.id', GOING_UPCOMING_MAX),
+            ('past', 'e.ends_at <= %(now)s', 'e.starts_at DESC, r.id DESC', GOING_PAST_MAX)):
+        rows = tx.execute(_Q_MEMBER_PLACES.format(visible=_VISIBLE, when=when, order=order),
+                          dict(pid=person_id, now=now, n=cap + 1)).fetchall()
+        out[key] = [_place(dict(r), now) for r in rows[:cap]]
+        out[f'more_{key}'] = len(rows) > cap
+    return out
+
+
+def _member_row(tx, person_id: int, rsvp_id: int, *, lock: bool = False) -> dict:
+    """One of the member's own places: confirmed and not erased, as
+    member_places lists them. A place never confirmed holds nothing, so it
+    is not found. Never another person's place."""
+    row = tx.execute(
+        'SELECT * FROM event_rsvp WHERE id = %(i)s AND person_id = %(p)s AND erased_at IS NULL'
+        f" AND confirmed_at IS NOT NULL{' FOR UPDATE' if lock else ''}",
+        dict(i=rsvp_id, p=person_id)).fetchone()
+    if row is None:
+        raise EventError('not_found', 404)
+    return dict(row)
+
+
+def member_place(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> dict:
+    """The member's own view of one of their places: what their emailed
+    link shows (rsvp_view), the venue and the call link included, without
+    the token, which is stored only as its hash."""
+    return _view_of_rsvp(tx, _member_row(tx, person_id, rsvp_id), _now(now))
+
+
+def member_cancel(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> dict:
+    """Cancel my place from the app (in-app entry design 4.7), as cancel
+    does by the emailed link: the place is free at once."""
+    r = _member_row(tx, person_id, rsvp_id, lock=True)
+    if r['status'] != 'cancelled':
+        tx.execute("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(i)s",
+                   dict(i=r['id']))
+    return _view_of_rsvp(tx, _member_row(tx, person_id, rsvp_id), _now(now))
+
+
+def member_calendar(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> str:
+    """Add to calendar from the app: the file the emailed link gives."""
+    return _calendar_of(tx, _member_row(tx, person_id, rsvp_id), _now(now))
+
+
 def reissue_token(tx, rsvp_id: int) -> str:
     """A new token for a later email (a change, a cancellation, the
     reminder). It replaces the stored hash, so the earlier link retires."""
@@ -279,11 +372,15 @@ def reissue_token(tx, rsvp_id: int) -> str:
 
 def calendar(tx, token: str, now: Optional[datetime] = None) -> str:
     """The guest's calendar file: the location only once confirmed."""
+    return _calendar_of(tx, _by_token(tx, token), _now(now))
+
+
+def _calendar_of(tx, r: dict, now: datetime) -> str:
+    """The calendar file for an RSVP row already read, by its token or by
+    its member."""
     from service.config import WEB_BASE_URL
     from service.events.ics import calendar_file
-    now = _now(now)
-    view = rsvp_view(tx, token, now)
-    r = _by_token(tx, token)
+    view = _view_of_rsvp(tx, r, now)
     e = dict(tx.execute('SELECT slug, title, starts_at, ends_at, status, mode, venue, online_url '
                         'FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone())
     # The view holds the venue or the call link only for a confirmed guest
