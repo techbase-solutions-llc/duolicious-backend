@@ -46,9 +46,11 @@ def recommender(make_person, sign_in):
 def test_the_counts_are_counts(client, admin_headers, make_person, sign_in):
     before = _counts(client, admin_headers)
     assert set(before) == {'alerts', 'introductions', 'mentors', 'live'}
-    assert set(before['alerts']) == {'member_on', 'visitor_confirmed', 'notices_sent', 'visitor_signups'}
+    assert set(before['alerts']) == {'member_on', 'visitor_confirmed', 'notices_sent', 'visitor_signups',
+                                     'push_taps'}
     assert set(before['introductions']) == {'recommendations_sent', 'singles_joined', 'suggestions_made',
-                                            'accepted_by_both', 'conversations_followed'}
+                                            'accepted_by_both', 'conversations_followed',
+                                            'intro_push_taps', 'told_push_taps'}
     assert set(before['mentors']) == {'invited', 'confirmed', 'active', 'removed', 'chose_not_to_match'}
     assert all(isinstance(v, int) for g in ('alerts', 'introductions', 'mentors') for v in before[g].values())
     assert before['live'] == {'alerts': True, 'introductions': True, 'mentors': True}
@@ -205,3 +207,18 @@ def test_a_mentor_address_is_masked_to_its_first_letters():
     assert mask_email('rivka.levi@gmail.com') == 'r••••@g••••.com'
     assert mask_email('a@b') == 'a••••@b••••'
     assert mask_email(None) is None
+
+
+def test_the_matchmaker_push_taps_are_counted(client, admin_headers, make_person, sign_in):
+    """Fix 11 recorded taps on the alert, introduction and both-said-yes
+    pushes (mmalert, mmintro, mmtold) but nothing read them (23 Oct 2026
+    review, GAP-1). Each now counts where the push belongs."""
+    before = _counts(client, admin_headers)
+    h = sign_in(make_person(name='Tapped'))
+    for src in ('mmalert', 'mmintro', 'mmtold'):
+        r = client.post('/push-taps', headers=h, json=dict(src=src))
+        assert r.status_code == 204, r.get_data(as_text=True)
+    after = _counts(client, admin_headers)
+    assert after['alerts']['push_taps'] == before['alerts']['push_taps'] + 1
+    assert after['introductions']['intro_push_taps'] == before['introductions']['intro_push_taps'] + 1
+    assert after['introductions']['told_push_taps'] == before['introductions']['told_push_taps'] + 1
