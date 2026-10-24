@@ -29,9 +29,33 @@ logger = logging.getLogger(__name__)
 _sentry_initialized = False
 
 
+# Modules whose frames hold members' message text in their local variables:
+# the dashboard's report messages route and the helpers that decode a
+# message. Sentry records every frame's locals with an exception, so these
+# frames go without theirs (TEC-1845, report messages review SEC-4).
+_PRIVATE_FRAME_MODULES = (
+    'service.api.admin.moderation_routes',
+    'antiabuse.lodgereport',
+    'antiabuse.sql',
+)
+
+
+def _drop_private_locals(node: Any) -> None:
+    if isinstance(node, dict):
+        if 'vars' in node and str(node.get('module') or '') in _PRIVATE_FRAME_MODULES:
+            del node['vars']
+        for v in node.values():
+            _drop_private_locals(v)
+    elif isinstance(node, list):
+        for v in node:
+            _drop_private_locals(v)
+
+
 def _scrub_pii(event: dict, hint: dict) -> dict | None:
-    """Sentry `before_send` hook: strip email + phone from event payloads."""
+    """Sentry `before_send` hook: strip email + phone from event payloads,
+    and the local variables of frames that hold message text."""
     SCRUB_KEYS = ('email', 'phone', 'phone_number', 'msisdn')
+    _drop_private_locals(event)
     def scrub(node: Any) -> Any:
         if isinstance(node, dict):
             return {

@@ -82,7 +82,19 @@ SELECT
     r.outcome                                    AS outcome,
     r.note                                       AS note,
     r.resolved_at                                AS resolved_at,
-    split_part(resolver.name, ' ', 1)            AS resolved_by_name
+    split_part(resolver.name, ' ', 1)            AS resolved_by_name,
+    -- How many messages the two exchanged, for the count beside Show
+    -- messages (handoff 18). A count, never the words, so reading it is not
+    -- an opening and writes no audit row. Counted as the route reads them:
+    -- the reporter's archive and the unmatch hold (antiabuse/sql).
+    (
+        (SELECT count(*) FROM mam_message m
+          WHERE m.person_id = r.reporter_id
+            AND m.remote_bare_jid IN (reporter.uuid::text, reported.uuid::text))
+      + (SELECT count(*) FROM unmatched_message h
+          WHERE h.person_id = r.reporter_id
+            AND h.remote_bare_jid IN (reporter.uuid::text, reported.uuid::text))
+    )::INT                                       AS message_count
 FROM   person_report r
 JOIN   person reporter ON reporter.id = r.reporter_id
 JOIN   person reported ON reported.id = r.reported_id
@@ -168,7 +180,8 @@ def get_admin_reports(s):
       created_at, reporter_id, reporter_uuid, reporter_name,
       reporter_email, reported_id, reported_uuid, reported_name,
       reported_email, reported_active, reported_verification_required,
-      reason, report_key, outcome, note, resolved_at, resolved_by_name
+      reason, report_key, outcome, note, resolved_at, resolved_by_name,
+      message_count
     """
     if not s or not s.person_id:
         return 'Not authorized', 401

@@ -189,6 +189,10 @@ Q_USER_AUDIT_LOG = """
       FROM admin_audit_log
      WHERE target_uuid = %(uuid)s::uuid
         OR target_email = (SELECT email FROM person WHERE uuid = %(uuid)s::uuid)
+        -- An opening of a report's messages names the reported member as
+        -- its target, but it read the reporter's messages too (SEC-2).
+        OR (action = 'view_report_messages'
+            AND metadata->>'reporter_uuid' = %(uuid)s::text)
      ORDER BY created_at DESC
      LIMIT 50
 """

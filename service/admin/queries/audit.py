@@ -15,6 +15,8 @@ _WHERE = """
 
 Q_AUDIT_LIST = f"""
     SELECT
+        -- The row's id, so "See the audit entry" can open this row.
+        id::text AS id,
         actor_email, actor_uuid::text AS actor_uuid,
         action, target_email, target_uuid::text AS target_uuid,
         metadata, created_at

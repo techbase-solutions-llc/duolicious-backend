@@ -1,7 +1,9 @@
 # The last 25 messages between a reporter and the person they reported, from
 # the reporter's own archive, oldest first. Read by the dashboard's "Show
 # messages" (service/api/admin/moderation_routes.py), never by the report
-# email (TEC-1845). `held` marks a message kept in the unmatch hold.
+# email (TEC-1845). `held` marks a message kept in the unmatch hold, which
+# keeps the whole conversation: it says nothing about when a message was
+# sent. `total` counts every message between the two, not just these 25.
 Q_LAST_MESSAGES = """
 WITH archive AS (
     SELECT mam_message.id, mam_message.direction, mam_message.message,
@@ -31,7 +33,10 @@ WITH archive AS (
         END AS sent_by,
         message,
         search_body,
-        held
+        held,
+        -- Every message between the two, counted before the limit, so the
+        -- dashboard can say whether these are all of them.
+        count(*) OVER () AS total
     FROM
         archive
     ORDER BY
@@ -43,7 +48,8 @@ SELECT
     sent_by,
     message,
     search_body,
-    held
+    held,
+    total
 FROM
     last_messages
 ORDER BY

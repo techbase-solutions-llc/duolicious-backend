@@ -327,6 +327,13 @@ _Q_ROWS = f"""
            q.render_next_attempt_at,
            q.render_error,
            q.current_revision_id,
+           -- When the row last changed (a cancel, a failed try) and when an
+           -- admin approved it, for the queue's status lines (TEC-1845,
+           -- handoff 17). The approval time is the audit row's own.
+           q.updated_at,
+           (SELECT max(a.created_at) FROM admin_audit_log a
+             WHERE a.action = 'growth.queue.approve'
+               AND a.metadata->>'queue_id' = q.id::text) AS approved_at,
            r.revision AS revision_number,
            r.asset_hash AS revision_asset_hash,
            {_RENDER_BLOCKED_PREDICATE.format(q='q.')} AS render_blocked,
@@ -652,6 +659,8 @@ def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
         external_post_id=r['external_post_id'],
         error=r['error'],
         member_approved_at=_plain(r['member_approved_at']),
+        updated_at=_plain(r['updated_at']),
+        approved_at=_plain(r['approved_at']),
         subject=subject,
         clicks=r['clicks'],
         signups=r['signups'],
