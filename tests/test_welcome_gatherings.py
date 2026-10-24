@@ -89,15 +89,13 @@ def test_on_the_mention_links_to_the_list_in_the_members_region(make_person, on)
     assert f'/s/{key}' in html and '/events?region' not in html
 
 
-def test_a_member_with_no_country_gets_the_list_of_their_devices_region(make_person, on):
-    """GE-4: /events has no all-regions view. With no ?region= the page
-    picks the region from the device's time zone, else North America
-    (ahavah-web events-list.tsx), so the link carries no region. Owner
-    decision 4 said "the whole list"; the plan records it for him to
-    restate."""
+def test_a_member_with_no_country_is_sent_to_the_online_gatherings(make_person, on):
+    """GE-4, owner's answer of 24 Oct 2026 (decision 4 restated): with no
+    country the link opens /events on its Online pill, never the region
+    of whatever device the member happens to use."""
     pid, email = _granted(make_person, 'WelGNone', None)
     assert mw.send_member_welcome(email) is True
-    assert list(_links(pid).values()) == [('welcome', f'{WEB_BASE_URL}/events')]
+    assert list(_links(pid).values()) == [('welcome', f'{WEB_BASE_URL}/events?region=online')]
 
 
 def test_still_one_welcome_per_member(make_person, on):

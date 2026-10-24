@@ -122,7 +122,9 @@ def test_a_member_with_no_country_sees_online_only_and_no_line(make_person, publ
     _, html = e2.build_for(row)
     assert 'An online talk' in html and 'Dallas evening' not in html
     assert 'Nothing near you yet' not in html
-    assert any(t == f'{WEB_BASE_URL}/events' for t in _links(row['person_id']).values())
+    # Owner's answer, 24 Oct 2026: a member with no country is sent to the
+    # online gatherings.
+    assert any(t == f'{WEB_BASE_URL}/events?region=online' for t in _links(row['person_id']).values())
 
 
 def test_the_personal_e2_carries_it_too(make_person, published, on, monkeypatch):
@@ -377,3 +379,24 @@ def test_the_online_only_proof_is_w3():
     subject, html = e2.preview_gatherings_online('owner@example.org')
     assert subject == 'This week on Ahavah'
     assert 'Nothing near you yet. These are online.' in html and 'Reading Ruth together' in html
+
+
+def test_a_full_gathering_in_the_region_keeps_nothing_near_you_off(make_person, published, confirmed_guest, on):
+    """/events lists a full gathering in the region, so the email must not
+    say there is nothing near the member while See all gatherings shows it."""
+    slug = published(starts_at=_at(1), capacity=1, title='Full Dallas evening')
+    confirmed_guest(slug)
+    _online(published, title='An online talk')
+    _, html = e2.build_for(_row(make_person, 'E2GFull', 'US'))
+    assert 'An online talk' in html and 'Full Dallas evening' not in html
+    assert 'Nothing near you yet' not in html
+
+
+def test_a_gathering_under_way_in_the_region_keeps_nothing_near_you_off(make_person, published, on):
+    """/events lists a gathering until it ends, so one already under way in
+    the region counts as near the member too."""
+    published(starts_at=NOW - timedelta(hours=1), ends_at=NOW + timedelta(hours=2), title='Dallas evening under way')
+    _online(published, title='An online talk')
+    _, html = e2.build_for(_row(make_person, 'E2GUnderWay', 'US'))
+    assert 'An online talk' in html and 'Dallas evening under way' not in html
+    assert 'Nothing near you yet' not in html

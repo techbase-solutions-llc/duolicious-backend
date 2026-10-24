@@ -141,18 +141,17 @@ You're receiving this because you just joined Ahavah.
 def _events_link(tx, row) -> Optional[str]:
     """The mention's link, a welcome campaign link to /events in the
     member's region, minted only while the switch and the events list are
-    on. With no region the link carries none, and /events picks the region
-    of the device's time zone, else North America (ahavah-web
-    events-list.tsx): /events has no all-regions view, so owner decision 4's
-    "the whole list" waits for him to restate it. Kind 'welcome', the
-    campaign key the welcome's send log and Growth > Emails already use."""
+    on. A member with no country is sent to the online gatherings, /events
+    on its Online pill (owner's answer of 24 Oct 2026, decision 4
+    restated). Kind 'welcome', the campaign key the welcome's send log and
+    Growth > Emails already use."""
     from service.events import member_email_on
     if not member_email_on('welcome_gatherings'):
         return None
     from service.campaigns import make_campaign_link
     from service.matchmaker.regions import region_of
-    region = region_of(row['country'])
-    target = f"{WEB_BASE_URL}/events?region={region}" if region else f"{WEB_BASE_URL}/events"
+    region = region_of(row['country']) or 'online'
+    target = f"{WEB_BASE_URL}/events?region={region}"
     return make_campaign_link(tx, 'welcome', target, row['id'])
 
 

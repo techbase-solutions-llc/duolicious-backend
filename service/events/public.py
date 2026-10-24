@@ -158,23 +158,26 @@ def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optiona
     the server does not know has no `date`; the email drops that card, so
     one bad row never stops the run.
 
-    Under IN_PERSON the set of regions with any such in-person gathering,
-    however far down the list, so for_member never says "Nothing near you
-    yet" while See all gatherings shows one (build review, 23 Oct 2026)."""
+    Under IN_PERSON the set of regions where /events lists an in-person
+    gathering (list_events: published, not paused, not ended, full or
+    under way included), so for_member never says "Nothing near you yet"
+    while See all gatherings shows one (reviews of 23 and 24 Oct 2026)."""
     from service.matchmaker.regions import REGIONS
     rows = tx.execute(
-        f"""SELECT * FROM ({_SELECT}
-                 WHERE {_VISIBLE} AND e.status = 'published' AND e.starts_at > %(now)s) g
-             WHERE g.capacity IS NULL OR g.going_now < g.capacity
-             ORDER BY g.starts_at, g.id""",
+        f"""{_SELECT} WHERE {_VISIBLE} AND e.status = 'published' AND e.ends_at > %(now)s
+             ORDER BY e.starts_at, e.id""",
         dict(now=now)).fetchall()
     out: dict[Optional[str], list[dict]] = {r: [] for r in REGIONS}
     out[None] = []
     in_person: set[str] = set()
     for row in rows:
         row = dict(row)
+        # Every row is one /events lists (list_events); a card needs one
+        # not yet started and not full.
         if row['region'] != 'online':
             in_person.add(row['region'])
+        if row['starts_at'] <= now or (row['capacity'] is not None and row['going_now'] >= row['capacity']):
+            continue
         item = card(row)
         try:
             item['date'] = f.date_block(row['starts_at'], row['tz'])

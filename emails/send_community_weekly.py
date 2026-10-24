@@ -225,7 +225,9 @@ def _gathering_parts(tx, row: dict, week: dict, dry: bool) -> dict:
         return {}
     pid = row.get('person_id') or None
     region = region_of(country)
-    see_all = f"{WEB_BASE_URL}/events?region={region}" if region else f"{WEB_BASE_URL}/events"
+    # With no country the cards are the online ones, and so is the list
+    # (owner's answer of 24 Oct 2026, decision 4 restated).
+    see_all = f"{WEB_BASE_URL}/events?region={region or 'online'}"
     return dict(
         gatherings=cards, gatherings_online_only=online_only,
         gatherings_see_all_url=make_campaign_link(tx, 'e2', see_all, pid, dry_run=dry),
