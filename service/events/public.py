@@ -9,6 +9,7 @@ Every function takes the caller's transaction and never opens one.
 """
 from __future__ import annotations
 
+import zoneinfo
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -126,3 +127,79 @@ def count_view(tx, slug: str, day: date) -> None:
             SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
             ON CONFLICT (event_id, day) DO UPDATE SET views = event_view_day.views + 1""",
         dict(s=slug, d=day))
+
+
+# gatherings_for_members' key for the regions with an in-person gathering.
+IN_PERSON = 'in_person_regions'
+
+
+def online_listed(tx, *, now: datetime) -> bool:
+    """Whether /events lists an online gathering now: one the public may
+    find, published and not yet ended. The welcome says "Online gatherings
+    are open to you wherever you live." only while this holds (copy pass,
+    23 Oct 2026, claim 9)."""
+    row = tx.execute(
+        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND e.status = 'published'
+                AND e.ends_at > %(now)s AND e.region = 'online' LIMIT 1""",
+        dict(now=now)).fetchone()
+    return row is not None
+
+
+def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optional[str], list[dict]]:
+    """The gatherings a member email shows (TEC-1845, gatherings in the
+    member emails), for every reader at once: for each of the Map's 6
+    regions, the first `limit` gatherings in that region or online; for
+    None (a member with no country, or one we cannot place), the first
+    `limit` online ones. Only what the public may find, published, not yet
+    started and not full, by start. One query, grouped here, so a send
+    reads it once per run and never once per member.
+
+    Each item is card() with the date block under `date`. A row whose zone
+    the server does not know has no `date`; the email drops that card, so
+    one bad row never stops the run.
+
+    Under IN_PERSON the set of regions where /events lists an in-person
+    gathering (list_events: published, not paused, not ended, full or
+    under way included), so for_member never says "Nothing near you yet"
+    while See all gatherings shows one (reviews of 23 and 24 Oct 2026)."""
+    from service.matchmaker.regions import REGIONS
+    rows = tx.execute(
+        f"""{_SELECT} WHERE {_VISIBLE} AND e.status = 'published' AND e.ends_at > %(now)s
+             ORDER BY e.starts_at, e.id""",
+        dict(now=now)).fetchall()
+    out: dict[Optional[str], list[dict]] = {r: [] for r in REGIONS}
+    out[None] = []
+    in_person: set[str] = set()
+    for row in rows:
+        row = dict(row)
+        # Every row is one /events lists (list_events); a card needs one
+        # not yet started and not full.
+        if row['region'] != 'online':
+            in_person.add(row['region'])
+        if row['starts_at'] <= now or (row['capacity'] is not None and row['going_now'] >= row['capacity']):
+            continue
+        item = card(row)
+        try:
+            item['date'] = f.date_block(row['starts_at'], row['tz'])
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as e:
+            print(f"events: gathering {row['slug']} has no date block ({e!r})")
+        keys = list(REGIONS) + [None] if row['region'] == 'online' else [row['region']]
+        for k in keys:
+            if k in out and len(out[k]) < limit:
+                out[k].append(item)
+    out[IN_PERSON] = in_person  # type: ignore[index,assignment]
+    return out
+
+
+def for_member(lists: dict, country: Optional[str]) -> tuple[list[dict], bool]:
+    """One member's list from gatherings_for_members, by the region of
+    their country (service.matchmaker.regions.region_of; none or an unknown
+    code gives the online list), and whether every card on it is online
+    while the member has a region with no in-person gathering at all: the
+    email then says "Nothing near you yet. These are online." """
+    from service.matchmaker.regions import region_of
+    region = region_of(country)
+    cards = list(lists.get(region) or [])
+    online_only = (region is not None and bool(cards) and all(c['region'] == 'online' for c in cards)
+                   and region not in (lists.get(IN_PERSON) or set()))
+    return cards, online_only

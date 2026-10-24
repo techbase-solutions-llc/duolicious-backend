@@ -301,3 +301,11 @@ def when_words(starts_at: datetime, ends_at: datetime, tz: str, tz_label: str) -
     if ends_at - starts_at < timedelta(days=1):
         return _day(s), f'{_clock(s)} to {_clock(e)}, {tz_label}'
     return _day(s), f'{_clock(s)}, {tz_label}, to {_day(e, year=e.year != s.year)}, {_clock(e)}'
+
+
+def date_block(starts_at: datetime, tz: str) -> tuple[str, str, str]:
+    """The start in the gathering's own zone as the email card's date
+    block: ('Sat', '7', 'Nov'). An unknown zone raises
+    zoneinfo.ZoneInfoNotFoundError, which the caller handles per card."""
+    s = starts_at.astimezone(zoneinfo.ZoneInfo(tz))
+    return _DAYS[s.weekday()][:3], str(s.day), _MONTHS[s.month - 1][:3]

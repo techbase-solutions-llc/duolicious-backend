@@ -3,6 +3,10 @@ badge-instagram.png
 badge-threads.png
 logo-horizontal-wht.png
 logo-horizontal.png
+subhead-gather-community-wht.png
+subhead-gather-community.png
+subhead-gatherings-near-wht.png
+subhead-gatherings-near.png
 subhead-welcome-wht.png
 subhead-welcome.png
 title-alert-confirm-wht.png

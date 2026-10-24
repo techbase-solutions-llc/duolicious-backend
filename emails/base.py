@@ -214,6 +214,13 @@ _STYLE = f"""
     .e-text  {{ color:#C9C4E0 !important; }}
     .e-strong {{ color:#ffffff !important; }}
     .e-callout {{ background:#262017 !important; color:#F4FBE3 !important; }}
+    /* Gatherings near you and the welcome's mention (W.1 and M.1 in dark):
+       the link in --acc, the date tile in --acc-soft, the card's hairline. */
+    .e-link  {{ color:#BC96FF !important; }}
+    .e-tile  {{ background:rgba(188,150,255,0.14) !important; }}
+    .e-tile-wd {{ color:#BC96FF !important; }}
+    .e-muted {{ color:#A8A2C8 !important; }}
+    .e-hair  {{ border-color:rgba(255,255,255,0.08) !important; }}
     .e-logo-light {{ display:none !important; }}
     .e-logo-dark  {{ display:block !important; }}
     .e-title-light {{ display:none !important; }}

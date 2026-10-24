@@ -29,7 +29,9 @@ ASSETS_DIR = EMAILS_DIR / 'assets'
 
 # base.py owns the shell (render, title_image, button, chip, callout). The
 # senders (send_*.py) pick recipients and never build markup.
-_NOT_TEMPLATES = {'base.py', '__init__.py'}
+# gatherings_section.py holds only the markers around the gatherings parts
+# and E2's preheaders, for the drain to strip them (TEC-1845); no email.
+_NOT_TEMPLATES = {'base.py', '__init__.py', 'gatherings_section.py'}
 
 # Templates that already drew their own display type before this guard existed
 # (measured 2026-09-19). Debt, not permission: an entry goes when that email

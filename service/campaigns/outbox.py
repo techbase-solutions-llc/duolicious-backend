@@ -506,8 +506,21 @@ def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
     period or past the known calendar (join.mail_block_allowed), or the
     address has joined or left the news mail since it was queued. The email
     cannot be built again here (its token is only in the HTML), so the
-    block carries markers (service.events.join.mark_block)."""
-    if row['campaign'] not in _JOIN_BLOCK_CAMPAIGNS or not html:
+    block carries markers (service.events.join.mark_block).
+
+    Gatherings in E2 and the welcome (TEC-1845) the same way: the part
+    comes out, and the email still goes, when at the send its switch or the
+    events list is off (emails.gatherings_section)."""
+    if not html:
+        return html
+    from emails import gatherings_section
+    switch = gatherings_section.SWITCHES.get(row['campaign'])
+    if switch and gatherings_section.has_part(html):
+        from service.events import member_email_on
+        if not member_email_on(switch):
+            return gatherings_section.strip(html)
+        return html
+    if row['campaign'] not in _JOIN_BLOCK_CAMPAIGNS:
         return html
     from service.events import join, switch_on
     if not join.has_block(html):

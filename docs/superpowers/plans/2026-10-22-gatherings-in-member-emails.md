@@ -286,12 +286,12 @@ Owner-facing; no code unless he changes a line.
 
 Operational. Each step names who acts. Nothing reaches a member before the owner confirms its proof.
 
-- [ ] **Step 1: Ship the API, dark.** With the owner's go, merge to `ahavah/main`; the push deploys. With both switches at `0`, check in Growth > Emails that Preview of E2 shows no "Gatherings near you".
+- [ ] **Step 1: Ship the web titles first, then the API, dark.** With the owner's go, merge `ahavah-web` branch `gatherings-email-titles` (the 4 title PNGs in `public/email/`) and let it deploy, then check `https://ahavah.app/email/subhead-gatherings-near.png` and `https://ahavah.app/email/subhead-gather-community.png` both answer 200: the mailer falls back from `cid:` to these URLs when an inline part is refused (`smtp/__init__.py`), and a 404 there is a broken heading. Then merge the API to `ahavah/main`; the push deploys. With both switches at `0`, check in Growth > Emails that Preview of E2 shows no "Gatherings near you".
 - [ ] **Step 2: Proofs to the owner.** Inside the api container: `python -m scripts.send_proofs` (dry run: both gatherings proofs listed, no "waiting for title images" line), then `python -m scripts.send_proofs --send`. He checks both at 390 and 600, light and dark, Gmail's forced dark mode included, reads every line and taps each card.
 - [ ] **Step 3: Check the dependencies before any switch.** `curl -s https://api.ahavah.app/events/status` shows `"live":true` and `"list":true` (the events plan's Task 27 Steps 8 and 11). For E2: `restdays.KNOWN_THROUGH` and `ahavah-admin/src/lib/rest-days.ts` cover the next Monday send (16 Nov or later needs the owner's calendar re-read first; this plan does not edit them), and the weekly cron is on (TEC-1306) or the owner knows it goes only by the Send button.
-- [ ] **Step 4: Switch on, after he confirms each proof.** In the production environment `docker-compose.production.yml` reads, for both api and cron, then restart both: `AHAVAH_WELCOME_GATHERINGS_ENABLED=1`; `AHAVAH_E2_GATHERINGS_ENABLED=1`.
+- [ ] **Step 4: Switch on, after he confirms each proof.** Before the welcome's switch goes on, check that the live gatherings list has hosts of each kind the welcome's first line names (assemblies, fellowship leaders, ministries and Ahavah itself; copy pass of 23 Oct, claim 8). If a kind is missing, drop it from the line as the copy pass allows, or wait. Then, in the production environment `docker-compose.production.yml` reads, for both api and cron: `AHAVAH_WELCOME_GATHERINGS_ENABLED=1`; `AHAVAH_E2_GATHERINGS_ENABLED=1`. Recreate both, since a restart keeps the old environment: `docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production up -d --no-deps api cron`.
 - [ ] **Step 5: A real check.** Sign up a test member with a North American country on a phone: the welcome arrives with the mention and its link opens `/events` on North America. In Growth > Emails, Preview E2 to the owner's address: the section shows. After the first real Monday send, Growth > Emails shows the E2 clicks; check none of the gathering links answers 404.
-- [ ] **Step 6: If anything is wrong**, set the switch back to `0` and restart: the block disappears from the next build. Rows already queued in the outbox keep the HTML they were built with.
+- [ ] **Step 6: If anything is wrong**, set the switch back to `0` and recreate both api and cron: the block disappears from the next build, and the drain takes it out of rows already queued (`service/campaigns/outbox.py` `_send_html`, review fix of 23 Oct); the rest of each email still goes.
 - [ ] **Step 7: Linear.** Open the issue for this follow-up at the start (events plan Task 27 Step 12 asked for it; none was found on 22 Oct by a search for "gatherings" and "weekly email"), move it as tasks land, and run `/linear-sync` before the session's final commit.
 
 ---
@@ -303,7 +303,7 @@ Each has the default this plan builds. He may change any of them.
 1. **"Play with your match" in the weekly email** (frame 4.2, designed). Default: not in this plan; he asked for gatherings only. It needs a member-has-a-match read and Together's game to be live.
 2. **The welcome's "2 things to try first"** (frame 4.1, designed: prompts and the game). Default: not in this plan; the welcome gains only the gatherings mention. If he wants both, the brief asks Design to show them together.
 3. **What "near you" means.** Default: the member's continent from their country (`region_of`, the Map's 6 regions), plus every online gathering, as the landing and `/events` do. The alternative is the member's own country only for in-person gatherings, which would leave most members with online gatherings alone while gatherings are few.
-4. **Members with no country on their profile.** Default: online gatherings only; the welcome links to the whole list.
+4. **Members with no country on their profile.** Decided by the owner on 24 Oct 2026 (recorded in `ahavah-web/docs/copy/2026-10-23-design-round-copy-pass.md`): they are sent to the online gatherings. E2 shows them the online cards, and both its See all gatherings and the welcome's link open `/events?region=online`, the Online pill.
 5. **Every card online.** Default: the landing's line "Nothing near you yet. These are online." above the cards (copy 1.5), since the heading says "near you". The alternative is the frames as drawn, with no line. Task 1 asks Design to draw it.
 6. **No gatherings at all.** Default: the section is left out of E2 (brief and frame 4.4); no line saying there are none.
 7. **Which gatherings count.** Default: published, not paused, not cancelled, not yet started and not full; the next 3 by start, however far ahead. Gatherings the member has already RSVPed to still show. He may want a horizon (for example the next 8 weeks) or to leave out a member's own RSVPs.
@@ -336,3 +336,28 @@ Each has the default this plan builds. He may change any of them.
 ## Owner's answer (22 Oct 2026)
 
 Asked directly: "Should I build to every suggested answer in all three plans: the 8 in-app decisions, the 11 for inviting gathering guests to join and the 13 for gatherings in the emails?" He chose "Yes, all suggestions". Build to every suggested default here; any he later changes is applied then. He also approved deploying the member sign-out fix once its tests and build pass.
+
+## Build notes (23 Oct 2026, Tasks 2 to 4)
+
+Built on branch `gatherings-in-emails` from `ahavah/main` 6cdce74, then rebased onto 4762b16 (push-src merged), dark. Tasks 1 and 5 to 8 are not built: the design round has not returned, and no proof was sent. No migration.
+
+Rulings made while building:
+
+- The 2 switches sit at the end of `SWITCHES` and after `AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED` in both compose blocks, away from the lines `events-invite-to-join` adds beside the events switches, so the two branches merge without a conflict.
+- `fields.date_block` raises on an unknown zone, as planned, but `gatherings_for_members` catches it: that read is the whole run's, so a bad row leaves its card without `date` and the email drops that card with a printed warning (`test_a_bad_zone_leaves_the_card_without_a_date_not_the_read`, `test_a_bad_gathering_drops_its_card_not_the_send`).
+- `online_only` is False for a member with no region, so "Nothing near you yet" is never said to someone we cannot place.
+- `_gathering_parts` reads the switch again per recipient, so turning it off stops a run already under way. `_week_context` takes an optional `now` so tests read as of a far-future date and never see gatherings other tests left on the shared database.
+- A preview row (person 0) gets the online list, and its links carry no person, as the E2 button's do.
+- The markup is minimal and marked `# PENDING DESIGN`: the subhead image `subhead-gatherings.png` (and `-wht`) at a placeholder width of 280, the date block with the day at 18 px, the card spacing and the "See all gatherings" link. The image files are not in `emails/assets/`, so `asset_src` falls back to the public url. Nothing is typed at 20 px or more; `test_the_proof_fits_a_phone` runs the phone check's rules on the proof until Task 6 adds the sample rows.
+- The preheader with the section is marked `# NEW LINE` for Task 7.
+
+## Build notes (23 Oct 2026, the design, Tasks 5 and 6)
+
+The design round returned as `ahavah-web/Claude Design/Ahavah Gatherings in Member Emails.html` (`pages/p20-member-emails.js`), copy `handoff/copy/20-gatherings-in-member-emails.md`. Built on `gatherings-in-emails` after merging `origin/ahavah/main` (7f32a3c, no conflict). Tracked as TEC-1931. No proof sent, no switch changed.
+
+- The title images are named `subhead-gatherings-near` (181 px) and `subhead-gather-community` (252 px), not the placeholder `subhead-gatherings`. Both are in `ahavah-web/public/email/` (branch `gatherings-email-titles`) and `emails/assets/`, and in `tests/email_assets_manifest.txt`.
+- Every `# PENDING DESIGN` in `emails/community_weekly.py` is replaced by W.1: a hairline card, the 56 px date tile with the weekday in capitals, the day at 18 px and the month in small type, "See all gatherings" padded to 44 px. A card is tried before its link is minted, so a dropped card leaves no link. The design's small icons (pin, video, spark) are left out: an email cannot carry them safely. `white-space:nowrap` on the chip is left out too, as the phone check requires.
+- The proof's 3 sample gatherings are W.1's (Dallas, Atlanta, Hamilton); W.3's 2 online ones are `SAMPLE_GATHERINGS_ONLINE`.
+- The weekly section stays after the community line and before the button, as Task 4 placed it. The welcome's mention goes after the existing content, below the tip, as M.1 draws it.
+- The welcome's link is a campaign link of kind `welcome`, the welcome's own campaign key.
+- Owner decision 1 stands: M.2 ("2 things to try first") is not built.
