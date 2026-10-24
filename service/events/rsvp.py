@@ -321,16 +321,39 @@ def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
     return out
 
 
-def member_place(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> dict:
-    """The member's own view of one of their places: what their emailed
-    link shows (rsvp_view), the venue and the call link included once
-    confirmed, without the token, which is stored only as its hash. Never
-    another person's place."""
-    row = tx.execute('SELECT * FROM event_rsvp WHERE id = %(i)s AND person_id = %(p)s AND erased_at IS NULL',
-                     dict(i=rsvp_id, p=person_id)).fetchone()
+def _member_row(tx, person_id: int, rsvp_id: int, *, lock: bool = False) -> dict:
+    """One of the member's own places: confirmed and not erased, as
+    member_places lists them. A place never confirmed holds nothing, so it
+    is not found. Never another person's place."""
+    row = tx.execute(
+        'SELECT * FROM event_rsvp WHERE id = %(i)s AND person_id = %(p)s AND erased_at IS NULL'
+        f" AND confirmed_at IS NOT NULL{' FOR UPDATE' if lock else ''}",
+        dict(i=rsvp_id, p=person_id)).fetchone()
     if row is None:
         raise EventError('not_found', 404)
-    return _view_of_rsvp(tx, dict(row), _now(now))
+    return dict(row)
+
+
+def member_place(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> dict:
+    """The member's own view of one of their places: what their emailed
+    link shows (rsvp_view), the venue and the call link included, without
+    the token, which is stored only as its hash."""
+    return _view_of_rsvp(tx, _member_row(tx, person_id, rsvp_id), _now(now))
+
+
+def member_cancel(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> dict:
+    """Cancel my place from the app (in-app entry design 4.7), as cancel
+    does by the emailed link: the place is free at once."""
+    r = _member_row(tx, person_id, rsvp_id, lock=True)
+    if r['status'] != 'cancelled':
+        tx.execute("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(i)s",
+                   dict(i=r['id']))
+    return _view_of_rsvp(tx, _member_row(tx, person_id, rsvp_id), _now(now))
+
+
+def member_calendar(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = None) -> str:
+    """Add to calendar from the app: the file the emailed link gives."""
+    return _calendar_of(tx, _member_row(tx, person_id, rsvp_id), _now(now))
 
 
 def reissue_token(tx, rsvp_id: int) -> str:
@@ -343,11 +366,15 @@ def reissue_token(tx, rsvp_id: int) -> str:
 
 def calendar(tx, token: str, now: Optional[datetime] = None) -> str:
     """The guest's calendar file: the location only once confirmed."""
+    return _calendar_of(tx, _by_token(tx, token), _now(now))
+
+
+def _calendar_of(tx, r: dict, now: datetime) -> str:
+    """The calendar file for an RSVP row already read, by its token or by
+    its member."""
     from service.config import WEB_BASE_URL
     from service.events.ics import calendar_file
-    now = _now(now)
-    view = rsvp_view(tx, token, now)
-    r = _by_token(tx, token)
+    view = _view_of_rsvp(tx, r, now)
     e = dict(tx.execute('SELECT slug, title, starts_at, ends_at, status, mode, venue, online_url '
                         'FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone())
     # The view holds the venue or the call link only for a confirmed guest

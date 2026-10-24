@@ -186,3 +186,61 @@ def test_a_past_place_closes_as_its_link_does(client, member, published, confirm
     (item,) = _mine(client, member)['past']
     assert item['place_path'] is None
     assert client.get(f"/rsvp/mine/{guest['id']}", headers=member['headers']).status_code == 404
+
+
+def test_an_unconfirmed_place_is_not_the_members_place(client, member, published, confirmed_guest):
+    """As in the list: a place never confirmed holds nothing, so the member's
+    own view of it is not found, as the list leaves it out."""
+    guest = confirmed_guest(published(), person_id=member['id'])
+    with api_tx() as tx:
+        tx.execute('UPDATE event_rsvp SET confirmed_at = NULL WHERE id = %(i)s', dict(i=guest['id']))
+    for path in (f"/rsvp/mine/{guest['id']}", f"/rsvp/mine/{guest['id']}/calendar.ics"):
+        r = client.get(path, headers=member['headers'])
+        assert (r.status_code, r.get_json()) == (404, {'error': 'not_found'}), path
+    r = client.post(f"/rsvp/mine/{guest['id']}/cancel", headers=member['headers'])
+    assert r.status_code == 404
+
+
+def test_the_member_cancels_their_own_place_from_the_app(client, member, make_person, sign_in, published,
+                                                         confirmed_guest):
+    """Design 4.7: Cancel my place, without the emailed link's token."""
+    guest = confirmed_guest(published(), person_id=member['id'], party_size=2)
+    other = make_person(name='Not Theirs')
+    r = client.post(f"/rsvp/mine/{guest['id']}/cancel", headers=sign_in(other))
+    assert (r.status_code, r.get_json()) == (404, {'error': 'not_found'})
+    assert client.post(f"/rsvp/mine/{guest['id']}/cancel").status_code in (400, 401, 403)
+    r = client.post(f"/rsvp/mine/{guest['id']}/cancel", headers=member['headers'])
+    assert r.status_code == 200 and r.headers['Cache-Control'] == 'no-store'
+    assert r.get_json()['rsvp']['status'] == 'cancelled'
+    # The same answer again, and the emailed link agrees.
+    again = client.post(f"/rsvp/mine/{guest['id']}/cancel", headers=member['headers'])
+    assert again.get_json()['rsvp']['status'] == 'cancelled'
+    assert client.get(f"/rsvp/{guest['token']}").get_json()['rsvp']['status'] == 'cancelled'
+
+
+def test_the_members_calendar_file_from_the_app(client, member, make_person, sign_in, published,
+                                                confirmed_guest):
+    hall = published(venue='14 Elm Street, Dallas', venue_visibility='confirmed')
+    guest = confirmed_guest(hall, person_id=member['id'])
+    r = client.get(f"/rsvp/mine/{guest['id']}/calendar.ics", headers=member['headers'])
+    assert r.status_code == 200
+    assert r.headers['Content-Type'].startswith('text/calendar')
+    assert r.headers['Cache-Control'] == 'no-store'
+    by_link = client.get(f"/rsvp/{guest['token']}/calendar.ics")
+    body = r.get_data(as_text=True)
+    assert 'Elm Street' in body
+    strip = lambda t: [line for line in t.splitlines() if not line.startswith('DTSTAMP')]
+    assert strip(body) == strip(by_link.get_data(as_text=True))
+    other = make_person(name='Not Theirs')
+    assert client.get(f"/rsvp/mine/{guest['id']}/calendar.ics", headers=sign_in(other)).status_code == 404
+
+
+def test_cancel_and_calendar_are_dark_while_app_entries_is_off(client, member, published, confirmed_guest,
+                                                               monkeypatch):
+    rid = confirmed_guest(published(), person_id=member['id'])['id']
+    monkeypatch.setenv('AHAVAH_APP_ENTRIES', 'off')
+    assert client.get(f'/rsvp/mine/{rid}/calendar.ics', headers=member['headers']).status_code == 404
+    assert client.post(f'/rsvp/mine/{rid}/cancel', headers=member['headers']).status_code == 404
+    with api_tx() as tx:
+        status = tx.execute('SELECT status FROM event_rsvp WHERE id = %(i)s', dict(i=rid)).fetchone()['status']
+    assert status == 'going'

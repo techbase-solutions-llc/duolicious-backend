@@ -361,6 +361,11 @@ def _member_entries(s: t.SessionInfo) -> bool:
     return live() and enabled_for(s.person_id, s.email)
 
 
+_ICS_HEADERS = {'Content-Type': 'text/calendar; charset=utf-8',
+                'Content-Disposition': 'attachment; filename="gathering.ics"',
+                'Cache-Control': 'no-store'}
+
+
 @aget('/rsvp/mine')
 def get_rsvp_mine(s: t.SessionInfo):
     """Your gatherings > Going (in-app entry plan, release 2): the member's
@@ -383,6 +388,34 @@ def get_rsvp_mine_one(s: t.SessionInfo, rsvp_id: int):
             return rsvp.member_place(tx, s.person_id, rsvp_id), 200, _NO_STORE
     except EventError as e:
         return dict(error=e.reason, **e.extra), e.status, _NO_STORE
+
+
+@apost('/rsvp/mine/<int:rsvp_id>/cancel')
+def post_rsvp_mine_cancel(s: t.SessionInfo, rsvp_id: int):
+    """Cancel my place from the app (in-app entry design 4.7), without the
+    emailed link's token."""
+    from service.events import EventError, rsvp
+    if not _member_entries(s):
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            return rsvp.member_cancel(tx, s.person_id, rsvp_id), 200, _NO_STORE
+    except EventError as e:
+        return dict(error=e.reason, **e.extra), e.status, _NO_STORE
+
+
+@aget('/rsvp/mine/<int:rsvp_id>/calendar.ics')
+def get_rsvp_mine_calendar(s: t.SessionInfo, rsvp_id: int):
+    """Add to calendar from the app: the emailed link's calendar file."""
+    from service.events import EventError, rsvp
+    if not _member_entries(s):
+        return _off()
+    try:
+        with api_tx('read committed') as tx:
+            body = rsvp.member_calendar(tx, s.person_id, rsvp_id)
+    except EventError as e:
+        return dict(error=e.reason), e.status, _NO_STORE
+    return body, 200, _ICS_HEADERS
 
 
 def _rsvp_call(fn, isolation: str = 'REPEATABLE READ'):
@@ -427,9 +460,7 @@ def get_rsvp_calendar(token: str):
             body = rsvp.calendar(tx, token)
     except EventError as e:
         return dict(error=e.reason), e.status, _NO_STORE
-    return body, 200, {'Content-Type': 'text/calendar; charset=utf-8',
-                       'Content-Disposition': 'attachment; filename="gathering.ics"',
-                       'Cache-Control': 'no-store'}
+    return body, 200, _ICS_HEADERS
 
 
 # ---------------------------------------------------------------------------
