@@ -206,15 +206,21 @@ def _gathering_parts(tx, row: dict, week: dict, dry: bool) -> dict:
     see-all link to /events on their region and one link per card, each
     minted as an E2 campaign link so the click counts for E2 and never as
     an event:{slug} lead. {} when the week has no lists (the switch is off)
-    or the reader has no gathering: nothing is minted then. The switch is
-    read again here, so turning it off stops a run already under way."""
+    or the reader has no gathering whose card can be drawn: nothing is
+    minted then. The switch is read again here, but it is the environment
+    the container started with, so it changes only when the container is
+    recreated; the rows a run has already queued are cleared of the
+    section by the drain (service/campaigns/outbox.py _send_html), which
+    reads the switch again at the send."""
     from service.events import member_email_on, public
     from service.matchmaker.regions import region_of
+    from emails.community_weekly import renderable
     lists = week.get('gatherings')
     if not lists or not member_email_on('e2_gatherings'):
         return {}
     country = row.get('country') if row.get('person_id') else None
     cards, online_only = public.for_member(lists, country)
+    cards = renderable(cards)
     if not cards:
         return {}
     pid = row.get('person_id') or None
@@ -304,6 +310,19 @@ SAMPLE_GATHERINGS = [
          date=('Sat', '28', 'Nov')),
 ]
 
+# Host text with long unbroken words (a web address as the organiser, a
+# title holding one), for the phone check: each must wrap inside its card.
+SAMPLE_GATHERINGS_LONG_WORDS = [
+    dict(slug='www-torahsingles-org-evening', title='Evening at https://www.torahsingles.org/gatherings/winter',
+         mode='in_person', city='Dallas', country='United States', region='north-america',
+         organiser=dict(name='www.torahsingles.org', kind='fellowship_leader'), ahavah_attending=True,
+         date=('Sat', '7', 'Nov')),
+    dict(slug='hebrew-roots-fellowship-meal', title='Fellowship meal', mode='in_person',
+         city='Austin', country='United States', region='north-america',
+         organiser=dict(name='HebrewRootsFellowshipOfTexas', kind='assembly'), ahavah_attending=False,
+         date=('Sat', '14', 'Nov')),
+]
+
 # W.3: every card online, for a member with a region.
 SAMPLE_GATHERINGS_ONLINE = [
     dict(slug='preparing-for-marriage-a-talk', title='Preparing for marriage: a talk and questions',
@@ -316,15 +335,28 @@ SAMPLE_GATHERINGS_ONLINE = [
 ]
 
 
-def preview_gatherings(to: str) -> tuple[str, str]:
-    """The proof of Gatherings near you (TEC-1845): E2 as every member gets
-    it, with W.1's 3 sample gatherings. Reads nothing per member and
-    stores nothing; the links go straight to the pages."""
+def _preview_gatherings(to: str, gatherings: list[dict], online_only: bool) -> tuple[str, str]:
+    """E2 as every member gets it, with sample gatherings. Reads nothing per
+    member and stores nothing. The sample slugs are not real gatherings, so
+    every card opens North America's list, as See all gatherings does,
+    rather than a page that answers 404."""
+    region_list = f"{WEB_BASE_URL}/events?region=north-america"
     return SUBJECT, community_weekly_html(
         [dict(first_name='Rivka', country='US'), dict(first_name='Daniel', country='GB')], 58, None,
         f"{WEB_BASE_URL}/discover", _unsub_url(UNSUB_SCOPE, to, WEB_BASE_URL),
-        gatherings=SAMPLE_GATHERINGS, gatherings_see_all_url=f"{WEB_BASE_URL}/events?region=north-america",
-        gathering_url=lambda slug: f"{WEB_BASE_URL}/e/{slug}")
+        gatherings=gatherings, gatherings_online_only=online_only, gatherings_see_all_url=region_list,
+        gathering_url=lambda slug: region_list)
+
+
+def preview_gatherings(to: str) -> tuple[str, str]:
+    """The proof of Gatherings near you (TEC-1845), W.1's 3 sample gatherings."""
+    return _preview_gatherings(to, SAMPLE_GATHERINGS, False)
+
+
+def preview_gatherings_online(to: str) -> tuple[str, str]:
+    """The proof of W.3: every card online, with "Nothing near you yet.
+    These are online." above them."""
+    return _preview_gatherings(to, SAMPLE_GATHERINGS_ONLINE, True)
 
 
 def preview_row(to: str) -> dict:

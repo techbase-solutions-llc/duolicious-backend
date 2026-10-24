@@ -17,7 +17,7 @@ from __future__ import annotations
 import html as _html
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from database import api_tx
@@ -36,6 +36,7 @@ from emails.base import (
     SANS,
 )
 from emails.premium_referral import _referral_block, _fmt_date
+from emails import gatherings_section
 
 FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 
@@ -51,31 +52,37 @@ _Q_MEMBER = """
 # The gatherings mention (TEC-1845), M.1 of Ahavah Gatherings in Member
 # Emails.html: its subhead at its natural CSS width (handoff 20, titles.json).
 _GATHER_TITLE = ("subhead-gather-community.png", "subhead-gather-community-wht.png",
-                 "Gather with the community.", 252)
-GATHER_LINES = (
-    "Ahavah lists gatherings for believers, in person and online, hosted by "  # NEW LINE
-    "assemblies, fellowship leaders and Ahavah.",
-    "Online gatherings are open to you wherever you live.",  # NEW LINE
-)
+                 "Gather with the community.", 252)  # NEW LINE
+# The owner's wording, copy pass of 23 Oct 2026 (file 20, row 4).
+GATHER_LISTS = ("Ahavah lists gatherings in person and online, hosted by assemblies, "  # NEW LINE
+                "fellowship leaders, ministries and Ahavah itself.")
+# True only while an online gathering is listed (copy pass claim 9), so the
+# line is left out when none is.
+GATHER_ONLINE = "Online gatherings are open to you wherever you live."  # NEW LINE
 GATHER_LINK = "See gatherings near you"
 
 
-def _gatherings_mention(events_url: str) -> str:
-    """M.1: the subhead image, 2 lines and a text link padded to a 44 px tap
-    area. No live list and no count: the welcome is sent once, at sign-up,
-    and promises the list and online gatherings, never one nearby."""
+def _gatherings_mention(events_url: str, online_listed: bool) -> str:
+    """M.1: the subhead image, its lines and a text link padded to a 44 px
+    tap area. No live list and no count: the welcome is sent once, at
+    sign-up, and promises the list, never one nearby; it promises online
+    gatherings only while one is listed. The lines are at the body's
+    17 px, so a phone shows them at the body's 12 px. Wrapped in
+    gatherings_section's markers, so the drain can take it out of a
+    welcome already queued once the switch is off."""
     href = _html.escape(events_url, quote=True)
-    lines = ''.join(
-        f'<p class="e-strong" style="margin:0 0 12px;font-family:{SANS};font-size:15px;line-height:1.6;color:{INK};">{line}</p>'
-        for line in GATHER_LINES)
-    return f"""
+    lines = (GATHER_LISTS, GATHER_ONLINE) if online_listed else (GATHER_LISTS,)
+    paras = ''.join(
+        f'<p class="e-strong" style="margin:0 0 12px;font-family:{SANS};font-size:17px;line-height:1.55;color:{INK};">{line}</p>'
+        for line in lines)
+    return gatherings_section.mark(f"""
 <div style="height:6px;line-height:6px;">&nbsp;</div>
 {title_image(*_GATHER_TITLE)}
-{lines}
+{paras}
 <p style="margin:0 0 12px;font-family:{SANS};">
-  <a href="{href}" style="display:inline-block;padding:12px 0;font-size:15px;line-height:20px;color:{INDIGO};font-weight:700;text-decoration:underline;">{GATHER_LINK}</a>
+  <a class="e-link" href="{href}" style="display:inline-block;padding:12px 0;font-size:15px;line-height:20px;color:{INDIGO};font-weight:700;text-decoration:underline;">{GATHER_LINK}</a>
 </p>
-"""
+""")
 
 
 def member_welcome_html(
@@ -84,11 +91,13 @@ def member_welcome_html(
     unsubscribe_url: str,
     *,
     events_url: Optional[str] = None,
+    online_listed: bool = False,
 ) -> str:
     """`events_url` is the gatherings mention (AHAVAH_WELCOME_GATHERINGS_ENABLED),
     placed after the existing welcome content as M.1 draws it; left out, the
-    welcome is as it was."""
-    mention = _gatherings_mention(events_url) if events_url else ''
+    welcome is as it was. `online_listed` adds its line about online
+    gatherings, said only while one is listed."""
+    mention = _gatherings_mention(events_url, online_listed) if events_url else ''
     body = f"""
 {chip("Welcome")}
 
@@ -131,9 +140,12 @@ You're receiving this because you just joined Ahavah.
 
 def _events_link(tx, row) -> Optional[str]:
     """The mention's link, a welcome campaign link to /events in the
-    member's region (or the whole list with none), minted only while the
-    switch and the events list are on. Kind 'welcome', the campaign key the
-    welcome's send log and Growth > Emails already use."""
+    member's region, minted only while the switch and the events list are
+    on. With no region the link carries none, and /events picks the region
+    of the device's time zone, else North America (ahavah-web
+    events-list.tsx): /events has no all-regions view, so owner decision 4's
+    "the whole list" waits for him to restate it. Kind 'welcome', the
+    campaign key the welcome's send log and Growth > Emails already use."""
     from service.events import member_email_on
     if not member_email_on('welcome_gatherings'):
         return None
@@ -147,12 +159,12 @@ def _events_link(tx, row) -> Optional[str]:
 def preview_welcome_gatherings(to: str) -> tuple[str, str]:
     """The proof of the welcome with its gatherings mention: a sample Premium
     date and code, the link straight to North America's list. Writes nothing."""
-    from datetime import timedelta, timezone
+    from datetime import timedelta
     from service.unsubscribe import make_url as unsub_url
     until = datetime.now(timezone.utc) + timedelta(days=183)
     return SUBJECT, member_welcome_html(
         until, "https://ahavah.app/i/MIRIAM7K", unsub_url('campaigns', to, WEB_BASE_URL),
-        events_url=f"{WEB_BASE_URL}/events?region=north-america")
+        events_url=f"{WEB_BASE_URL}/events?region=north-america", online_listed=True)
 
 
 def send_member_welcome(email: str) -> bool:
@@ -180,15 +192,27 @@ def send_member_welcome(email: str) -> bool:
         # The campaigns scope (finding 62): leaving the welcome must not
         # silence match and message emails.
         unsub = unsub_url('campaigns', email, WEB_BASE_URL)
+        campaign_id = f"welcome-{row['id']}"
+        # A member already welcomed: return before minting the mention's
+        # link, so a repeat call (send_member_welcome.py --send loops a
+        # window) stores no link for an email that is never sent.
+        if tx.execute("SELECT 1 FROM email_outbox WHERE campaign = 'welcome' AND campaign_id = %(c)s "
+                      "AND person_id = %(p)s", dict(c=campaign_id, p=row['id'])).fetchone():
+            return False
         events_url = _events_link(tx, row)
+        online = False
+        if events_url:
+            from service.events import public
+            online = public.online_listed(tx, now=datetime.now(timezone.utc))
         row_id = outbox.enqueue(
-            tx, campaign='welcome', campaign_id=f"welcome-{row['id']}", person_id=row['id'],
+            tx, campaign='welcome', campaign_id=campaign_id, person_id=row['id'],
             email=email, subject=SUBJECT,
             html=member_welcome_html(
                 row['subscription_expires_at'],
                 f"https://ahavah.app/i/{row['referral_code']}",
                 unsub,
                 events_url=events_url,
+                online_listed=online,
             ),
             from_addr=FROM_ADDR, unsub_scope='campaigns',
             list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",

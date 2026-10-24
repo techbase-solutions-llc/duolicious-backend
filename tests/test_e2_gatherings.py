@@ -185,16 +185,6 @@ def test_off_the_email_is_unchanged():
         "New members, community size, and this week&#x27;s spotlight." in plain
 
 
-def test_the_block_sits_after_the_community_line_and_before_the_button():
-    html = cw.community_weekly_html(
-        [], 58, None, 'https://ahavah.app/discover', 'https://ahavah.app/u/x',
-        gatherings=e2.SAMPLE_GATHERINGS, gatherings_see_all_url='https://ahavah.app/events',
-        gathering_url=lambda slug: f'https://ahavah.app/e/{slug}')
-    community, heading, button = (html.index('members</strong> across borders'), html.index(HEADING),
-                                  html.index('Open Discover'))
-    assert community < heading < button
-
-
 def test_no_typed_headline_in_the_block():
     import re
     block = cw._gatherings_block(e2.SAMPLE_GATHERINGS, True, 'https://ahavah.app/events',
@@ -255,3 +245,135 @@ def test_the_proof_fits_a_phone():
     assert not _HEADLINE.search(html)
     body = html.split('</head>', 1)[1]
     assert not [px for px in re.findall(r'font-size:\s*(\d+)px', body) if int(px) < 10]
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (23 Oct 2026, adversarial and build reviews of this branch).
+
+def _card_block(gatherings=None, online_only=False):
+    return cw._gatherings_block(gatherings or e2.SAMPLE_GATHERINGS, online_only, 'https://ahavah.app/events',
+                                lambda slug: f'https://ahavah.app/e/{slug}')
+
+
+def test_dark_mode_draws_the_link_tile_and_hairline_as_w1_dark():
+    """GE-1, GE-2 and the hairline: in a client that reads the dark styles the
+    link is #BC96FF, the tile takes the kit's dark --acc-soft with a violet
+    weekday and a white day, and the card keeps a light hairline."""
+    from emails.base import _STYLE
+    import re
+    block = _card_block()
+    see_all = block[:block.index('See all gatherings')]
+    assert 'class="e-link"' in see_all[see_all.rindex('<a '):]
+    assert block.count('e-tile"') == len(e2.SAMPLE_GATHERINGS)
+    assert block.count('e-tile-wd') == len(e2.SAMPLE_GATHERINGS)
+    assert block.count('e-hair') == len(e2.SAMPLE_GATHERINGS)
+    dark = _STYLE[_STYLE.index('prefers-color-scheme: dark'):_STYLE.index('@media (min-width')]
+    assert re.search(r'\.e-link\s*\{[^}]*color:#BC96FF', dark)
+    assert re.search(r'\.e-tile\s*\{[^}]*background:rgba\(188,150,255,0?\.14\)', dark)
+    assert re.search(r'\.e-tile-wd\s*\{[^}]*color:#BC96FF', dark)
+    assert re.search(r'\.e-hair\s*\{[^}]*border-color:rgba\(255,255,255,0?\.08\)', dark)
+
+
+def test_the_whole_text_of_a_card_is_one_link():
+    """GE-3: W.1 draws each card as one link. The title, the place, the
+    organiser and the chip all sit inside the card's link."""
+    import re
+    block = _card_block()
+    href = 'href="https://ahavah.app/e/marriage-preparation-evening"'
+    links = re.findall(r'<a [^>]*' + re.escape(href) + r'[^>]*>(.*?)</a>', block, re.S)
+    text = ' '.join(links)
+    for part in ('Marriage preparation evening', 'Dallas, United States', 'Grace Fellowship',
+                 'Ahavah will be there'):
+        assert part in text, part
+
+
+def test_a_long_unbroken_word_wraps_inside_the_card():
+    """GE-1 (major): an organiser such as www.torahsingles.org or a title
+    holding a URL must break inside the card, not widen the email."""
+    block = _card_block(e2.SAMPLE_GATHERINGS_LONG_WORDS)
+    text_cell = block[block.index('www.torahsingles.org') - 900:block.index('www.torahsingles.org')]
+    assert 'overflow-wrap:anywhere' in text_cell and 'word-break:break-word' in text_cell
+
+
+def test_the_chip_grows_when_it_wraps():
+    """GE-2: no fixed height on the chip, so a wrapped "there" stays inside
+    the lime pill."""
+    block = _card_block()
+    chip = block[block.index('Ahavah will be there') - 300:block.index('Ahavah will be there')]
+    assert 'height:26px' not in chip and 'line-height:26px' not in chip
+    assert 'padding:5px 10px' in chip and 'line-height:16px' in chip
+
+
+def test_the_online_only_line_is_body_size():
+    """The 15 px line became 10 px on a phone; at the body's 17 px it is
+    12 px there, as the copy around it."""
+    block = _card_block(e2.SAMPLE_GATHERINGS_ONLINE, online_only=True)
+    line = block[block.index('Nothing near you yet') - 300:block.index('Nothing near you yet')]
+    assert 'font-size:17px' in line
+
+
+def test_the_section_comes_after_the_weekly_content_as_w1():
+    """Handoff 20 and W.1 place the section after the existing weekly
+    content: after the button, the invite and the Spotlight callout."""
+    html = cw.community_weekly_html(
+        [], 58, None, 'https://ahavah.app/discover', 'https://ahavah.app/u/x',
+        invite_url='https://ahavah.app/i/CODE',
+        gatherings=e2.SAMPLE_GATHERINGS, gatherings_see_all_url='https://ahavah.app/events',
+        gathering_url=lambda slug: f'https://ahavah.app/e/{slug}')
+    button, invite, callout, heading = (html.index('Open Discover'), html.index('Share your invite link'),
+                                        html.index('Want to be featured?'), html.index(HEADING))
+    assert button < invite < callout < heading
+
+
+def test_three_early_online_cards_do_not_hide_a_later_gathering_in_the_region(make_person, published, on):
+    """online_only came from the first 3 cards only: 3 online gatherings
+    before a Dallas one made the email say "Nothing near you yet" while
+    See all gatherings showed Dallas."""
+    for i in range(3):
+        _online(published, title=f'Online talk {i}', starts_at=_at(1 + i))
+    published(starts_at=_at(20), title='Later Dallas evening')
+    _, html = e2.build_for(_row(make_person, 'E2GLater', 'US'))
+    assert 'Online talk 0' in html and 'Later Dallas evening' not in html
+    assert 'Nothing near you yet' not in html
+
+
+def test_no_see_all_link_is_minted_when_no_card_survives(make_person, published, on):
+    """A member whose only gathering has an unknown zone gets no section,
+    and so no stored link for it."""
+    published(starts_at=_at(1), title='Broken zone evening', tz='Not/AZone')
+    row = _row(make_person, 'E2GBadOnly', 'US')
+    _, html = e2.build_for(row)
+    assert HEADING not in html
+    assert _gathering_links(row['person_id']) == {}
+
+
+def test_switching_off_strips_rows_already_queued(make_person, published, on, monkeypatch):
+    """GE-4: the switch is the kill switch for queued rows too. At the drain,
+    with the switch off, the section and its preheader come out."""
+    from service.campaigns import outbox
+    published(starts_at=_at(1), title='Dallas evening')
+    row = _row(make_person, 'E2GKill', 'US')
+    _, html = e2.build_for(row)
+    assert HEADING in html and 'gatherings near you and' in html
+    with api_tx() as tx:
+        assert outbox._send_html(tx, dict(campaign='e2', email=row['email']), html) == html
+    monkeypatch.delenv('AHAVAH_E2_GATHERINGS_ENABLED')
+    with api_tx() as tx:
+        sent = outbox._send_html(tx, dict(campaign='e2', email=row['email']), html)
+    assert HEADING not in sent and 'Dallas evening' not in sent and 'See all gatherings' not in sent
+    assert 'gatherings near you and' not in sent
+    assert 'New members, community size, and this week' in sent
+    assert 'Open Discover' in sent
+
+
+def test_the_proof_cards_open_the_list_not_a_sample_slug():
+    """GE-5: the sample slugs do not exist, so the proof's cards open the
+    list the see-all link opens."""
+    _, html = e2.preview_gatherings('owner@example.org')
+    assert '/e/marriage-preparation-evening' not in html and '/e/' not in html
+
+
+def test_the_online_only_proof_is_w3():
+    subject, html = e2.preview_gatherings_online('owner@example.org')
+    assert subject == 'This week on Ahavah'
+    assert 'Nothing near you yet. These are online.' in html and 'Reading Ruth together' in html

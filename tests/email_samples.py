@@ -150,7 +150,8 @@ add('member_welcome_gatherings', 'emails/member_welcome.py member_welcome_html(e
     'HELD: the welcome with AHAVAH_WELCOME_GATHERINGS_ENABLED, AHAVAH_EVENTS_LIVE_ENABLED and AHAVAH_EVENTS_LIST_ENABLED on ('
     + SWITCH_NOTE + ')',
     lambda: (member_welcome.SUBJECT, member_welcome.member_welcome_html(
-        PREMIUM_UNTIL, f'https://ahavah.app/i/{CODE}', unsub('campaigns'), events_url=S_LINK)),
+        PREMIUM_UNTIL, f'https://ahavah.app/i/{CODE}', unsub('campaigns'), events_url=S_LINK,
+        online_listed=True)),
     member_welcome.FROM_ADDR)
 
 from emails.photo_removed import send_photo_removed  # noqa: E402
@@ -242,6 +243,9 @@ add('e2_community_weekly_gatherings_one', 'emails/community_weekly.py community_
 add('e2_community_weekly_gatherings_online_only',
     'emails/community_weekly.py community_weekly_html(gatherings, gatherings_online_only), W.3', 'member',
     _E2_GATHERINGS_HELD, _e2_gatherings(e2send.SAMPLE_GATHERINGS_ONLINE, online_only=True), e2mod.FROM_ADDR)
+add('e2_community_weekly_gatherings_long_words',
+    'emails/community_weekly.py community_weekly_html(gatherings), long unbroken host text', 'member',
+    _E2_GATHERINGS_HELD, _e2_gatherings(e2send.SAMPLE_GATHERINGS_LONG_WORDS), e2mod.FROM_ADDR)
 
 from emails import reinvite as e3mod  # noqa: E402
 add('e3_reinvite_quiet', 'emails/reinvite.py reinvite_html(state=quiet)', 'member',

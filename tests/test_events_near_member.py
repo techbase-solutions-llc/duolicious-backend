@@ -70,7 +70,8 @@ def test_none_at_all_gives_an_empty_list():
     lists = _lists()
     for country in ('BB', 'GB', None):
         assert public.for_member(lists, country) == ([], False)
-    assert set(lists) == set(REGIONS) | {None}
+    assert set(lists) == set(REGIONS) | {None, public.IN_PERSON}
+    assert lists[public.IN_PERSON] == set()
 
 
 def test_online_only_is_true_only_with_a_region_and_every_card_online(published):

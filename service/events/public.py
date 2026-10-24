@@ -129,6 +129,22 @@ def count_view(tx, slug: str, day: date) -> None:
         dict(s=slug, d=day))
 
 
+# gatherings_for_members' key for the regions with an in-person gathering.
+IN_PERSON = 'in_person_regions'
+
+
+def online_listed(tx, *, now: datetime) -> bool:
+    """Whether /events lists an online gathering now: one the public may
+    find, published and not yet ended. The welcome says "Online gatherings
+    are open to you wherever you live." only while this holds (copy pass,
+    23 Oct 2026, claim 9)."""
+    row = tx.execute(
+        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND e.status = 'published'
+                AND e.ends_at > %(now)s AND e.region = 'online' LIMIT 1""",
+        dict(now=now)).fetchone()
+    return row is not None
+
+
 def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optional[str], list[dict]]:
     """The gatherings a member email shows (TEC-1845, gatherings in the
     member emails), for every reader at once: for each of the Map's 6
@@ -140,7 +156,11 @@ def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optiona
 
     Each item is card() with the date block under `date`. A row whose zone
     the server does not know has no `date`; the email drops that card, so
-    one bad row never stops the run."""
+    one bad row never stops the run.
+
+    Under IN_PERSON the set of regions with any such in-person gathering,
+    however far down the list, so for_member never says "Nothing near you
+    yet" while See all gatherings shows one (build review, 23 Oct 2026)."""
     from service.matchmaker.regions import REGIONS
     rows = tx.execute(
         f"""SELECT * FROM ({_SELECT}
@@ -150,8 +170,11 @@ def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optiona
         dict(now=now)).fetchall()
     out: dict[Optional[str], list[dict]] = {r: [] for r in REGIONS}
     out[None] = []
+    in_person: set[str] = set()
     for row in rows:
         row = dict(row)
+        if row['region'] != 'online':
+            in_person.add(row['region'])
         item = card(row)
         try:
             item['date'] = f.date_block(row['starts_at'], row['tz'])
@@ -161,6 +184,7 @@ def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optiona
         for k in keys:
             if k in out and len(out[k]) < limit:
                 out[k].append(item)
+    out[IN_PERSON] = in_person  # type: ignore[index,assignment]
     return out
 
 
@@ -168,10 +192,11 @@ def for_member(lists: dict, country: Optional[str]) -> tuple[list[dict], bool]:
     """One member's list from gatherings_for_members, by the region of
     their country (service.matchmaker.regions.region_of; none or an unknown
     code gives the online list), and whether every card on it is online
-    while the member has a region: the email then says "Nothing near you
-    yet. These are online." """
+    while the member has a region with no in-person gathering at all: the
+    email then says "Nothing near you yet. These are online." """
     from service.matchmaker.regions import region_of
     region = region_of(country)
     cards = list(lists.get(region) or [])
-    online_only = region is not None and bool(cards) and all(c['region'] == 'online' for c in cards)
+    online_only = (region is not None and bool(cards) and all(c['region'] == 'online' for c in cards)
+                   and region not in (lists.get(IN_PERSON) or set()))
     return cards, online_only
