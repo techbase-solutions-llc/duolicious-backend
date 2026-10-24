@@ -11,7 +11,7 @@ from scripts import send_proofs as sp
 EXPECTED_EMAILS = {
     'likes_waiting', 'match_reminder', 'message_reminder', 'profile_views', 'one_photo',
     'e2_personal', 'referral_member', 'friend_joined', 'e1_spotlight', 'e4_card_ready',
-    'e2_gatherings', 'welcome_gatherings',
+    'e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings',
 }
 
 _TABLES = ('campaign_link', 'email_outbox', 'email_send_log', 'push_send_log',
@@ -111,12 +111,13 @@ def test_no_proof_carries_a_live_unsubscribe_or_turn_off_link(capture):
 
 def test_the_gatherings_proofs_wait_for_their_images(capture, monkeypatch, capsys):
     """While a gatherings title image is missing from emails/assets, plan()
-    leaves those 2 proofs out and main() says which images it waits for;
+    leaves those 3 proofs out and main() says which images it waits for;
     the other proofs go as before."""
     assert sp.missing_titles() == []
     monkeypatch.setattr(sp, 'missing_titles', lambda: ['subhead-gather-community'])
     emails, _ = sp.plan()
-    assert {e['name'] for e in emails} == EXPECTED_EMAILS - {'e2_gatherings', 'welcome_gatherings'}
+    assert {e['name'] for e in emails} == EXPECTED_EMAILS - {'e2_gatherings', 'e2_gatherings_online',
+                                                          'welcome_gatherings'}
     sp.main([])
     assert 'waiting for title images: subhead-gather-community' in capsys.readouterr().out
 
@@ -124,6 +125,6 @@ def test_the_gatherings_proofs_wait_for_their_images(capture, monkeypatch, capsy
 def test_the_gatherings_proofs_carry_no_live_link():
     emails, _ = sp.plan()
     by_name = {e['name']: e for e in emails}
-    for name in ('e2_gatherings', 'welcome_gatherings'):
+    for name in ('e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings'):
         html = by_name[name]['html']
         assert '/s/' not in html and sp.PROOF_LINK_DISABLED in html

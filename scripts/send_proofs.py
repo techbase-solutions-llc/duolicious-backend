@@ -79,8 +79,10 @@ def _emails() -> list[dict]:
         ('e1_spotlight', 'Spotlight announcement and its resend, new copy (79, 80, 82)',
          send_spotlight_resend.preview, send_spotlight_resend.FROM_ADDR),
         ('e4_card_ready', 'Spotlight card ready, new copy (79, 82)', lambda to: e4(), E4_FROM),
-        ('e2_gatherings', 'Weekly email with Gatherings near you (events item 20)',
+        ('e2_gatherings', 'Weekly email with Gatherings near you (events item 20); each card opens the list',
          send_community_weekly.preview_gatherings, send_community_weekly.FROM_ADDR),
+        ('e2_gatherings_online', 'Weekly email, every card online (events item 20, W.3); each card opens the list',
+         send_community_weekly.preview_gatherings_online, send_community_weekly.FROM_ADDR),
         ('welcome_gatherings', 'Member welcome with the gatherings mention (events item 20)',
          member_welcome.preview_welcome_gatherings, member_welcome.FROM_ADDR),
     ]
@@ -96,8 +98,8 @@ def _emails() -> list[dict]:
 
 
 # The title images of the gatherings round (handoff 20). A proof without its
-# title is not the email the owner would approve, so these 2 wait for them.
-_GATHERINGS_PROOFS = ('e2_gatherings', 'welcome_gatherings')
+# title is not the email the owner would approve, so these 3 wait for them.
+_GATHERINGS_PROOFS = ('e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings')
 GATHERINGS_TITLES = ('subhead-gatherings-near', 'subhead-gather-community')
 
 
