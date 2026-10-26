@@ -1293,3 +1293,6 @@ import service.api.app_entries_routes  # noqa: E402,F401
 
 # A member's Discover filters, kept with the account (TEC-1845).
 import service.api.discover_filters_routes  # noqa: E402,F401
+
+# "Your Ahavah", the light sign-in (TEC-1845, in-app plan release 4).
+import service.api.your_ahavah_routes  # noqa: E402,F401

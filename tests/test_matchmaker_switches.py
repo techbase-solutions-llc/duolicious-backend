@@ -53,7 +53,7 @@ def test_status_says_dark_until_live(client, monkeypatch):
     r = client.get('/matchmaker/status')
     assert r.status_code == 200 and r.headers['Cache-Control'] == 'no-store'
     assert r.get_json() == {'live': False, 'alerts': False, 'visitor_alerts': False,
-                            'introductions': False, 'mentors': False}
+                            'introductions': False, 'mentors': False, 'light_sign_in': False}
     monkeypatch.setenv('AHAVAH_MATCHMAKER_LIVE_ENABLED', '1')
     monkeypatch.setenv('AHAVAH_MATCHMAKER_MENTORS_ENABLED', '1')
     assert client.get('/matchmaker/status').get_json()['mentors'] is True

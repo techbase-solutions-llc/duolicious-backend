@@ -34,7 +34,8 @@ from typing import Any, Dict, Literal, Optional
 
 
 EventKind = Literal[
-    "match", "message", "like", "weekly", "verification", "profile_view", "questions"
+    "match", "message", "like", "weekly", "verification", "profile_view", "questions",
+    "gathering_reminder", "new_guests", "match_played",
 ]
 
 # Map each event kind to the column on notification_preference that
@@ -48,6 +49,10 @@ _EVENT_COLUMN: Dict[EventKind, str] = {
     "verification": "push_verification",
     "profile_view": "push_profile_views",
     "questions":    "push_questions",
+    # Release 4 of the in-app plan (TEC-1845, migration 0086).
+    "gathering_reminder": "push_gathering_reminder",
+    "new_guests":         "push_new_guests",
+    "match_played":       "push_match_played",
 }
 
 # Defaults that apply when notification_preference has no row for the
@@ -60,7 +65,25 @@ _EVENT_DEFAULTS: Dict[EventKind, bool] = {
     "verification": True,
     "profile_view": False,
     "questions":    True,
+    "gathering_reminder": True,
+    "new_guests":         True,
+    "match_played":       True,
 }
+
+# Release 4's toggles (TEC-1845): each exists for the member only while its
+# push can be sent (service/notifications/activity_pushes.py, push_on). While
+# it is dark, GET /notifications/preferences leaves it out and a PATCH that
+# carries it changes nothing, as though the toggle did not exist.
+RELEASE_4_TOGGLES: Dict[str, str] = {
+    "push_gathering_reminder": "push_gathering_reminder",
+    "push_new_guests":         "push_new_guests",
+    "push_match_played":       "push_match_played",
+}
+
+
+def _dark_toggles() -> set:
+    from service.notifications.activity_pushes import push_on
+    return {col for col, switch in RELEASE_4_TOGGLES.items() if not push_on(switch)}
 
 
 # Like alerts follow push (health review, 13 Oct 2026, findings 32, 58).
@@ -636,7 +659,14 @@ def get_notification_preferences(s):
         push_profile_views=False, email_profile_views=False,
         push_weekly_digest=False,
         push_questions=True,
+        # Release 4 (migration 0086), each shown only while its push is on.
+        push_gathering_reminder=True,
+        push_new_guests=True,
+        push_match_played=True,
     )
+    dark = _dark_toggles()
+    for col in dark:
+        _MATRIX_DEFAULTS.pop(col)
     cols = list(_MATRIX_DEFAULTS.keys())
 
     from database import api_tx
@@ -666,6 +696,9 @@ def patch_notification_preferences(req, s):
         for k in req.__pydantic_fields_set__
         if getattr(req, k) is not None
     }
+    # A release 4 toggle whose push is dark does not exist yet.
+    for col in _dark_toggles():
+        updates.pop(col, None)
     if not updates:
         return '', 204
 

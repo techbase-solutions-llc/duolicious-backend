@@ -191,6 +191,53 @@ def post_tool_claim(req: t.PostToolClaim, s: t.SessionInfo, sid: str):
         return _refused(e)
 
 
+# ---------------------------------------------------------------------------
+# From a chat, and a member's past results (TEC-1845, in-app plan release 4).
+# Members only. Each answers 404 unless Together is live and app_entries
+# lets the member in (service/app_entries.py), as the plan sets for both:
+# Chat > More's "the marriage checklist together" and the Together page's
+# list of past results.
+# ---------------------------------------------------------------------------
+
+def _entries_for(s) -> bool:
+    from service.app_entries import enabled_for
+    from service.tools import live
+    return live() and enabled_for(s.person_id, s.email)
+
+
+@apost('/tools/chat-sessions', limiter=_start_limit)
+@validate(t.PostToolChatSession)
+def post_tool_chat_session(req: t.PostToolChatSession, s: t.SessionInfo):
+    """Start the marriage checklist (or the Us game) with a match, attached
+    to the chat: saved to the member from the start, with the invite token
+    the web puts in the chat's message box (/together/... ?invite=). The
+    match joins through POST /tools/i/<invite>/players on their own session,
+    as for "Play Us together". 201 {session_id, player_token, invite_token,
+    view}; 404 {error: 'not_found'} when the person is not the member's
+    match (or is blocked, has left, or is not of the opposite gender)."""
+    from service.tools import sessions
+    if not _entries_for(s):
+        return _off()
+    try:
+        with api_tx() as tx:
+            out = sessions.start_from_chat(tx, kind=req.kind, member=s, with_uuid=req.with_uuid,
+                                           display=req.display)
+    except sessions.ToolError as e:
+        return _refused(e)
+    return out, 201, {'Cache-Control': 'no-store'}
+
+
+@aget('/tools/mine')
+def get_tools_mine(s: t.SessionInfo):
+    """The member's past results, the latest first, with the results saved
+    with their address before they joined. 200 {results: [...], more}."""
+    from service.tools import sessions
+    if not _entries_for(s):
+        return _off()
+    with api_tx() as tx:
+        return sessions.mine(tx, s), 200, {'Cache-Control': 'no-store'}
+
+
 _share_read_limit = limiter.shared_limit('300 per hour', scope='tools_share_read')
 _share_open_limit = limiter.shared_limit('60 per hour', scope='tools_share_open')
 

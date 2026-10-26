@@ -392,7 +392,7 @@ def view(tx, session_pk: int, player_id: int) -> dict:
 
 _Q_BY_INVITE = """
     SELECT id, uuid::text AS uuid, kind, mode, owner_display, owner_person_id,
-           owner_normalized_email, completed_at, deleted_at
+           owner_normalized_email, completed_at, deleted_at, chat_person_id
       FROM tool_session WHERE invite_token = %(t)s
 """
 
@@ -466,6 +466,11 @@ def join(tx, invite_token: object, *, display: object, s=None, ip: Optional[str]
     signed_in = s is not None and s.signed_in
     if signed_in and _is_owner(sess, s):
         raise ToolError('own_session', 409)
+    # A game or checklist started from a chat keeps its seat for the match
+    # it was started with (in-app plan, release 4): an invite that leaves
+    # the chat opens it for nobody else.
+    if sess['chat_person_id'] is not None and not (signed_in and s.person_id == sess['chat_person_id']):
+        raise ToolError('full', 409)
     state = _seat_state(tx, sess)
     if state != 'open':
         raise ToolError(state, 409)
@@ -635,5 +640,171 @@ def delete_session(tx, player: dict) -> None:
                    WHERE session_id = %(s)s""", dict(s=sid))
     tx.execute("""UPDATE tool_session SET deleted_at = NOW(), owner_email = NULL,
                          owner_normalized_email = NULL, owner_display = NULL,
-                         owner_person_id = NULL, utm = NULL
+                         owner_person_id = NULL, utm = NULL, chat_person_id = NULL
                    WHERE id = %(s)s""", dict(s=sid))
+
+
+# ---------------------------------------------------------------------------
+# From a chat, and a member's past results (in-app plan, release 4)
+# ---------------------------------------------------------------------------
+
+CHAT_MODES = {'checklist': 'couple', 'game': 'us'}
+ROLE_FOR = {'Man': 'husband', 'Woman': 'wife'}
+
+# The match the member is starting with: activated, not leaving, matched
+# with the member (ahavah_match keeps the lower id first), not blocked
+# either way, and a man with a woman (service/man_woman.py). Also the
+# member's own gender, for the checklist's role.
+_Q_MATCH_FOR_CHAT = """
+    SELECT o.id, mg.name AS my_gender
+      FROM person o
+      JOIN person me ON me.id = %(me)s
+      JOIN gender og ON og.id = o.gender_id
+      JOIN gender mg ON mg.id = me.gender_id
+     WHERE o.uuid = %(other)s::uuid
+       AND o.id <> me.id
+       AND o.activated AND o.deletion_requested_at IS NULL
+       AND EXISTS (SELECT 1 FROM ahavah_match m
+                    WHERE m.user_a_id = LEAST(me.id, o.id) AND m.user_b_id = GREATEST(me.id, o.id))
+       AND NOT is_blocked_pair(me.id, o.id)
+       AND ((og.name = 'Man' AND mg.name = 'Woman') OR (og.name = 'Woman' AND mg.name = 'Man'))
+"""
+
+_Q_START_FROM_CHAT = """
+    INSERT INTO tool_session (kind, mode, source, owner_person_id, owner_email, owner_normalized_email,
+                              owner_display, claimed_at, invite_token, chat_person_id)
+    VALUES (%(k)s, %(m)s, %(src)s, %(pid)s, %(e)s, %(ne)s, %(d)s, NOW(), %(it)s, %(chat)s)
+    RETURNING id
+"""
+
+
+def start_from_chat(tx, *, kind: str, member, with_uuid: object, display: object) -> dict:
+    """The marriage checklist (kind 'checklist', the couple mode) or the Us
+    game (kind 'game'), started by a member with a match from their chat,
+    as "Play Us together" is: saved to the member's account from the start,
+    with the invite the web puts in the chat's message box. The chat is
+    attached (chat_person_id). No share token is issued: a result started
+    from a chat stays between the two (owner decision 5 of the in-app plan),
+    so neither seat's view carries one and no public page exists.
+
+    The match is checked here: an unknown, unmatched, blocked or departed
+    person is not_found (404), whichever it is. In the checklist the
+    member's role is set from their gender. The member's name on it is
+    `display`, or the first word of their profile name. Returns
+    {session_id, player_token, invite_token, view}."""
+    from service.matchmaker import first_name, is_uuid
+    mode = CHAT_MODES.get(kind)
+    if mode is None:
+        raise ToolError('bad_mode')
+    if display is None:
+        me = tx.execute('SELECT name FROM person WHERE id = %(i)s', dict(i=member.person_id)).fetchone()
+        display = first_name(me['name'] if me else None)
+    name = clean_display(display)
+    if not is_uuid(with_uuid):
+        raise ToolError('not_found', 404)
+    other = tx.execute(_Q_MATCH_FOR_CHAT, dict(me=member.person_id, other=str(with_uuid))).fetchone()
+    if other is None:
+        raise ToolError('not_found', 404)
+    invite = new_link_token()
+    row = tx.execute(_Q_START_FROM_CHAT, dict(
+        k=kind, m=mode, src=SOURCE[mode], pid=member.person_id, e=member.email,
+        ne=normalize_email(member.email), d=name, it=invite, chat=other['id'])).fetchone()
+    fields: dict[str, Any] = {}
+    if mode == 'couple' and other['my_gender'] in ROLE_FOR:
+        fields['role'] = ROLE_FOR[other['my_gender']]
+    token = new_player(tx, row['id'], 'owner', **fields)
+    pid = tx.execute('SELECT id FROM tool_player WHERE token_hash = %(h)s',
+                     dict(h=token_hash(token))).fetchone()['id']
+    v = view(tx, row['id'], pid)
+    return dict(session_id=v['session_id'], player_token=token, invite_token=invite, view=v)
+
+
+def headline(tx, session_pk: int, mode: str, seat: str, player_id: Optional[int],
+             completed: bool) -> Optional[dict]:
+    """A saved result's one line: the Us score, the Me type, the couple
+    checklist's agreement, the single checklist's top count, a knows-me
+    player's number of friends or a friend's own guesses. Never an answer
+    and never another player's score."""
+    if mode == 'knows_me':
+        if seat == 'owner':
+            n = tx.execute("""SELECT count(*)::int AS n FROM tool_player
+                               WHERE session_id = %(s)s AND seat = 'guest' AND finished_at IS NOT NULL
+                                 AND removed_at IS NULL""", dict(s=session_pk)).fetchone()['n']
+            return dict(friends=n)
+        r = _result_row(tx, session_pk, player_id)
+        return dict(right=r['breakdown'].get('right'), total=r['breakdown'].get('total')) if r else None
+    if not completed:
+        return None
+    r = _result_row(tx, session_pk, None)
+    if r is None:
+        return None
+    if mode == 'me':
+        return dict(archetype=r['archetype'])
+    if mode == 'us':
+        return dict(score=r['score'])
+    if mode == 'couple':
+        b = r['breakdown'] or {}
+        return dict(agree=b.get('agree'), total=b.get('total'))
+    return dict(top=(r['breakdown'] or {}).get('top'))
+
+
+MINE_MAX = 50
+
+# Every seat the member has finished in, as an account (owner_person_id,
+# person_id) or by the address they saved with before joining (a claimed
+# owner, a saved guest): the seats _Q_BY_ACCOUNT opens. One row per
+# session, the owner's seat first. Not deleted sessions.
+_Q_MINE = """
+    SELECT DISTINCT ON (s.id)
+           s.id AS session_pk, s.uuid::text AS session_id, s.kind, s.mode, s.completed_at,
+           s.owner_display, s.owner_person_id, s.chat_person_id,
+           p.id AS player_id, p.seat, p.finished_at
+      FROM tool_session s JOIN tool_player p ON p.session_id = s.id
+     WHERE s.deleted_at IS NULL AND p.finished_at IS NOT NULL
+       AND ((p.seat = 'owner'
+             AND (s.owner_person_id = %(pid)s
+                  OR (s.claimed_at IS NOT NULL AND s.owner_normalized_email = %(ne)s)))
+         OR (p.seat = 'guest' AND p.removed_at IS NULL
+             AND (p.person_id = %(pid)s OR p.normalized_email = %(ne)s)))
+     ORDER BY s.id, (p.seat = 'owner') DESC
+"""
+
+
+def mine(tx, member) -> dict:
+    """The member's past Together results for the Together page, the latest
+    first: games and checklists they finished, including those saved with
+    their address before they joined. Each with its state, its one line,
+    the other player's chosen name (Us and the couple checklist) and, for
+    one started from a chat, the uuid of the match it is with. Each opens
+    with GET /tools/sessions/<session_id> on the member's session, as
+    today."""
+    rows = [dict(r) for r in tx.execute(_Q_MINE, dict(pid=member.person_id,
+                                                      ne=normalize_email(member.email))).fetchall()]
+    rows.sort(key=lambda r: (r['finished_at'], r['session_pk']), reverse=True)
+    out = []
+    for r in rows[:MINE_MAX]:
+        mode = r['mode']
+        state = ('ready' if r['completed_at'] else 'waiting') if mode in TWO_PLAYER else 'ready'
+        other_display = None
+        if mode in TWO_PLAYER:
+            if r['seat'] == 'owner':
+                g = tx.execute("""SELECT display FROM tool_player WHERE session_id = %(s)s AND seat = 'guest'
+                                    AND removed_at IS NULL ORDER BY id LIMIT 1""",
+                               dict(s=r['session_pk'])).fetchone()
+                other_display = g['display'] if g else None
+            else:
+                other_display = r['owner_display']
+        with_uuid = None
+        if r['chat_person_id'] is not None:
+            other_id = r['chat_person_id'] if r['seat'] == 'owner' else r['owner_person_id']
+            if other_id is not None and other_id != member.person_id:
+                u = tx.execute('SELECT uuid::text AS uuid FROM person WHERE id = %(i)s',
+                               dict(i=other_id)).fetchone()
+                with_uuid = u['uuid'] if u else None
+        out.append(dict(
+            session_id=r['session_id'], kind=r['kind'], mode=mode, seat=r['seat'],
+            finished_at=r['finished_at'].isoformat(), state=state, other_display=other_display,
+            with_uuid=with_uuid,
+            result=headline(tx, r['session_pk'], mode, r['seat'], r['player_id'],
+                            r['completed_at'] is not None)))
+    return dict(results=out, more=len(rows) > MINE_MAX)

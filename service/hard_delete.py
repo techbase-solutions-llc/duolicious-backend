@@ -99,6 +99,15 @@ Q_DELETE_TOOL_DATA_OF = """
 # Q_DELETE_TOOL_DATA_OF, binding `nes` and `ids` the same way.
 from service.events.retention import Q_DELETE_EVENT_DATA_OF  # noqa: E402,F401
 
+# Organisers (TEC-1845, in-app plan release 4): the organiser rows the
+# address holds, with their gatherings, links and the RSVPs on them. Python,
+# not one statement: a gathering still to come is cancelled first, so its
+# guests hear, and its posts are cancelled. Every deletion runs it before
+# the person delete, binding `nes` as above, and passes the cover keys it
+# returns to delete_covers once its transaction has committed. The light
+# sign-in's "delete everything" runs the same (service/your_ahavah).
+from service.events.retention import delete_covers, erase_hosting  # noqa: E402,F401
+
 # The invitation to join's once-per-address record (0076) goes with the
 # address's last lead row: every caller runs it right after
 # Q_DELETE_LEADS_OF, binding the same `nes`.

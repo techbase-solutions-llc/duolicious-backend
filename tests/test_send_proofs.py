@@ -48,7 +48,10 @@ def test_the_plan_covers_every_held_email_and_push():
     emails, pushes = sp.plan()
     assert {e['name'] for e in emails} == EXPECTED_EMAILS
     assert all(e['subject'].startswith('[PROOF] ') for e in emails)
-    assert [p['title'] for p in pushes] == ['Say hello to your match', 'A message is waiting for you']
+    assert [p['title'] for p in pushes] == ['Say hello to your match', 'A message is waiting for you',
+                                            # Release 4 of the in-app plan (TEC-1845).
+                                            'Your gathering is tomorrow', 'New guests', 'New guests',
+                                            'Your result is ready']
     assert sp.PROOF_TO == 'harrigan.tennyson@gmail.com' and sp.PUSH_PERSON_ID == 18
 
 
@@ -74,7 +77,7 @@ def test_send_goes_to_the_owner_only_and_records_nothing(capture, monkeypatch):
     assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'}
     assert all(s['subject'].startswith('[PROOF] ') for s in smtp.sent)
     assert subs_asked == [18]
-    assert len(pushes) == 2
+    assert len(pushes) == 6
     assert _counts() == before, 'a proof wrote to the database'
     assert dict(os.environ) == env_before, 'a proof changed a switch'
 

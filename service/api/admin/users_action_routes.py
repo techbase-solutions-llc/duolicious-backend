@@ -42,6 +42,8 @@ from service.hard_delete import (
     Q_DELETE_MATCHMAKER_DATA_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    delete_covers,
+    erase_hosting,
     matchmaker_keys,
     Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
@@ -432,6 +434,10 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
         # Matchmaker (TEC-1845), before the person delete.
         _nes = [normalize_email(row['email'])] if row['email'] else []
         tx.execute(Q_DELETE_MATCHMAKER_DATA_OF, dict(nes=_nes, ids=person_ids, keys=matchmaker_keys(_nes)))
+        # Organisers (TEC-1845, in-app plan release 4): what the address
+        # hosts, as the light sign-in's "delete everything" erases it. The
+        # covers go once this transaction has committed.
+        covers = erase_hosting(tx, _nes)
         del_row = tx.execute(_Q_HARD_DELETE, dict(uuid=uuid)).fetchone()
         tx.execute(Q_DELETE_INBOX_OF, dict(uuids=[del_row['uuid']]))
         if row['email']:
@@ -444,6 +450,7 @@ def delete_person(req: t.DeletePerson, s: t.SessionInfo, uuid: str):
             target_email=del_row['email'], target_uuid=uuid,
             metadata={'reason': req.reason},
         )
+    delete_covers(covers)
     return {'ok': True}
 
 

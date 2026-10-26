@@ -1023,6 +1023,11 @@ class PatchNotificationPreferences(BaseModel):
     email_profile_views: Optional[bool] = None
     # Quick questions (TEC-1845): push only, no email column.
     push_questions: Optional[bool] = None
+    # Release 4 of the in-app plan (TEC-1845, migration 0086): push only,
+    # each ignored while its push is dark.
+    push_gathering_reminder: Optional[bool] = None
+    push_new_guests: Optional[bool] = None
+    push_match_played: Optional[bool] = None
 
 
 class PutAnswer(BaseModel):
@@ -1050,6 +1055,17 @@ class ToolAnswerIn(BaseModel):
 class PostToolAnswers(BaseModel):
     role: Optional[Literal['husband', 'wife']] = None
     answers: List[ToolAnswerIn] = Field(default_factory=list, max_length=60)
+
+
+class PostToolChatSession(BaseModel):
+    """POST /tools/chat-sessions (TEC-1845, in-app plan release 4): the
+    marriage checklist ('checklist') or the Us game ('game') with a match,
+    from the chat with them. `with_uuid` is the match's person uuid;
+    `display` the member's name on it, their profile's first name when
+    left out."""
+    kind: Literal['checklist', 'game']
+    with_uuid: str = Field(min_length=1, max_length=64)
+    display: Optional[str] = Field(default=None, min_length=1, max_length=80)
 
 
 class PostToolClaim(BaseModel):
@@ -1213,6 +1229,22 @@ class PostOrganiserLink(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostYourAhavahCode(BaseModel):
+    """POST /your-ahavah/code (TEC-1845, release 4): a sign-in code for the
+    light sign-in. `website` is the hidden field and `signup_stamp` the
+    page stamp, as on /organisers/link."""
+    email: str = Field(min_length=3, max_length=254)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostYourAhavahSession(BaseModel):
+    """POST /your-ahavah/session: the handle /your-ahavah/code answered and
+    the code the address received."""
+    request_token: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=1, max_length=16)
 
 
 class EventDraftBody(BaseModel):
