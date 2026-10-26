@@ -236,3 +236,32 @@ def test_a_man_woman_view_of_a_limited_profile_still_counts(client, town, pushes
     assert body.get('limited') is True
     assert _view_rows(town['adam'], town['chava']) == (True, True)
     assert [p['person_id'] for p in pushes] == [town['chava']['id']]
+
+
+# ---------------------------------------------------------------------------
+# Discover's deck: the same rule as the map
+# ---------------------------------------------------------------------------
+
+def _deck(viewer, preference):
+    from service.search.sql import Q_CACHED_SEARCH, Q_UNCACHED_SEARCH_1, Q_UNCACHED_SEARCH_2
+    from tests.test_deck_gates import DECK_PARAMS
+    p = dict(DECK_PARAMS, n=1000, searcher_person_id=viewer['id'],
+             gender_preference=preference)
+    with api_tx() as tx:
+        tx.execute(Q_UNCACHED_SEARCH_1, p)
+        tx.execute(Q_UNCACHED_SEARCH_2, p)
+        return {r['prospect_uuid'] for r in tx.execute(Q_CACHED_SEARCH, p).fetchall()}
+
+
+@pytest.mark.parametrize('viewer,same,other', [('adam', 'boaz', 'chava'),
+                                               ('chava', 'dinah', 'adam')])
+def test_the_deck_with_no_preference_shows_only_the_opposite_gender(town, viewer, same, other):
+    seen = _deck(town[viewer], [])
+    assert town[other]['uuid'] in seen
+    assert town[same]['uuid'] not in seen
+
+
+def test_the_deck_with_a_same_gender_preference_shows_nobody_of_the_same_gender(town):
+    with api_tx() as tx:
+        man = tx.execute("SELECT id FROM gender WHERE name = 'Man'").fetchone()['id']
+    assert town['boaz']['uuid'] not in _deck(town['adam'], [man])

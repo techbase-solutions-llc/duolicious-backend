@@ -155,6 +155,9 @@ prospect_pool AS (
       -- Fail-open like the map: empty preference = no gender filter.
       AND {gender_sql('p')}
 
+      -- Men see women and women see men, as on the map (TEC-1845, 26 Oct).
+      AND {opposite_gender_sql('p')}
+
       -- Country filter: applied only if user has expressed preferences
       AND (
           cardinality(sp.preferred_countries) = 0
