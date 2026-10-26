@@ -1290,3 +1290,6 @@ import service.api.admin.community_routes  # noqa: E402,F401
 
 # The new in-app entries' switch, for a member (TEC-1845).
 import service.api.app_entries_routes  # noqa: E402,F401
+
+# A member's Discover filters, kept with the account (TEC-1845).
+import service.api.discover_filters_routes  # noqa: E402,F401
