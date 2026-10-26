@@ -1300,6 +1300,12 @@ class PostAhavahAttending(BaseModel):
 # Matchmaker (TEC-1845). Values are checked in service/matchmaker, which
 # answers {error, field} with the criterion that is wrong.
 
+class PutDiscoverFilters(BaseModel):
+    """PUT /discover-filters: the Filters sheet's choices (TEC-1845).
+    service/discover_filters checks the keys and values."""
+    filters: dict
+
+
 class PutMemberAlert(BaseModel):
     """PUT /matchmaker/alert."""
     criteria: dict
