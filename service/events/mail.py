@@ -474,7 +474,9 @@ def live_email(event: dict, token: str) -> tuple[str, str]:
            + _panel(_line(_e(announcement(event)), bottom=0))
            + '</td></tr></table>')
     body = (_title('live') + held.para(LIVE_LINE, size=15) + facts + button('See your gathering', page_url(event['slug']))
-            + kit + _link('Manage your gathering', manage_url(token)))
+            + kit + '<div style="height:10px;line-height:10px;">&nbsp;</div>'
+            # A text link that keeps its ink in dark mode (e-strong).
+            + _text_link('Manage your gathering', manage_url(token)))
     return subject, _shell(subject, _e(LIVE_LINE), body, _footer(LIVE_WHY))
 
 
