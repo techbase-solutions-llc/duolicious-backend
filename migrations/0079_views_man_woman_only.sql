@@ -7,8 +7,8 @@
 -- rows already written before that change:
 --   - the viewer and the viewed are not one man and one woman (the same
 --     gender, or either one neither a man nor a woman, or no gender);
---   - the viewer is staff: `roles` contains 'admin', the admin dashboard's
---     rule (service/admin/queries/members.py).
+--   - the viewer is staff: `roles` holds 'admin' or 'mod' (the owner,
+--     26 Oct 2026: moderators' views are hidden like admins').
 -- `visited.subject_person_id` and `profile_view.viewer_id` are the viewer.
 --
 -- Archive first: every row removed is copied, unchanged, into
@@ -47,14 +47,14 @@ CREATE TABLE IF NOT EXISTS profile_view_removed_20261026 (
 INSERT INTO visited_removed_20261026
   (subject_person_id, object_person_id, updated_at, invisible, reason)
 SELECT v.subject_person_id, v.object_person_id, v.updated_at, v.invisible,
-       CASE WHEN 'admin' = ANY(COALESCE(a.roles, ARRAY[]::text[]))
+       CASE WHEN COALESCE(a.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
             THEN 'staff' ELSE 'not_man_woman' END
 FROM visited v
 JOIN person a ON a.id = v.subject_person_id
 JOIN person b ON b.id = v.object_person_id
 LEFT JOIN gender ga ON ga.id = a.gender_id
 LEFT JOIN gender gb ON gb.id = b.gender_id
-WHERE 'admin' = ANY(COALESCE(a.roles, ARRAY[]::text[]))
+WHERE COALESCE(a.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
    OR NOT COALESCE((ga.name = 'Man' AND gb.name = 'Woman')
                    OR (ga.name = 'Woman' AND gb.name = 'Man'), FALSE)
 ON CONFLICT DO NOTHING;
@@ -70,14 +70,14 @@ WHERE r.subject_person_id = v.subject_person_id
 INSERT INTO profile_view_removed_20261026
   (viewer_id, viewed_id, last_notified_at, reason)
 SELECT pv.viewer_id, pv.viewed_id, pv.last_notified_at,
-       CASE WHEN 'admin' = ANY(COALESCE(a.roles, ARRAY[]::text[]))
+       CASE WHEN COALESCE(a.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
             THEN 'staff' ELSE 'not_man_woman' END
 FROM profile_view pv
 JOIN person a ON a.id = pv.viewer_id
 JOIN person b ON b.id = pv.viewed_id
 LEFT JOIN gender ga ON ga.id = a.gender_id
 LEFT JOIN gender gb ON gb.id = b.gender_id
-WHERE 'admin' = ANY(COALESCE(a.roles, ARRAY[]::text[]))
+WHERE COALESCE(a.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
    OR NOT COALESCE((ga.name = 'Man' AND gb.name = 'Woman')
                    OR (ga.name = 'Woman' AND gb.name = 'Man'), FALSE)
 ON CONFLICT DO NOTHING;

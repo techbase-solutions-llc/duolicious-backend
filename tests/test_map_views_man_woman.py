@@ -154,10 +154,10 @@ def _wants_view_pushes(person):
             dict(i=person['id']))
 
 
-def _make_staff(person):
+def _make_staff(person, role='admin'):
     with api_tx() as tx:
-        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
-                   dict(i=person['id']))
+        tx.execute("UPDATE person SET roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s",
+                   dict(i=person['id'], r=role))
 
 
 def _view_rows(viewer, viewed):
@@ -201,9 +201,11 @@ def test_a_same_gender_view_records_nothing(client, town, pushes, viewer, viewed
     assert pushes == []
 
 
+@pytest.mark.parametrize('role', ['admin', 'mod'])
 @pytest.mark.parametrize('viewed', ['chava', 'boaz'])
-def test_a_staff_view_records_nothing(client, town, pushes, viewed):
-    _make_staff(town['adam'])
+def test_a_staff_view_records_nothing(client, town, pushes, viewed, role):
+    # The owner, 26 Oct 2026: moderators' views are hidden like admins'.
+    _make_staff(town['adam'], role)
     _wants_view_pushes(town[viewed])
     _open(client, town, town['adam'], town[viewed])
     assert _view_rows(town['adam'], town[viewed]) == (False, False)

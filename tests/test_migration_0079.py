@@ -31,10 +31,13 @@ def people(make_person):
         woman2=make_person(name='M79Woman2', gender='Woman'),
         other=make_person(name='M79Other', gender='Other'),
         staff=make_person(name='M79Staff', gender='Man'),
+        mod=make_person(name='M79Mod', gender='Woman'),
     )
     with api_tx() as tx:
         tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
                    dict(i=p['staff']['id']))
+        tx.execute("UPDATE person SET roles = ARRAY['mod']::TEXT[] WHERE id = %(i)s",
+                   dict(i=p['mod']['id']))
     return p
 
 
@@ -49,6 +52,7 @@ PAIRS = [
     ('man', 'other', False, 'not_man_woman'),
     ('staff', 'woman', False, 'staff'),
     ('staff', 'man', False, 'staff'),
+    ('mod', 'man', False, 'staff'),       # a moderator's view is a staff view
 ]
 
 

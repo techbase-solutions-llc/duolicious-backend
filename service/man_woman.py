@@ -13,16 +13,23 @@ surface reads the same text:
 
 Genders are matched by name, as service/matchmaker/notices.py and
 service/events/admin.py do: `gender` is a SERIAL lookup seeded by
-init-api.sql, and 'Man' and 'Woman' are the names it holds. Staff is the
-admin dashboard's rule (service/admin/queries/members.py): a person whose
-`roles` contains 'admin'.
+init-api.sql, and 'Man' and 'Woman' are the names it holds. Staff is a
+person whose `roles` holds 'admin' or 'mod' (the owner, 26 Oct 2026:
+moderators' views are hidden like admins').
 
 The fragments are text, not binds: each names its viewer and prospect as
 SQL expressions the caller passes, and adds no `%` of its own.
 """
 from __future__ import annotations
 
-from service.admin.queries.members import member_sql
+
+
+# A viewer whose views never count: an admin or a moderator.
+STAFF_ROLES_SQL = "ARRAY['admin', 'mod']::text[]"
+
+
+def staff_sql(alias: str) -> str:
+    return f"(COALESCE({alias}.roles, ARRAY[]::text[]) && {STAFF_ROLES_SQL})"
 
 
 def _pair(a: str, b: str) -> str:
@@ -52,6 +59,6 @@ def view_counts_sql(viewer: str, viewed: str) -> str:
           JOIN person mw_b ON mw_b.id = {viewed}
           JOIN gender mw_bg ON mw_bg.id = mw_b.gender_id
           WHERE mw_a.id = {viewer}
-            AND {member_sql('mw_a')}
+            AND NOT {staff_sql('mw_a')}
             AND {_pair('mw_ag', 'mw_bg')}
       )"""
