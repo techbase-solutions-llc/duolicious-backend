@@ -1057,6 +1057,17 @@ class PostToolAnswers(BaseModel):
     answers: List[ToolAnswerIn] = Field(default_factory=list, max_length=60)
 
 
+class PostToolChatSession(BaseModel):
+    """POST /tools/chat-sessions (TEC-1845, in-app plan release 4): the
+    marriage checklist ('checklist') or the Us game ('game') with a match,
+    from the chat with them. `with_uuid` is the match's person uuid;
+    `display` the member's name on it, their profile's first name when
+    left out."""
+    kind: Literal['checklist', 'game']
+    with_uuid: str = Field(min_length=1, max_length=64)
+    display: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
 class PostToolClaim(BaseModel):
     display: str = Field(min_length=1, max_length=80)
 

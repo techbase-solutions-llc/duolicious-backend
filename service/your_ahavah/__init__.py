@@ -247,31 +247,10 @@ _Q_RECOMMENDATIONS = """
 
 
 def _headline(tx, r: dict) -> Optional[dict]:
-    """A saved result's one line: the Us score, the Me type, the couple
-    checklist's agreement, the single checklist's top count or a knows-me
-    player's number of friends. Never an answer, never the other player."""
-    if r['mode'] == 'knows_me':
-        if r['seat'] != 'owner':
-            return None
-        n = tx.execute("""SELECT count(*)::int AS n FROM tool_player
-                           WHERE session_id = %(s)s AND seat = 'guest' AND finished_at IS NOT NULL
-                             AND removed_at IS NULL""", dict(s=r['session_pk'])).fetchone()['n']
-        return dict(friends=n)
-    if r['completed_at'] is None:
-        return None
-    row = tx.execute("""SELECT score, breakdown, archetype FROM tool_result
-                         WHERE session_id = %(s)s AND player_id IS NULL""",
-                     dict(s=r['session_pk'])).fetchone()
-    if row is None:
-        return None
-    if r['mode'] == 'me':
-        return dict(archetype=row['archetype'])
-    if r['mode'] == 'us':
-        return dict(score=row['score'])
-    if r['mode'] == 'couple':
-        b = row['breakdown'] or {}
-        return dict(agree=b.get('agree'), total=b.get('total'))
-    return dict(top=(row['breakdown'] or {}).get('top'))
+    """A saved result's one line (service.tools.sessions.headline): never
+    an answer, never the other player."""
+    from service.tools.sessions import headline
+    return headline(tx, r['session_pk'], r['mode'], r['seat'], r['player_id'], r['completed_at'] is not None)
 
 
 def held(tx, normalized_email: str, now: Optional[datetime] = None) -> dict:
