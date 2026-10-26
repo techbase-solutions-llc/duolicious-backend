@@ -30,10 +30,12 @@ from service.api.decorators import (
 
 @get('/tools/status')
 def get_tools_status():
-    """What the web needs before it shows Together: whether it is live, and
-    whether the invite email may be offered."""
+    """What the web needs before it shows Together: whether it is live,
+    whether the invite email may be offered and whether release 4's two
+    pieces (the checklist from a chat, the past results) are on."""
     from service.tools import live, switch_on
-    return (dict(live=live(), invite_email=switch_on('together_invite_email')),
+    return (dict(live=live(), invite_email=switch_on('together_invite_email'),
+                 release4_together=switch_on('release4_together')),
             200, {'Cache-Control': 'no-store'})
 
 
@@ -193,16 +195,17 @@ def post_tool_claim(req: t.PostToolClaim, s: t.SessionInfo, sid: str):
 
 # ---------------------------------------------------------------------------
 # From a chat, and a member's past results (TEC-1845, in-app plan release 4).
-# Members only. Each answers 404 unless Together is live and app_entries
-# lets the member in (service/app_entries.py), as the plan sets for both:
+# Members only. Each answers 404 unless Together is live, release4_together
+# is on and app_entries lets the member in (service/app_entries.py), as the
+# plan sets for both:
 # Chat > More's "the marriage checklist together" and the Together page's
 # list of past results.
 # ---------------------------------------------------------------------------
 
 def _entries_for(s) -> bool:
     from service.app_entries import enabled_for
-    from service.tools import live
-    return live() and enabled_for(s.person_id, s.email)
+    from service.tools import switch_on
+    return switch_on('release4_together') and enabled_for(s.person_id, s.email)
 
 
 @apost('/tools/chat-sessions', limiter=_start_limit)

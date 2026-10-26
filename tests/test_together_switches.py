@@ -18,6 +18,7 @@ NEW = {
     'together_answered_email': 'AHAVAH_TOGETHER_ANSWERED_EMAIL_ENABLED',
     'together_ready_email': 'AHAVAH_TOGETHER_READY_EMAIL_ENABLED',
     'together_summary_email': 'AHAVAH_TOGETHER_SUMMARY_EMAIL_ENABLED',
+    'release4_together': 'AHAVAH_RELEASE4_TOGETHER_ENABLED',
 }
 
 
@@ -48,8 +49,23 @@ def test_status_says_dark_until_live(client, monkeypatch):
         monkeypatch.delenv(env, raising=False)
     r = client.get('/tools/status')
     assert r.status_code == 200
-    assert r.get_json() == {'live': False, 'invite_email': False}
+    assert r.get_json() == {'live': False, 'invite_email': False, 'release4_together': False}
     assert r.headers['Cache-Control'] == 'no-store'
     monkeypatch.setenv('AHAVAH_TOGETHER_LIVE_ENABLED', '1')
     monkeypatch.setenv('AHAVAH_TOGETHER_INVITE_EMAIL_ENABLED', '1')
-    assert client.get('/tools/status').get_json() == {'live': True, 'invite_email': True}
+    assert client.get('/tools/status').get_json() == {'live': True, 'invite_email': True,
+                                                      'release4_together': False}
+
+
+def test_status_reports_release_4_together_only_once_together_is_live(client, monkeypatch):
+    """release4_together keeps Chat > More's checklist and the past results
+    dark (TEC-1845, in-app plan release 4). It counts only once Together is
+    live, as the email switches do."""
+    for env in NEW.values():
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setenv('AHAVAH_RELEASE4_TOGETHER_ENABLED', '1')
+    assert client.get('/tools/status').get_json()['release4_together'] is False
+    monkeypatch.setenv('AHAVAH_TOGETHER_LIVE_ENABLED', '1')
+    assert client.get('/tools/status').get_json()['release4_together'] is True
+    monkeypatch.delenv('AHAVAH_RELEASE4_TOGETHER_ENABLED')
+    assert client.get('/tools/status').get_json()['release4_together'] is False
