@@ -158,6 +158,41 @@ def recommend(tx, *, sender: dict, email: str, note: Optional[str],
     return dict(state='sent')
 
 
+def landing_on(sender_person_id: Optional[int]) -> bool:
+    """Whether the email links to the recommended single's landing page
+    (round 2, screen 12; in-app entry plan, section 7, release 3): the
+    Matchmaker's introductions and app_entries for the sender, as every new
+    entry. Off, the email keeps its old link (the invite link, or the home
+    page for a visitor sender)."""
+    from service.app_entries import enabled_for
+    from service.matchmaker import surface_on
+    return surface_on('matchmaker_introductions') and enabled_for(sender_person_id, None)
+
+
+def landing_url(token: str) -> str:
+    from service.config import WEB_BASE_URL
+    return f'{WEB_BASE_URL}/recommended/{token}'
+
+
+def landing(tx, token: object) -> Optional[dict]:
+    """The landing page's view of one sent recommendation: the sender's
+    first name, their note (None for the default note) and the member
+    sender's invite code (None for a visitor), so joining credits them.
+    Never the single's address. None for an unknown token or a row that
+    was erased or never sent."""
+    from service.leads import token_hash
+    if not isinstance(token, str) or not 16 <= len(token) <= 64:
+        return None
+    row = tx.execute(
+        """SELECT sender_first_name, note, referral_code FROM recommendation
+            WHERE landing_token_hash = %(h)s AND status = 'sent' AND erased_at IS NULL""",
+        dict(h=token_hash(token))).fetchone()
+    if row is None:
+        return None
+    note = row['note'] if row['note'] and row['note'] != DEFAULT_NOTE else None
+    return dict(first_name=row['sender_first_name'] or 'Someone', note=note, code=row['referral_code'])
+
+
 def send_recommendation(tx, rec_id: int) -> Optional[int]:
     """Queue the recommendation's one email (mm_recommend, campaign_id the
     row's id) and mark it sent. Used here and by the approval in
@@ -172,6 +207,12 @@ def send_recommendation(tx, rec_id: int) -> Optional[int]:
     if row is None:
         return None
     cta = f"{WEB_BASE_URL}/i/{row['referral_code']}" if row['referral_code'] else f'{WEB_BASE_URL}/'
+    if landing_on(row['sender_person_id']):
+        from service.leads import new_token
+        token, hashed = new_token()
+        tx.execute('UPDATE recommendation SET landing_token_hash = %(h)s WHERE id = %(i)s',
+                   dict(h=hashed, i=rec_id))
+        cta = landing_url(token)
 
     def go():
         subject, body = mail.recommend_email(row['sender_first_name'] or 'Someone', row['note'], cta)

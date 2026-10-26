@@ -221,6 +221,23 @@ def _recommending_on() -> bool:
 
 
 _recommend_ip_limit = limiter.shared_limit('10 per hour', scope='mm_recommend')
+_landing_limit = limiter.shared_limit('60 per hour', scope='mm_landing')
+
+
+@get('/recommendations/landing/<token>', limiter=_landing_limit)
+def get_recommendation_landing(token: str):
+    """The recommended single's landing page (round 2, screen 12): who
+    recommended them (first name), their note and the sender's invite code.
+    404 for an unknown token and while introductions are off."""
+    from database import api_tx
+    from service.matchmaker import recommend, surface_on
+    if not surface_on('matchmaker_introductions'):
+        return _off()
+    with api_tx('read committed') as tx:
+        view = recommend.landing(tx, token)
+    if view is None:
+        return dict(error='not_found'), 404, _NO_STORE
+    return view, 200, _NO_STORE
 
 
 def _recommend_sender(tx, s: t.SessionInfo, typed_first_name) -> dict:
@@ -307,6 +324,16 @@ def get_introduction_candidates(s: t.SessionInfo):
     q = request.args.get('q') or ''
     return _member_call('matchmaker_introductions', lambda tx: introductions.candidates(
         tx, s.person_id, for_uuid, q), isolation='read committed')
+
+
+@aget('/introductions/people')
+def get_introduction_people(s: t.SessionInfo):
+    """Choose 2 members (round 2, 13.1): the first of the two, from everyone
+    the introducer can already see."""
+    from service.matchmaker import introductions
+    q = request.args.get('q') or ''
+    return _member_call('matchmaker_introductions', lambda tx: introductions.people(
+        tx, s.person_id, q), isolation='read committed')
 
 
 @apost('/introductions')

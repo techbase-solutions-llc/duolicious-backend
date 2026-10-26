@@ -12,7 +12,7 @@ from scripts import send_event_proofs as ep
 
 ORDER = ['event_confirm', 'event_confirm_online', 'event_reminder', 'event_reminder_online', 'event_change',
          'event_cancelled', 'event_digest', 'event_manage', 'event_approved', 'event_live',
-         'event_confirm_join', 'event_confirm_online_join', 'event_reminder_join',
+         'event_live_kit', 'event_live_kit_online', 'event_digest_share', 'event_confirm_join', 'event_confirm_online_join', 'event_reminder_join',
          'event_reminder_online_join', 'event_join_invite', 'event_join_invite_online']
 _TABLES = ('email_outbox', 'email_send_log', 'event_rsvp', 'organiser_link', 'lead')
 
@@ -38,7 +38,7 @@ def smtp(monkeypatch, events_schema):
     return s
 
 
-def test_the_plan_lists_the_16_emails_in_order():
+def test_the_plan_lists_the_19_emails_in_order():
     assert [e['name'] for e in ep.plan()] == ORDER
     assert all(e['subject'].startswith('[PROOF] ') for e in ep.plan())
 
@@ -49,7 +49,7 @@ def test_every_proof_goes_to_the_owner_only(smtp, monkeypatch):
             monkeypatch.delenv(env)
     env_before, before = dict(os.environ), _counts()
     ep.main(['--send'])
-    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 16
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 19
     assert _counts() == before and dict(os.environ) == env_before
 
 
@@ -63,13 +63,15 @@ def test_a_dry_run_sends_nothing(smtp, capsys):
 def test_every_link_in_a_proof_is_inert():
     from service.config import API_BASE_URL, WEB_BASE_URL
     # Plain pages that carry nothing of anyone's may stay: Help, the list of
-    # gatherings and the sample call link.
+    # gatherings, the sample call link and the sample gathering's public
+    # page and share images (the live email's kit, 10.1).
     plain = {'https://ahavah.app/faq', f'{WEB_BASE_URL}/events', 'https://meet.example.com/ahavah-talk'}
     for e in ep.plan():
-        hrefs = set(re.findall(r'<a\s[^>]*href="([^"]+)"', e['html']))
+        hrefs = {h for h in re.findall(r'<a\s[^>]*href="([^"]+)"', e['html'])
+                 if not h.startswith(f'{WEB_BASE_URL}/e/')}
         assert hrefs, e['name']
         assert hrefs <= plain | {ep.PROOF_LINK_DISABLED}, (e['name'], hrefs - plain)
-        for live in (f'{WEB_BASE_URL}/rsvp/', f'{API_BASE_URL}/rsvp/', '/host/gatherings?t=', '/u/'):
+        for live in (f'{WEB_BASE_URL}/rsvp/', f'{API_BASE_URL}/rsvp/', '/host/gatherings?t=', '/guests?t=', '/u/'):
             assert live not in e['html'], (e['name'], live)
 
 
@@ -79,7 +81,7 @@ def test_no_switch_is_read(monkeypatch, capsys):
     def refuse(name):
         raise AssertionError(f'read the switch {name}')
     monkeypatch.setattr(switches, 'enabled', refuse)
-    assert len(ep.plan()) == 16
+    assert len(ep.plan()) == 19
     ep.main([])
 
 

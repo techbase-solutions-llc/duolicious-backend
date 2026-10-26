@@ -70,6 +70,9 @@ TITLES: dict[str, tuple[str, str, int]] = {
     # 3.9, "Meet the / community." (handoff 10-events-join.md, NEW LINE),
     # 569 x 158 at 2x.
     'join_invite': ('title-event-join-invite', 'Meet the community.', 285),
+    # Round 2, 10.1, "Your / gathering / is live." (handoff 19, departure 1),
+    # 484 x 218 at 2x.
+    'live': ('title-gathering-live', 'Your gathering is live.', 242),
 }
 
 GUEST_WHY = 'You are getting this because you RSVPed to a gathering on Ahavah.'
@@ -90,6 +93,18 @@ def live_note(title: str) -> str:
 
 def live_subject(title: str) -> str:
     return f'{title} is live on Ahavah'  # NEW LINE
+
+
+# Round 2, screen 10 (handoff 19-hosting-and-sharing.md), with the 23 Oct
+# copy pass the owner approved in full (ahavah-web
+# docs/copy/2026-10-23-design-round-copy-pass.md, rows 27, 28, 35 to 43).
+LIVE_LINE = 'People can RSVP from its page now. When they do, we email you once a day with who is new.'
+LIVE_WHY = 'You are getting this because you host this gathering on Ahavah.'
+SHARE_AGAIN_ASK = 'Want more people to come?'
+SHARE_AGAIN = 'Share it again'
+# The tag on a link the organiser shares (migration 0081): which share
+# brought a view or an RSVP.
+HOST_TAG = 'host'
 
 
 # The join block (handoff 10-events-join.md, frames 3.1 to 3.3): the
@@ -148,6 +163,26 @@ def calendar_url(token: str) -> str:
 
 def rsvp_url(token: str) -> str:
     return f'{WEB_BASE_URL}/rsvp/{token}'
+
+
+def page_url(slug: str) -> str:
+    return f'{WEB_BASE_URL}/e/{slug}'
+
+
+def share_url(slug: str, tag: str = HOST_TAG) -> str:
+    """The gathering's page with a share tag (migration 0081)."""
+    return f'{page_url(slug)}?s={tag}'
+
+
+def image_url(slug: str, size: str) -> str:
+    """The kit's story ('story') or post ('feed') image (ahavah-web
+    src/app/e/[slug]/share-image/route.ts)."""
+    return f'{page_url(slug)}/share-image?size={size}'
+
+
+def guests_url(slug: str, token: str) -> str:
+    """The host page with the guest list, opening the share kit."""
+    return f'{WEB_BASE_URL}/host/gatherings/{slug}/guests?t={token}&share=1'
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +389,10 @@ def digest_lead(n: int, title: str) -> str:
 
 
 def digest_email(event: dict, new_rsvps: list[dict], total_going: int,
-                 manage_token: str) -> tuple[str, str]:
-    """3.6: names and party sizes, never an email address."""
+                 manage_token: str, *, share: bool = False) -> tuple[str, str]:
+    """3.6: names and party sizes, never an email address. With `share`
+    (the organiser kit is on for them), round 2's quiet line after the
+    list (10.4): a text link to the host page with the kit."""
     line = digest_lead(len(new_rsvps), event['title'])
     subject = line  # NEW LINE
     rows = ''.join(
@@ -364,10 +401,83 @@ def digest_email(event: dict, new_rsvps: list[dict], total_going: int,
         f'font-family:{SANS};font-size:13px;color:{MUTED};">{_people(int(r["party_size"]))}</td></tr>'
         for r in new_rsvps)
     table = _panel(f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{rows}</table>')
+    again = ''
+    if share and event.get('slug'):
+        again = held.para(
+            f'{SHARE_AGAIN_ASK} <a class="e-strong" href="{_e(guests_url(event["slug"], manage_token))}" '
+            f'target="_blank" style="color:{INK};font-weight:700;text-decoration:underline;display:inline-block;'
+            f'padding:12px 0;margin:-12px 0;">{SHARE_AGAIN}</a>', size=15)
     body = (chip('Today') + _title('digest') + _lead(_e(line)) + table
-            + held.para(f'<b>{total_going} going</b> in total.')
+            + held.para(f'<b>{total_going} going</b> in total.') + again
             + button('Manage your gathering', manage_url(manage_token)))
     return subject, _shell(subject, _e(line), body, _footer(DIGEST_WHY))
+
+
+def _town(city: Optional[str]) -> str:
+    return (city or '').split(',')[0].strip()
+
+
+def _start(event: dict) -> datetime:
+    s = event['starts_at']
+    return datetime.fromisoformat(s) if isinstance(s, str) else s
+
+
+def announcement(event: dict) -> str:
+    """The suggested group announcement, in the organiser's voice (copy
+    pass rows 27 and 28), as ahavah-web src/lib/events/share-text.ts has
+    it: the title, day, start and town, never the venue or the call link.
+    Plain text: escape it."""
+    import zoneinfo
+
+    from service.events.fields import _clock, _day
+    start = _start(event).astimezone(zoneinfo.ZoneInfo(event['tz']))
+    day, time = _day(start, year=False), _clock(start)
+    host, title, link = event['organiser']['name'], event['title'], share_url(event['slug'])
+    if event['mode'] == 'online':
+        return (f"Shalom all. {host} is hosting {title} online on {day} at {time} {event['tz_label']}. "
+                f'Join from anywhere. RSVP here: {link}')
+    return (f'Shalom all. {host} is hosting {title} on {day} at {time} in {_town(event.get("city"))}. '
+            f'Everyone is welcome. RSVP here: {link}')
+
+
+def _text_link(label: str, href: str) -> str:
+    """A text link with a 44 px tap area, as 10.1 draws them."""
+    return (f'<p style="margin:0 0 4px;font-family:{SANS};font-size:15px;line-height:1.5;">'
+            f'<a class="e-strong" href="{_e(href)}" target="_blank" style="color:{INK};font-weight:700;'
+            f'text-decoration:underline;display:inline-block;padding:12px 0;margin:-6px 0;">{label}</a></p>')
+
+
+def live_email(event: dict, token: str) -> tuple[str, str]:
+    """Round 2, 10.1 and 10.2, "is live" with the organiser share kit: the
+    title image, the line, the gathering's title, day, time and town (or
+    Online), "See your gathering", then "Share it": its page with the
+    host's tag, the story and post images to download and the
+    announcement to copy; "Manage your gathering" last. Nothing at 20 px
+    or more but the title image. Never the venue or the call link."""
+    title = event['title']
+    subject = live_subject(title)
+    day, time = _when(event)
+    place = 'Online' if event['mode'] == 'online' else _e(event.get('city'))
+    facts = _panel(_line(_e(title), bold=True, bottom=8) + _line(f'{_e(day)}, {_e(time)}')
+                   + _line(place, bottom=0))
+    link = share_url(event['slug'])
+    kit = ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+           'style="margin:22px 0 0;"><tr><td style="border-top:1px solid rgba(15,11,31,0.10);padding-top:14px;">'
+           + _line('Share it', bold=True, size=16, bottom=10)
+           + _line(f'Its page: <a class="e-strong" href="{_e(link)}" target="_blank" style="color:{INK};'
+                   f'font-weight:700;text-decoration:underline;word-break:break-all;">{_e(link)}</a>',
+                   bottom=10)
+           + _text_link('Download the story image', image_url(event['slug'], 'story'))
+           + _text_link('Download the post image', image_url(event['slug'], 'feed'))
+           + f'<p class="e-text" style="margin:14px 0 6px;font-family:{SANS};font-size:12px;font-weight:800;'
+             f'letter-spacing:0.12em;text-transform:uppercase;color:{MUTED};">A short announcement for your group</p>'
+           + _panel(_line(_e(announcement(event)), bottom=0))
+           + '</td></tr></table>')
+    body = (_title('live') + held.para(LIVE_LINE, size=15) + facts + button('See your gathering', page_url(event['slug']))
+            + kit + '<div style="height:10px;line-height:10px;">&nbsp;</div>'
+            # A text link that keeps its ink in dark mode (e-strong).
+            + _text_link('Manage your gathering', manage_url(token)))
+    return subject, _shell(subject, _e(LIVE_LINE), body, _footer(LIVE_WHY))
 
 
 def manage_email(token: str, note: Optional[str] = None, *,
@@ -621,7 +731,7 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
     """The organiser's digest of RSVPs confirmed since the last one, with a
     fresh manage link. The RSVPs it names are marked digested in the same
     transaction. None when there is nothing new."""
-    from service.events.organisers import issue_link
+    from service.events.organisers import issue_link, kit_on
     if not _on(CAMPAIGN_DIGEST):
         return None
     cid = f'{event_id}:{day.isoformat()}'
@@ -642,7 +752,10 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
             """SELECT COALESCE(SUM(party_size), 0)::int AS n FROM event_rsvp
                 WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL""",
             dict(e=event_id)).fetchone()['n']
-        subject, body = digest_email(ev, new, total, issue_link(tx, ev['organiser_id']))
+        o = tx.execute('SELECT email, member_person_id FROM organiser WHERE id = %(i)s',
+                       dict(i=ev['organiser_id'])).fetchone()
+        subject, body = digest_email(ev, new, total, issue_link(tx, ev['organiser_id']),
+                                     share=o is not None and kit_on(dict(o)))
         out = _queue_organiser(tx, campaign=CAMPAIGN_DIGEST, campaign_id=cid,
                                organiser_id=ev['organiser_id'], subject=subject, html_=body)
         if out is not None:
@@ -650,6 +763,37 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
                        dict(i=[r['id'] for r in new]))
         return out
     return _guarded(tx, 'event_digest', go)
+
+
+def queue_live(tx, event_id: int) -> Optional[int]:
+    """The organiser is told their gathering is live, with a fresh manage
+    link: round 2's email with the share kit while the kit is on for them
+    (hosting and app_entries, organisers.kit_on), else the manage email
+    with the live note, as before. One switch for both, event_organiser_note."""
+    from service.events.organisers import issue_link, kit_on
+    from service.leads import token_hash
+    row = tx.execute(
+        """SELECT e.id, e.slug, e.title, e.starts_at, e.ends_at, e.tz, e.tz_label, e.mode, e.city,
+                  e.country, e.organiser_id, o.name AS organiser_name, o.email AS organiser_email,
+                  o.member_person_id
+             FROM event e JOIN organiser o ON o.id = e.organiser_id WHERE e.id = %(i)s""",
+        dict(i=event_id)).fetchone()
+    if row is None:
+        return None
+    oid = row['organiser_id']
+    if not kit_on(dict(email=row['organiser_email'], member_person_id=row['member_person_id'])):
+        return queue_manage_link(tx, oid, issue_link(tx, oid), note=live_note(row['title']),
+                                 subject=live_subject(row['title']))
+    if not _on(CAMPAIGN_NOTE):
+        return None
+    token = issue_link(tx, oid)
+    event = dict(row, organiser=dict(name=row['organiser_name']))
+
+    def go():
+        s, body = live_email(event, token)
+        return _queue_organiser(tx, campaign=CAMPAIGN_NOTE, campaign_id=f'{oid}:{token_hash(token)[:12]}',
+                                organiser_id=oid, subject=s, html_=body)
+    return _guarded(tx, 'event_live', go)
 
 
 def queue_manage_link(tx, organiser_id: int, token: str, *, note: Optional[str] = None,
@@ -791,5 +935,21 @@ def preview_approved(to: str) -> tuple[str, str]:
 
 
 def preview_live(to: str) -> tuple[str, str]:
+    """The live note alone: the email while the share kit is off."""
     title = 'Marriage preparation evening'
     return manage_email(_SAMPLE_TOKEN, live_note(title), subject=live_subject(title))
+
+
+def preview_live_kit(to: str) -> tuple[str, str]:
+    return live_email(sample_event(), _SAMPLE_TOKEN)
+
+
+def preview_live_kit_online(to: str) -> tuple[str, str]:
+    return live_email(sample_online_event(), _SAMPLE_TOKEN)
+
+
+def preview_digest_share(to: str) -> tuple[str, str]:
+    return digest_email(sample_event(), [dict(name='Hannah Okafor', party_size=2),
+                                         dict(name='The Adeyemi family', party_size=4),
+                                         dict(name='Lydia Cruz', party_size=1)], 14, _SAMPLE_TOKEN,
+                        share=True)

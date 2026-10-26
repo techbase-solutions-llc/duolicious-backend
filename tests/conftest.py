@@ -1214,6 +1214,25 @@ def matchmaker_schema(events_schema):
             tx.execute((migrations / name).read_text(encoding='utf-8'))
 
 
+# Migrations 0080 to 0082 (TEC-1845, in-app entry plan release 3): the
+# member who made an organiser in the app, the share tags on a gathering's
+# views and RSVPs, and the recommended single's landing token. Idempotent,
+# applied here as the deploy does; autouse because the organiser, RSVP and
+# recommendation code read the new columns.
+
+@pytest.fixture(scope='session', autouse=True)
+def release3_schema(matchmaker_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in ('0080_organiser_member.sql', '0081_event_share_tags.sql',
+                 '0082_recommendation_landing.sql'):
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
 _MATCHMAKER_SWITCH_VARS = (
     'AHAVAH_MATCHMAKER_LIVE_ENABLED', 'AHAVAH_MATCHMAKER_ALERTS_ENABLED',
     'AHAVAH_MATCHMAKER_VISITOR_ALERTS_ENABLED', 'AHAVAH_MATCHMAKER_INTRODUCTIONS_ENABLED',

@@ -63,9 +63,41 @@ _Q_EVENTS = """
 
 _Q_ORGANISERS = """
     SELECT o.id, o.name, o.kind, o.approved_at, o.revoked_at,
-           (SELECT COUNT(*) FROM event e WHERE e.organiser_id = o.id AND e.status <> 'draft')::int AS events
+           (SELECT COUNT(*) FROM event e WHERE e.organiser_id = o.id AND e.status <> 'draft')::int AS events,
+           (SELECT COALESCE(SUM(r.party_size), 0) FROM event_rsvp r JOIN event e ON e.id = r.event_id
+             WHERE e.organiser_id = o.id AND r.share_tag = 'host' AND r.status = 'going'
+               AND r.confirmed_at IS NOT NULL AND r.erased_at IS NULL)::int AS host_share_guests
       FROM organiser o ORDER BY o.created_at, o.id
 """
+
+# Views and RSVPs by share tag, per gathering (migration 0081; in-app entry
+# plan, section 7, measurement). Counts only.
+_Q_SHARE_VIEWS = """
+    SELECT e.slug, v.share_tag, SUM(v.views)::int AS n
+      FROM event_view_share_day v JOIN event e ON e.id = v.event_id
+     GROUP BY e.slug, v.share_tag
+"""
+_Q_SHARE_RSVPS = """
+    SELECT e.slug, r.share_tag, COUNT(*)::int AS rsvps,
+           COUNT(*) FILTER (WHERE r.status = 'going' AND r.confirmed_at IS NOT NULL)::int AS confirmed
+      FROM event_rsvp r JOIN event e ON e.id = r.event_id
+     WHERE r.share_tag IS NOT NULL
+     GROUP BY e.slug, r.share_tag
+"""
+
+
+def _shares(tx) -> dict[str, dict]:
+    """{slug: {tag: {views, rsvps, confirmed}}} for every share tag."""
+    from service.events.public import SHARE_TAGS
+    out: dict[str, dict] = {}
+
+    def slot(slug: str) -> dict:
+        return out.setdefault(slug, {t: dict(views=0, rsvps=0, confirmed=0) for t in SHARE_TAGS})
+    for r in tx.execute(_Q_SHARE_VIEWS).fetchall():
+        slot(r['slug'])[r['share_tag']]['views'] = r['n']
+    for r in tx.execute(_Q_SHARE_RSVPS).fetchall():
+        slot(r['slug'])[r['share_tag']].update(rsvps=r['rsvps'], confirmed=r['confirmed'])
+    return out
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -82,9 +114,13 @@ def _rows(tx, q: str, **params) -> list[dict]:
 def overview(tx, now: Optional[datetime] = None) -> dict:
     """Everything the Events tab shows. waiting_count is what needs the
     owner: organisers and gatherings waiting, and new invite requests."""
+    from service.events.public import SHARE_TAGS
     waiting = dict(organisers=_rows(tx, _Q_WAITING_ORGANISERS), events=_rows(tx, _Q_WAITING_EVENTS))
     requests = _rows(tx, _Q_REQUESTS)
-    return dict(waiting=waiting, requests=requests, events=_rows(tx, _Q_EVENTS),
+    shares = _shares(tx)
+    none = {t: dict(views=0, rsvps=0, confirmed=0) for t in SHARE_TAGS}
+    events = [dict(e, shares=shares.get(e['slug'], none)) for e in _rows(tx, _Q_EVENTS)]
+    return dict(waiting=waiting, requests=requests, events=events,
                 organisers=_rows(tx, _Q_ORGANISERS),
                 waiting_count=(len(waiting['organisers']) + len(waiting['events'])
                                + sum(1 for r in requests if r['status'] == 'new')))
@@ -209,8 +245,8 @@ def create_organiser(tx, admin_person_id: int, *, name: str, email: str, kind: s
 
 def approve_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] = None) -> None:
     """A waiting gathering published, its flag cleared, its posts queued
-    and its organiser told it is live."""
-    from service.events.organisers import issue_link
+    and its organiser told it is live (with the share kit while it is on
+    for them, mail.queue_live)."""
     now = now or datetime.now(timezone.utc)
     ev = _event(tx, slug)
     if ev['status'] != 'pending':
@@ -219,8 +255,7 @@ def approve_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] =
         raise EventError('started', 409)
     manage.publish_now(tx, ev, now)
     manage.send_held_change(tx, ev['id'])
-    mail.queue_manage_link(tx, ev['organiser_id'], issue_link(tx, ev['organiser_id']),
-                           note=mail.live_note(ev['title']), subject=mail.live_subject(ev['title']))
+    mail.queue_live(tx, ev['id'])
 
 
 def decline_event(tx, admin_person_id: int, slug: str) -> None:

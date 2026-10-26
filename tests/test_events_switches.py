@@ -62,8 +62,9 @@ def test_every_gathering_route_answers_404_while_dark(app, client, monkeypatch):
             seen.append((method, rule.rule))
             assert r.status_code == 404, (method, rule.rule, r.status_code)
     # 23, and GET /rsvp/mine and /rsvp/mine/<id> (in-app entry plan, release 2),
-    # and the member's own cancel and calendar file for a place (design 4.7).
-    assert len(seen) == 27
+    # the member's own cancel and calendar file for a place (design 4.7) and
+    # POST /organiser/member (release 3, hosting from the app).
+    assert len(seen) == 28
 
 
 def test_status_says_dark_until_live(client, monkeypatch):

@@ -195,6 +195,45 @@ def candidates(tx, introducer_id: int, for_uuid: str, q: str = '', limit: int = 
             'left': allowance(tx, introducer_id, now)['left']}
 
 
+_Q_PEOPLE = """
+    SELECT p.id, p.uuid::text AS uuid, p.name,
+           (SELECT EXTRACT(YEAR FROM AGE(p.date_of_birth))::int WHERE p.show_my_age) AS age,
+           (SELECT p.location_short_friendly WHERE p.show_my_location) AS place,
+           (SELECT ph.uuid FROM photo ph
+             WHERE ph.person_id = p.id AND ph.moderation_status = 'approved'
+               AND (NOT %(photo_gate)s::boolean OR photos_visible_to(%(me)s, p.id))
+             ORDER BY ph.position LIMIT 1) AS photo_uuid,
+           {reach} AS reach,
+           EXISTS (SELECT 1 FROM introduction i WHERE i.introducer_person_id = %(me)s
+                     AND p.id IN (i.a_person_id, i.b_person_id)) AS suggested_before
+      FROM person p
+     WHERE {visible}
+       AND (%(q)s = '' OR p.name ILIKE %(q)s || '%%')
+     ORDER BY p.name, p.id
+     LIMIT %(limit)s
+"""
+
+
+def people(tx, introducer_id: int, q: str = '', limit: int = 20, now: Optional[datetime] = None) -> dict:
+    """The first of two members to introduce (in-app entry plan, release 3;
+    round 2, 13.1 "Choose 2 members"): everyone the introducer can already
+    see, as candidates() lists them for a profile; the second is chosen with
+    candidates() for that person."""
+    from service.photo_gate import gate_params
+    sql = _Q_PEOPLE.format(reach=reach_case_sql('%(me)s'), visible=visible_sql('%(me)s'))
+    rows = tx.execute(sql, dict(me=introducer_id, q=_escape_like((q or '').strip()[:40]),
+                                limit=max(1, min(int(limit), 50)), **gate_params())).fetchall()
+    out = []
+    for r in rows:
+        person = dict(uuid=r['uuid'], first_name=first_name(r['name']), age=r['age'], place=r['place'],
+                      reach=r['reach'], reach_label=REACH_LABELS.get(r['reach']),
+                      suggested_before=bool(r['suggested_before']))
+        if r['photo_uuid']:
+            person['photo_uuid'] = r['photo_uuid']
+        out.append(person)
+    return {'people': out, 'left': allowance(tx, introducer_id, now)['left']}
+
+
 def _hidden_refusal(tx, a: dict, b: dict, now: datetime) -> bool:
     """True when the two must not be introduced, for a reason the
     introducer may not learn."""

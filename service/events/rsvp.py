@@ -82,10 +82,22 @@ def _clean_name(name: object) -> str:
         raise EventError('bad_name', 400)
 
 
+def _keep_share(tx, rid: int, share: Optional[str]) -> None:
+    """The share tag of the page the RSVP came from (migration 0081). The
+    first one stays: asking again from another link changes nothing."""
+    from service.events.public import share_tag
+    tag = share_tag(share)
+    if tag is not None:
+        tx.execute('UPDATE event_rsvp SET share_tag = COALESCE(share_tag, %(t)s) WHERE id = %(i)s',
+                   dict(t=tag, i=rid))
+
+
 def rsvp(tx, slug: str, *, name: str, email: Optional[str], party_size: int,
-         share_email: bool, news: bool, member, now: Optional[datetime] = None) -> dict:
+         share_email: bool, news: bool, member, now: Optional[datetime] = None,
+         share: Optional[str] = None) -> dict:
     """{state: 'check_email', email} for a visitor, {state: 'confirmed',
-    token} for a signed-in member."""
+    token} for a signed-in member. `share` is the share tag the page was
+    opened with, if any."""
     from service.events import mail
     from service.leads import record_lead
     now = _now(now)
@@ -94,7 +106,7 @@ def rsvp(tx, slug: str, *, name: str, email: Optional[str], party_size: int,
     name = _clean_name(name)
     if member is not None:
         return _member_rsvp(tx, slug, name=name, party_size=party_size,
-                            share_email=share_email, member=member, now=now)
+                            share_email=share_email, member=member, now=now, share=share)
     cleaned = clean_email(email)
     if cleaned is None:
         raise EventError('bad_email', 400)
@@ -153,12 +165,13 @@ def rsvp(tx, slug: str, *, name: str, email: Optional[str], party_size: int,
                 WHERE id = %(i)s""",
             dict(n=name, a=address, p=party_size, h=hashed, cb=confirm_by, sh=share_email is True,
                  mc=news is True, r=resends, l=lead_id, pid=person['id'] if person else None, i=rid))
+    _keep_share(tx, rid, share)
     mail.queue_confirm(tx, rid, token)
     return dict(state='check_email', email=address)
 
 
 def _member_rsvp(tx, slug: str, *, name: str, party_size: int, share_email: bool, member,
-                 now: datetime) -> dict:
+                 now: datetime, share: Optional[str] = None) -> dict:
     """Confirmed at once, under the event row's lock, as a confirm is."""
     event = _open_event(tx, slug, now, lock=True)
     person = tx.execute('SELECT email, normalized_email FROM person WHERE id = %(i)s',
@@ -185,6 +198,7 @@ def _member_rsvp(tx, slug: str, *, name: str, party_size: int, share_email: bool
         dict(e=event['id'], n=name, a=person['email'], ne=person['normalized_email'], p=party_size,
              h=hashed, now=now, sh=share_email is True, src=event_source(slug),
              pid=member.person_id)).fetchone()
+    _keep_share(tx, row['id'], share)
     return dict(state='confirmed', token=token)
 
 

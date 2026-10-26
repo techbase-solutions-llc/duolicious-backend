@@ -86,11 +86,36 @@ def _optional(value: Optional[str], max_len: int) -> Optional[str]:
 def post_host_request(req: t.PostHostRequest, s: t.SessionInfo):
     """The request to host. The web proves the address first with
     /request-otp and /check-otp; the answer carries the organiser's token,
-    so a new organiser can save drafts at once (export 4.7)."""
+    so a new organiser can save drafts at once (export 4.7).
+
+    From the app (in-app entry plan, section 4, release 3) a member sends
+    their own session: no code for their own address. For another address
+    (a church or ministry's) the code step's session comes as
+    `address_token`, behind app_entries; it proves that address, is used
+    for this request only and is then deleted when it holds no account.
+    Either way the organiser names the member (migration 0080)."""
+    from duohash import sha512
+
+    from service.app_entries import enabled_for
     from service.events import EventError, live, organisers, surface_on
     from service.events.fields import clean_text
     if not live() or not surface_on('events_hosting'):
         return _off()
+    member_id = s.person_id
+    email = s.email
+    address_hash = None
+    if req.address_token is not None:
+        if member_id is None or not enabled_for(member_id, s.email):
+            return _off()
+        address_hash = sha512(req.address_token)
+        with api_tx('read committed') as tx:
+            row = tx.execute(
+                """SELECT email FROM duo_session
+                    WHERE session_token_hash = %(h)s AND signed_in AND session_expiry > NOW()""",
+                dict(h=address_hash)).fetchone()
+        if row is None:
+            return dict(error='unproven'), 403
+        email = row['email']
     try:
         name = clean_text(req.name, 80)
         city = _optional(req.city, 80)
@@ -99,11 +124,37 @@ def post_host_request(req: t.PostHostRequest, s: t.SessionInfo):
         if req.about is not None and req.about.strip():
             about = clean_text(req.about, 1000, multiline=True)
         with api_tx() as tx:
-            out = organisers.request_host(tx, email=s.email, name=name, kind=req.kind,
-                                          city=city, country=country, about=about)
+            out = organisers.request_host(tx, email=email, name=name, kind=req.kind,
+                                          city=city, country=country, about=about,
+                                          member_person_id=member_id)
+            if address_hash is not None:
+                tx.execute('DELETE FROM duo_session WHERE session_token_hash = %(h)s AND person_id IS NULL',
+                           dict(h=address_hash))
     except EventError as e:
         return _refused(e)
     return out, 201
+
+
+@apost('/organiser/member')
+def post_organiser_member(s: t.SessionInfo):
+    """Hosting from the app (release 3): every organiser the member's
+    session opens, each with a fresh link (as the emailed one) and its
+    gatherings, and the member's name and address for the request form.
+    Behind hosting and app_entries. A POST: each call issues links."""
+    from service.app_entries import enabled_for
+    from service.events import live, manage, organisers, surface_on
+    if not live() or not surface_on('events_hosting') or not enabled_for(s.person_id, s.email):
+        return _off()
+    with api_tx() as tx:
+        person = tx.execute('SELECT name, email FROM person WHERE id = %(i)s',
+                            dict(i=s.person_id)).fetchone()
+        held = []
+        for o in organisers.member_organisers(tx, s.person_id, person['email'] if person else s.email):
+            view = manage.organiser_view(tx, o)
+            held.append(dict(organisers.me(o), token=organisers.issue_link(tx, o['id']),
+                             groups=view['groups']))
+    return (dict(name=(person['name'] if person else '') or '', email=person['email'] if person else s.email,
+                 organisers=held), 200, {'Cache-Control': 'no-store'})
 
 
 _link_ip_limit = limiter.shared_limit('10 per hour', scope='organiser_link')
@@ -138,7 +189,9 @@ def get_organiser_me():
             view = manage.organiser_view(tx, o)
     except EventError as e:
         return _refused(e)
-    return dict(organisers.me(o), groups=view['groups']), 200, {'Cache-Control': 'no-store'}
+    # kit: whether the organiser pages offer the share kit (round 2, screen 9).
+    return (dict(organisers.me(o), groups=view['groups'], kit=organisers.kit_on(o)), 200,
+            {'Cache-Control': 'no-store'})
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +244,12 @@ def post_organiser_event_cancel(req: t.PostEventCancel, slug: str):
 
 @get('/organiser/events/<slug>')
 def get_organiser_event(slug: str):
-    from service.events import manage
+    """The organiser's own view of one gathering, and `kit`: whether the
+    share kit is offered to them (round 2, screen 9)."""
+    from service.events import manage, organisers
     return _organiser_call(
-        lambda tx, o: (manage.organiser_preview(tx, o, slug), 200, {'Cache-Control': 'no-store'}))
+        lambda tx, o: (dict(manage.organiser_preview(tx, o, slug), kit=organisers.kit_on(o)), 200,
+                       {'Cache-Control': 'no-store'}))
 
 
 @get('/organiser/events/<slug>/rsvps')
@@ -288,16 +344,19 @@ _NOT_A_READER = ('bot', 'crawler', 'spider', 'preview')
 @post('/events/<slug>/view', limiter=_view_limit)
 def post_event_view(slug: str):
     """The page's beacon, once per browser tab session. Link previews and
-    crawlers are not counted."""
+    crawlers are not counted. An optional {share} names the share the
+    page was opened from (host, guest, app or feed; fix 12)."""
     from datetime import datetime, timezone
 
     from service.events import live, public
     if not live():
         return _off()
+    body = request.get_json(silent=True)
+    share = body.get('share') if isinstance(body, dict) else None
     agent = (request.headers.get('User-Agent') or '').lower()
     if not any(word in agent for word in _NOT_A_READER):
         with api_tx() as tx:
-            public.count_view(tx, slug, datetime.now(timezone.utc).date())
+            public.count_view(tx, slug, datetime.now(timezone.utc).date(), public.share_tag(share))
     return '', 204
 
 
@@ -335,7 +394,8 @@ def post_event_rsvp(req: t.PostEventRsvp, s: Optional[t.SessionInfo], slug: str)
     try:
         with api_tx() as tx:
             out = rsvp.rsvp(tx, slug, name=req.name, email=req.email, party_size=req.party_size,
-                            share_email=req.share_email, news=req.news, member=member)
+                            share_email=req.share_email, news=req.news, member=member,
+                            share=req.share)
     except EventError as e:
         return dict(error=e.reason, **e.extra), e.status, _NO_STORE
     return out, 201, _NO_STORE

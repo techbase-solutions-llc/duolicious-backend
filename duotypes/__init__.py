@@ -1216,12 +1216,15 @@ class PostTakeBackLike(BaseModel):
 
 class PostHostRequest(BaseModel):
     """POST /host-requests: the request to host, with the address of the
-    session a sign-in code left."""
+    session a sign-in code left. From the app (TEC-1845, release 3) a
+    member sends their own session and, for another address, the session
+    the code step left for it as `address_token`."""
     name: str = Field(min_length=1, max_length=80)
     kind: Literal['assembly', 'fellowship_leader', 'ministry', 'other']
     city: Optional[str] = Field(default=None, max_length=80)
     country: Optional[str] = Field(default=None, max_length=80)
     about: Optional[str] = Field(default=None, max_length=1000)
+    address_token: Optional[str] = Field(default=None, min_length=16, max_length=256)
 
 
 class PostOrganiserLink(BaseModel):
@@ -1294,6 +1297,9 @@ class PostEventRsvp(BaseModel):
     news: bool = False
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+    # The share tag of the page (host, guest, app, feed); anything else is
+    # ignored (service.events.public.share_tag).
+    share: Optional[str] = Field(default=None, max_length=16)
 
 
 class PostInviteAhavah(BaseModel):

@@ -55,6 +55,8 @@ title-finish-profile-wht.png
 title-finish-profile.png
 title-first-match-wht.png
 title-first-match.png
+title-gathering-live-wht.png
+title-gathering-live.png
 title-introduction-wht.png
 title-introduction.png
 title-launch-wht.png
