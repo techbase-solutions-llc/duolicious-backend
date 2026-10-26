@@ -26,6 +26,8 @@ from service.hard_delete import (
     Q_DELETE_MATCHMAKER_DATA_OF,
     Q_DELETE_TOOL_DATA_OF,
     Q_DELETE_WAITLIST_OF,
+    delete_covers,
+    erase_hosting,
     matchmaker_keys,
     Q_PURGE_HELD_MESSAGES_OF,
     Q_STAGE_AUDIO_FOR_REMOVAL,
@@ -86,6 +88,13 @@ def _withdraw_all(person_ids: list) -> list:
             withdraw_member(tx, person_id, 'hard_delete')
             withdrawn.append(person_id)
     return withdrawn
+
+
+def _erase_hosting_all(nes: list) -> list:
+    """erase_hosting for the deleted accounts' addresses, on a sync
+    transaction. Returns the cover keys to delete after it commits."""
+    with _sync_api_tx() as tx:
+        return erase_hosting(tx, nes)
 
 
 async def hard_delete_expired_once():
@@ -205,6 +214,16 @@ async def hard_delete_expired_once():
                                  dict(nes=[normalize_email(e) for e in emails]))
 
     if rows:
+        # Organisers (TEC-1845, in-app plan release 4): what the deleted
+        # addresses hosted, as the light sign-in's "delete everything"
+        # erases it. Organisers have no key to person, so this runs once the
+        # person rows are gone, for exactly those rows, in its own sync
+        # transaction (erase_hosting queues the guests' cancellation emails
+        # through the sync outbox code) that never overlaps the one above.
+        nes = [normalize_email(r['email']) for r in rows if r.get('email')]
+        if nes:
+            covers = await asyncio.to_thread(_erase_hosting_all, nes)
+            delete_covers(covers)
         print(f'Hard-deleted {len(rows)} pending-deletion person row(s) + inbox/waitlist cleanup')
 
 

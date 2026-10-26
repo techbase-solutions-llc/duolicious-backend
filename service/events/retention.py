@@ -11,9 +11,10 @@
   - A leader's invite request goes INVITE_RETENTION after its last change.
   - The record that an address had its one invitation to join goes once
     no lead row for the address is left.
-  - Deleting an account deletes its RSVPs (Q_DELETE_EVENT_DATA_OF).
-    Organisers are not accounts and stay while they host; the privacy page
-    says to ask support.
+  - Deleting an account deletes its RSVPs (Q_DELETE_EVENT_DATA_OF) and,
+    from release 4 of the in-app plan, the organiser rows its address
+    holds (erase_hosting), as "delete everything under this email" on the
+    light sign-in does.
 
 The RSVP's lead (event:{slug}) keeps the leads' own clock.
 """
@@ -94,6 +95,64 @@ Q_DELETE_EVENT_DATA_OF = """
      WHERE normalized_email = ANY(%(nes)s::text[])
         OR person_id = ANY(%(ids)s::int[])
 """
+
+
+# The organisers an address holds (TEC-1845, in-app plan release 4, section
+# 5): "delete everything under this email" and an account's deletion take
+# them, with their gatherings, magic links, outbox rows and the RSVPs on
+# those gatherings (all ON DELETE CASCADE from organiser). Ahavah's own
+# organiser (kind 'ahavah', made by an admin) is never erased by address:
+# it is the house's, not the person's. The caller binds `nes` as for
+# Q_DELETE_EVENT_DATA_OF. Run it through erase_hosting, never on its own:
+# the gatherings' posts and covers need their own steps first.
+Q_DELETE_ORGANISERS_OF = """
+    DELETE FROM organiser
+     WHERE normalized_email = ANY(%(nes)s::text[])
+       AND kind <> 'ahavah'
+"""
+
+_Q_HOSTED_OF = """
+    SELECT e.id, e.slug, e.status, e.ends_at, e.cover_key
+      FROM event e JOIN organiser o ON o.id = e.organiser_id
+     WHERE o.normalized_email = ANY(%(nes)s::text[])
+       AND o.kind <> 'ahavah'
+     ORDER BY e.id
+       FOR UPDATE OF e
+"""
+
+
+def erase_hosting(tx, nes: list[str], now: Optional[datetime] = None) -> list[str]:
+    """Erase the organisers these normalised addresses hold. A published
+    gathering still to come is cancelled first, so each confirmed guest
+    hears as they would from the organiser (the cancellation email keeps
+    its own switch); every gathering's posts not yet out are cancelled, so
+    the scheduler never posts a gathering that is gone. Returns the cover
+    image keys, for delete_covers once the caller's transaction commits:
+    storage is not transactional, and a cover deleted before a rollback
+    would leave a gathering without its image."""
+    from service.events import mail
+    from service.spotlight import growthposts
+    if not nes:
+        return []
+    now = now or datetime.now(timezone.utc)
+    covers: list[str] = []
+    for ev in tx.execute(_Q_HOSTED_OF, dict(nes=list(nes))).fetchall():
+        if ev['status'] == 'published' and ev['ends_at'] > now:
+            tx.execute("""UPDATE event SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+                           WHERE id = %(i)s""", dict(i=ev['id']))
+            mail.queue_cancelled(tx, ev['id'])
+        growthposts.cancel_event_posts(tx, ev['slug'])
+        if ev['cover_key']:
+            covers.append(ev['cover_key'])
+    tx.execute(Q_DELETE_ORGANISERS_OF, dict(nes=list(nes)))
+    return covers
+
+
+def delete_covers(keys: list[str]) -> None:
+    """Best effort, after the commit: a stray object costs a little storage."""
+    from service.events.manage import _delete_cover
+    for key in keys:
+        _delete_cover(key)
 
 
 def link_rsvps_to_person(tx, person_id: int) -> None:
