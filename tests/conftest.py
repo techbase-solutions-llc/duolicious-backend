@@ -1375,3 +1375,26 @@ def admin_bearer(make_person, sign_in):
         tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
                    dict(i=p['id']))
     return sign_in(p)
+
+
+# ---------------------------------------------------------------------------
+# Release 4 of the in-app plan (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migrations 0085 on are idempotent, so applying them here is what the
+# deploy does. Autouse: the lead retention sweep reads address_session,
+# the notification settings read the new push columns and every Together
+# read selects the chat column, whichever test asks.
+
+RELEASE_4_MIGRATIONS = ('0085_address_session.sql',)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def release_4_schema(matchmaker_schema, together_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in RELEASE_4_MIGRATIONS:
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))

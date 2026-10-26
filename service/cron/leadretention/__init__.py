@@ -46,6 +46,11 @@ def _purge_once() -> None:
         n_held = purge_held_messages(tx)
         n_events = purge_event_data(tx)
         n_mm = purge_matchmaker_data(tx)
+        # The light sign-in's address sessions (TEC-1845, migration 0085).
+        from service import your_ahavah
+        n_address = your_ahavah.purge(tx)
+    if n_address:
+        print(f'lead_retention: {n_address} lapsed address session(s) deleted')
     if n:
         print(f'lead_retention: {n} lead(s) deleted after {RETENTION_DAYS} days without a visit')
     if n_tools:

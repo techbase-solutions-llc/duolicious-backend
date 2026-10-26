@@ -165,12 +165,19 @@ def test_the_deletion_cron_erases_the_members_hosting(make_person, published, ho
     with api_tx() as tx:
         tx.execute("""UPDATE person SET activated = FALSE, deletion_requested_at = NOW() - INTERVAL '8 days',
                              sign_in_time = NOW() - INTERVAL '9 days' WHERE id = %(p)s""", dict(p=p['id']))
-    asyncio.run(hard_delete_expired_once())
+    # Its own loop, never set as the current one: asyncio.run would leave
+    # no current loop behind, and later modules that ask for one would fail.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(hard_delete_expired_once())
+    finally:
+        loop.close()
     assert _one('SELECT 1 FROM person WHERE id = %(i)s', i=p['id']) is None
     assert _one('SELECT 1 FROM organiser WHERE id = %(i)s', i=oid) is None
 
 
 def test_every_deletion_path_runs_the_same_erase():
     root = Path(__file__).resolve().parent.parent
-    for path in ('service/cron/pendingdeletion/__init__.py', 'service/api/admin/users_action_routes.py'):
+    for path in ('service/cron/pendingdeletion/__init__.py', 'service/api/admin/users_action_routes.py',
+                 'service/your_ahavah/__init__.py'):
         assert 'erase_hosting' in (root / path).read_text(encoding='utf-8'), path

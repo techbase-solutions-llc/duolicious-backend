@@ -1215,6 +1215,22 @@ class PostOrganiserLink(BaseModel):
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
 
 
+class PostYourAhavahCode(BaseModel):
+    """POST /your-ahavah/code (TEC-1845, release 4): a sign-in code for the
+    light sign-in. `website` is the hidden field and `signup_stamp` the
+    page stamp, as on /organisers/link."""
+    email: str = Field(min_length=3, max_length=254)
+    website: Optional[str] = Field(default=None, max_length=256)
+    signup_stamp: Optional[str] = Field(default=None, max_length=256)
+
+
+class PostYourAhavahSession(BaseModel):
+    """POST /your-ahavah/session: the handle /your-ahavah/code answered and
+    the code the address received."""
+    request_token: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=1, max_length=16)
+
+
 class EventDraftBody(BaseModel):
     """POST /organiser/events and PATCH /organiser/events/<slug>. Every
     field optional here: service.events.fields.clean_draft holds the rules,

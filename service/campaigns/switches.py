@@ -143,6 +143,21 @@ SWITCHES = {
     # (service.events.member_email_on).
     'e2_gatherings': 'AHAVAH_E2_GATHERINGS_ENABLED',
     'welcome_gatherings': 'AHAVAH_WELCOME_GATHERINGS_ENABLED',
+    # Release 4 of the in-app plan (TEC-1845; ahavah-web docs/plans/
+    # 2026-10-22-in-app-entry-and-sign-up.md, section 9). "Your Ahavah",
+    # the light sign-in: every /your-ahavah route answers 404 until it is
+    # on, and it counts only once matchmaker_live is on too, since
+    # /matchmaker/status reports it (service/your_ahavah).
+    'light_sign_in': 'AHAVAH_LIGHT_SIGN_IN_ENABLED',
+    # The 3 member pushes, each off until the owner has seen its proof
+    # (scripts/send_proofs.py) and each needing its feature as well
+    # (service/notifications/activity_pushes.py): a reminder of a gathering
+    # the member is going to (events_live), new guests for a gathering the
+    # member hosts (events_live and events_hosting) and "your match
+    # finished the game" (together_live).
+    'push_gathering_reminder': 'AHAVAH_PUSH_GATHERING_REMINDER_ENABLED',
+    'push_new_guests': 'AHAVAH_PUSH_NEW_GUESTS_ENABLED',
+    'push_match_played': 'AHAVAH_PUSH_MATCH_PLAYED_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

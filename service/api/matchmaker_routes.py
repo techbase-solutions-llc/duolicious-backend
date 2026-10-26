@@ -66,12 +66,16 @@ app.before_request_funcs.setdefault(None, []).insert(0, _matchmaker_dark)
 
 @get('/matchmaker/status')
 def get_matchmaker_status():
-    """What the web needs before it shows a matchmaker surface."""
+    """What the web needs before it shows a matchmaker surface.
+    `light_sign_in` is "Your Ahavah" (in-app plan, release 4), served under
+    /your-ahavah (service/api/your_ahavah_routes.py)."""
     from service.matchmaker import live, surface_on
+    from service.your_ahavah import on as light_sign_in_on
     return (dict(live=live(), alerts=surface_on('matchmaker_alerts'),
                  visitor_alerts=surface_on('matchmaker_visitor_alerts'),
                  introductions=surface_on('matchmaker_introductions'),
-                 mentors=surface_on('matchmaker_mentors')),
+                 mentors=surface_on('matchmaker_mentors'),
+                 light_sign_in=light_sign_in_on()),
             200, _NO_STORE)
 
 
