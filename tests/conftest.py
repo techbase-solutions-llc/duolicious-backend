@@ -1385,7 +1385,7 @@ def admin_bearer(make_person, sign_in):
 # the notification settings read the new push columns and every Together
 # read selects the chat column, whichever test asks.
 
-RELEASE_4_MIGRATIONS = ('0085_address_session.sql',)
+RELEASE_4_MIGRATIONS = ('0085_address_session.sql', '0086_release_4_push_preferences.sql')
 
 
 @pytest.fixture(scope='session', autouse=True)

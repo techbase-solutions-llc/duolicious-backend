@@ -1023,6 +1023,11 @@ class PatchNotificationPreferences(BaseModel):
     email_profile_views: Optional[bool] = None
     # Quick questions (TEC-1845): push only, no email column.
     push_questions: Optional[bool] = None
+    # Release 4 of the in-app plan (TEC-1845, migration 0086): push only,
+    # each ignored while its push is dark.
+    push_gathering_reminder: Optional[bool] = None
+    push_new_guests: Optional[bool] = None
+    push_match_played: Optional[bool] = None
 
 
 class PutAnswer(BaseModel):

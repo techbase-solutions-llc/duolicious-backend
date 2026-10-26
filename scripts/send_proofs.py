@@ -113,8 +113,14 @@ def missing_titles() -> list[str]:
 
 
 def _pushes() -> list[dict]:
+    """The Wave 3 reminders, then the 3 member pushes of the in-app plan's
+    release 4 (TEC-1845; service/notifications/activity_pushes.py: a
+    gathering reminder, new guests, once naming one gathering and once
+    several, and "your match finished the game"), with sample names. Their
+    copy is PROPOSED and waits for the owner's word on this proof."""
     from emails.reminders import PUSH_PROOFS
-    return [dict(p) for p in PUSH_PROOFS]
+    from service.notifications.activity_pushes import proof_pushes
+    return [dict(p) for p in PUSH_PROOFS] + proof_pushes()
 
 
 def plan() -> tuple[list[dict], list[dict]]:

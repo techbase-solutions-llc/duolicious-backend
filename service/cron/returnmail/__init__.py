@@ -30,6 +30,7 @@ from service.campaigns.runner import audit_send
 from service.events import jobs as event_jobs
 from service.matchmaker import introductions as mm_introductions
 from service.matchmaker import notices as mm_notices
+from service.notifications import activity_pushes
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
 RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
@@ -66,6 +67,13 @@ JOBS = [
     # The one invitation to join, the day after a gathering, to guests who
     # asked for news (TEC-1845), behind its switch and events_live.
     ('event_join_invite', event_jobs.queue_join_invites),
+    # The member pushes of the in-app plan's release 4 (TEC-1845), each
+    # behind its own switch and its feature's: a reminder of a gathering
+    # the member is going to, new guests for one they host and "your match
+    # finished the game".
+    ('push_gathering_reminder', activity_pushes.queue_gathering_reminders),
+    ('push_new_guests', activity_pushes.queue_new_guests),
+    ('push_match_played', activity_pushes.queue_match_played),
 ]
 
 print(f'Hello from cron module: {__name__}')
