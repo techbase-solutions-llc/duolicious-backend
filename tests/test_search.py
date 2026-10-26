@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 
 
-def _insert_person(tx, *, email_prefix='search'):
+def _insert_person(tx, *, email_prefix='search', gender='Man'):
     return tx.execute(
         """
         INSERT INTO person (
@@ -29,13 +29,13 @@ def _insert_person(tx, *, email_prefix='search'):
         VALUES (
             %(email)s, %(email)s, 'Test', '1990-01-01',
             ST_SetSRID(ST_MakePoint(0, 0), 4326)::geography,
-            (SELECT id FROM gender LIMIT 1),
+            (SELECT id FROM gender WHERE name = %(gender)s),
             'about', 'somewhere', 'somewhere, nowhere', (SELECT id FROM unit LIMIT 1),
             TRUE, NOW()
         )
         RETURNING uuid::text AS uuid, id
         """,
-        dict(email=f'{email_prefix}-{uuid4()}@example.com'),
+        dict(email=f'{email_prefix}-{uuid4()}@example.com', gender=gender),
     ).fetchone()
 
 
@@ -46,18 +46,19 @@ def searcher_and_candidates():
     with api_tx() as tx:
         searcher = _insert_person(tx, email_prefix='search-searcher')
         candidates = [
-            _insert_person(tx, email_prefix=f'search-cand-{i}')
+            _insert_person(tx, email_prefix=f'search-cand-{i}', gender='Woman')
             for i in range(4)
         ]
         # The deck query gates on `p.gender_id = ANY(gender_preference)`,
         # and the service builds that array from search_preference_gender.
         # Without a row here the array is empty, so /search can only ever
-        # return [] and this test cannot pass. Everyone above is created
-        # with the same (first) gender, so prefer exactly that.
+        # return [] and this test cannot pass. The searcher is a man and
+        # the candidates are women: the deck shows men women and women
+        # men only (TEC-1845, 26 Oct 2026).
         tx.execute(
             """
             INSERT INTO search_preference_gender (person_id, gender_id)
-            VALUES (%(p)s, (SELECT id FROM gender LIMIT 1))
+            VALUES (%(p)s, (SELECT id FROM gender WHERE name = 'Woman'))
             ON CONFLICT DO NOTHING
             """,
             dict(p=searcher['id']),

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from database import api_tx
+from service.man_woman import opposite_gender_sql
 
 pytestmark = pytest.mark.usefixtures('matchmaker_schema')
 
@@ -39,6 +40,9 @@ EXPECTED_ADDITIONS = [
     'COALESCE((SELECT sp_mm.no_mentor_shared_matches FROM person sp_mm WHERE sp_mm.id = '
     '%(searcher_person_id)s), FALSE) AND EXISTS (SELECT 1 FROM shared_conversation sc WHERE '
     'sc.single_person_id = p.id AND sc.revoked_at IS NULL) ) ',
+    # 26 Oct (TEC-1845): men see women and women see men, as on the map.
+    _squash('-- Men see women and women see men, as on the map (TEC-1845, 26 Oct).\n'
+            'AND ' + opposite_gender_sql('p')) + ' ',
 ]
 
 
