@@ -1265,6 +1265,9 @@ class PostEventRsvp(BaseModel):
     news: bool = False
     website: Optional[str] = Field(default=None, max_length=256)
     signup_stamp: Optional[str] = Field(default=None, max_length=256)
+    # The share tag of the page (host, guest, app, feed); anything else is
+    # ignored (service.events.public.share_tag).
+    share: Optional[str] = Field(default=None, max_length=16)
 
 
 class PostInviteAhavah(BaseModel):

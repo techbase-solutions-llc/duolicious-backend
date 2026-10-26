@@ -344,16 +344,19 @@ _NOT_A_READER = ('bot', 'crawler', 'spider', 'preview')
 @post('/events/<slug>/view', limiter=_view_limit)
 def post_event_view(slug: str):
     """The page's beacon, once per browser tab session. Link previews and
-    crawlers are not counted."""
+    crawlers are not counted. An optional {share} names the share the
+    page was opened from (host, guest, app or feed; fix 12)."""
     from datetime import datetime, timezone
 
     from service.events import live, public
     if not live():
         return _off()
+    body = request.get_json(silent=True)
+    share = body.get('share') if isinstance(body, dict) else None
     agent = (request.headers.get('User-Agent') or '').lower()
     if not any(word in agent for word in _NOT_A_READER):
         with api_tx() as tx:
-            public.count_view(tx, slug, datetime.now(timezone.utc).date())
+            public.count_view(tx, slug, datetime.now(timezone.utc).date(), public.share_tag(share))
     return '', 204
 
 
@@ -391,7 +394,8 @@ def post_event_rsvp(req: t.PostEventRsvp, s: Optional[t.SessionInfo], slug: str)
     try:
         with api_tx() as tx:
             out = rsvp.rsvp(tx, slug, name=req.name, email=req.email, party_size=req.party_size,
-                            share_email=req.share_email, news=req.news, member=member)
+                            share_email=req.share_email, news=req.news, member=member,
+                            share=req.share)
     except EventError as e:
         return dict(error=e.reason, **e.extra), e.status, _NO_STORE
     return out, 201, _NO_STORE

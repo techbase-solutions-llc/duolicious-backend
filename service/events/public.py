@@ -120,13 +120,34 @@ def event_view(tx, slug: str, now: Optional[datetime] = None) -> dict:
     return view_of(dict(row), now)
 
 
-def count_view(tx, slug: str, day: date) -> None:
-    """One page view, on a visible gathering only."""
+# Which share brought a view or an RSVP (migration 0081; in-app entry plan,
+# section 7, measurement): the organiser's kit, a guest's "Bring someone
+# with you", a member's "Send to a match" and Ahavah's own social posts.
+SHARE_TAGS = ('host', 'guest', 'app', 'feed')
+
+
+def share_tag(value: object) -> Optional[str]:
+    """A share tag a link carried, or None for anything else."""
+    return value if isinstance(value, str) and value in SHARE_TAGS else None
+
+
+def count_view(tx, slug: str, day: date, share: Optional[str] = None) -> None:
+    """One page view, on a visible gathering only. A view from a shared
+    link is counted again under its share tag (fix 12); the total in
+    event_view_day is every view, as before."""
     tx.execute(
         f"""INSERT INTO event_view_day (event_id, day, views)
             SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
             ON CONFLICT (event_id, day) DO UPDATE SET views = event_view_day.views + 1""",
         dict(s=slug, d=day))
+    tag = share_tag(share)
+    if tag is not None:
+        tx.execute(
+            f"""INSERT INTO event_view_share_day (event_id, day, share_tag, views)
+                SELECT e.id, %(d)s, %(t)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
+                ON CONFLICT (event_id, day, share_tag)
+                DO UPDATE SET views = event_view_share_day.views + 1""",
+            dict(s=slug, d=day, t=tag))
 
 
 # gatherings_for_members' key for the regions with an in-person gathering.
