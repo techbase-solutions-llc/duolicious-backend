@@ -902,10 +902,11 @@ def post_growth_queue_image(request_key: str):
     if not known:
         abort(404)
     # A held kind's artwork is drawn at 1080x1350 in the Claude Design sets
-    # and is never square. The square size is what the tick's roundup
-    # renderer produces, so a square image arriving on a held row means the
-    # wrong card is being attached, whatever sent it. Refused before the
-    # upload, like every other check here.
+    # and is never square. Square is what the tick draws for member photo
+    # cards (the roundup is 1080x1350 too since 26 Oct 2026), so a square
+    # image arriving on a held row means the wrong card is being attached,
+    # whatever sent it. Refused before the upload, like every other check
+    # here.
     if known['kind'] in CALENDAR_HELD_KINDS:
         try:
             st.validate_card_image(data, content_type, sizes=(st.BRAND_CARD_SIZE,))
