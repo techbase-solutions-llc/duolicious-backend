@@ -366,6 +366,11 @@ for _name, _src, _aud, _switch, _build in (
         ('event_manage', 'manage_email', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_manage),
         ('event_approved', 'manage_email (approved note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_approved),
         ('event_live', 'manage_email (live note)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live),
+        # Round 2, screen 10: the live email with the share kit and the
+        # digest's Share it again, while hosting and app_entries are on.
+        ('event_live_kit', 'live_email (in person, share kit)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live_kit),
+        ('event_live_kit_online', 'live_email (online, share kit)', 'organiser', 'AHAVAH_EVENTS_MANAGE_EMAIL_ENABLED', EV.preview_live_kit_online),
+        ('event_digest_share', 'digest_email (Share it again)', 'organiser', 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', EV.preview_digest_share),
         # Inviting guests who are not members to join (TEC-1845): the join
         # block in 3.1 to 3.3, and the invitation (3.9).
         ('event_confirm_join', 'confirm_email (in person, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_confirm_join),

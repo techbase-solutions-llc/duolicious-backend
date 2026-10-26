@@ -35,7 +35,7 @@ def issue_link(tx, organiser_id: int) -> str:
 
 _Q_ORGANISER_FOR = """
     SELECT o.id, o.name, o.kind, o.email, o.normalized_email, o.city, o.country,
-           o.about, o.approved_at, o.approved_at IS NOT NULL AS approved
+           o.about, o.approved_at, o.approved_at IS NOT NULL AS approved, o.member_person_id
       FROM organiser_link l
       JOIN organiser o ON o.id = l.organiser_id
      WHERE l.token_hash = %(h)s
@@ -53,6 +53,18 @@ def organiser_for(tx, token: Optional[str]) -> dict:
     if row is None:
         raise EventError('expired', 401)
     return dict(row)
+
+
+def kit_on(organiser: dict) -> bool:
+    """Whether the organiser share kit is offered to this organiser (round 2,
+    screens 9 and 10): hosting and app_entries, which an organiser passes
+    through the member who made it or through its address, as a member
+    would (ahavah-web docs/plans/2026-10-22-in-app-entry-and-sign-up.md,
+    section 7, the kit's switches). The images themselves follow events_live."""
+    from service.app_entries import enabled_for
+    from service.events import live, surface_on
+    return (live() and surface_on('events_hosting')
+            and enabled_for(organiser.get('member_person_id'), organiser.get('email')))
 
 
 def me(organiser: dict) -> dict:
@@ -101,7 +113,7 @@ def request_host(tx, *, email: str, name: str, kind: str, city: Optional[str],
 
 _Q_MEMBER_ORGANISERS = """
     SELECT o.id, o.name, o.kind, o.email, o.normalized_email, o.city, o.country,
-           o.about, o.approved_at, o.approved_at IS NOT NULL AS approved
+           o.about, o.approved_at, o.approved_at IS NOT NULL AS approved, o.member_person_id
       FROM organiser o
      WHERE o.revoked_at IS NULL
        AND (o.normalized_email = %(ne)s OR o.member_person_id = %(p)s)

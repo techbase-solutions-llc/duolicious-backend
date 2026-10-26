@@ -25,8 +25,10 @@ def test_a_request_to_host_makes_a_waiting_organiser_and_lets_them_in(client, to
         about='We meet every Sabbath.'))
     assert r.status_code == 201 and r.get_json()['state'] == 'created'
     me = client.get('/organiser/me', headers={'X-Organiser-Token': r.get_json()['token']}).get_json()
-    # Task 5 adds the organiser's gatherings under `groups`.
+    # Task 5 adds the organiser's gatherings under `groups`; release 3
+    # whether the share kit is offered (hosting and app_entries).
     assert me.pop('groups')['drafts'] == []
+    assert me.pop('kit') is False
     assert me == dict(name='Grace Fellowship', kind='fellowship_leader', approved=False, email=email)
 
 

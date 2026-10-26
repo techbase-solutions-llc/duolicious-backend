@@ -34,7 +34,7 @@ def _inert_event_links(name: str, html: str) -> str:
     for base in {WEB_BASE_URL.rstrip('/'), API_BASE_URL.rstrip('/')}:
         b = re.escape(base)
         html = re.sub(b + r'/rsvp/[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
-        html = re.sub(b + r'/host/gatherings\?t=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
+        html = re.sub(b + r'/host/gatherings[^"\'\s<>?]*\?t=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
         html = re.sub(b + r'/auth/sign-up\?src=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
     return _inert(name, html)
 
@@ -54,6 +54,12 @@ def plan() -> list[dict]:
         ('event_manage', 'Your manage link (3.8)', mail.preview_manage),
         ('event_approved', 'Request to host approved (plan item 15)', mail.preview_approved),
         ('event_live', 'Gathering live (plan item 15)', mail.preview_live),
+        # Round 2, screen 10 (in-app entry plan, release 3): the live email
+        # with the organiser share kit, and the digest's "Share it again".
+        ('event_live_kit', 'Gathering live with the share kit (10.1)', mail.preview_live_kit),
+        ('event_live_kit_online', 'Gathering live with the share kit, online (10.2)',
+         mail.preview_live_kit_online),
+        ('event_digest_share', 'Daily digest with Share it again (10.4)', mail.preview_digest_share),
         # Inviting guests who are not members to join (TEC-1845).
         ('event_confirm_join', 'Confirm your place with the join block (3.1)', mail.preview_confirm_join),
         ('event_confirm_online_join', 'Confirm your place with the join block, online',

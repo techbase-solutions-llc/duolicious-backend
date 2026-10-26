@@ -209,8 +209,8 @@ def create_organiser(tx, admin_person_id: int, *, name: str, email: str, kind: s
 
 def approve_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] = None) -> None:
     """A waiting gathering published, its flag cleared, its posts queued
-    and its organiser told it is live."""
-    from service.events.organisers import issue_link
+    and its organiser told it is live (with the share kit while it is on
+    for them, mail.queue_live)."""
     now = now or datetime.now(timezone.utc)
     ev = _event(tx, slug)
     if ev['status'] != 'pending':
@@ -219,8 +219,7 @@ def approve_event(tx, admin_person_id: int, slug: str, now: Optional[datetime] =
         raise EventError('started', 409)
     manage.publish_now(tx, ev, now)
     manage.send_held_change(tx, ev['id'])
-    mail.queue_manage_link(tx, ev['organiser_id'], issue_link(tx, ev['organiser_id']),
-                           note=mail.live_note(ev['title']), subject=mail.live_subject(ev['title']))
+    mail.queue_live(tx, ev['id'])
 
 
 def decline_event(tx, admin_person_id: int, slug: str) -> None:

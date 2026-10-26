@@ -189,7 +189,9 @@ def get_organiser_me():
             view = manage.organiser_view(tx, o)
     except EventError as e:
         return _refused(e)
-    return dict(organisers.me(o), groups=view['groups']), 200, {'Cache-Control': 'no-store'}
+    # kit: whether the organiser pages offer the share kit (round 2, screen 9).
+    return (dict(organisers.me(o), groups=view['groups'], kit=organisers.kit_on(o)), 200,
+            {'Cache-Control': 'no-store'})
 
 
 # ---------------------------------------------------------------------------
@@ -242,9 +244,12 @@ def post_organiser_event_cancel(req: t.PostEventCancel, slug: str):
 
 @get('/organiser/events/<slug>')
 def get_organiser_event(slug: str):
-    from service.events import manage
+    """The organiser's own view of one gathering, and `kit`: whether the
+    share kit is offered to them (round 2, screen 9)."""
+    from service.events import manage, organisers
     return _organiser_call(
-        lambda tx, o: (manage.organiser_preview(tx, o, slug), 200, {'Cache-Control': 'no-store'}))
+        lambda tx, o: (dict(manage.organiser_preview(tx, o, slug), kit=organisers.kit_on(o)), 200,
+                       {'Cache-Control': 'no-store'}))
 
 
 @get('/organiser/events/<slug>/rsvps')
