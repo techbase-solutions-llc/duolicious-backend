@@ -19,6 +19,7 @@ Until Phase 1, the stubs below return an empty/minimal result so that:
 """
 
 from service.search.predicates import age_bounds_sql, calendar_sql, gender_sql, torah_level_sql
+from service.man_woman import opposite_gender_sql
 from commonsql import Q_COMPUTED_FLAIR  # noqa: F401  # re-exported via `from service.search.sql import *` (consumed by service/person/__init__.py)
 
 # --- Search-preference fragments (kept; not Q&A-related) -------------------
@@ -451,7 +452,7 @@ LIMIT %(n)s OFFSET %(o)s
 # The frontend renders each as an avatar pin and lets Leaflet's client-side
 # MarkerClusterGroup cluster + spiderfy them (so same-coordinate users can be
 # fanned apart). Fetched once per filter set, not per pan.
-Q_MAP_MARKERS = """
+Q_MAP_MARKERS = f"""
     -- MAP = DIRECTORY, DECK = QUEUE (2026-07-19). The map used to read
     -- the viewer's search_cache, inheriting every deck exclusion:
     -- liked, passed, passed-by. On a small pool a member who swipes
@@ -483,7 +484,12 @@ Q_MAP_MARKERS = """
       -- intended this; the rewritten search lost it).
       AND NOT p.verification_required
       AND p.id != %(searcher_person_id)s
-      -- Gender preference, fail-open when the viewer never set one.
+      -- Men see women and women see men, never otherwise (TEC-1845,
+      -- 26 Oct 2026). The viewer's own gender decides, so a viewer with
+      -- no saved preference no longer sees everyone, and one who is
+      -- neither a man nor a woman sees nobody. A saved preference still
+      -- narrows inside that.
+      AND {opposite_gender_sql('p')}
       AND (
           cardinality(%(gender_preference)s::SMALLINT[]) = 0
           OR p.gender_id = ANY(%(gender_preference)s::SMALLINT[])

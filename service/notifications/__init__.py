@@ -365,6 +365,15 @@ def _record_profile_view_blocking(viewer_id: int, viewed_uuid: str):
             viewed_id = vr['id']
             if viewed_id == viewer_id:
                 return  # self-view
+            # A view counts only between a man and a woman, and never from
+            # staff (TEC-1845, 26 Oct 2026): no row, no push.
+            from service.man_woman import view_counts_sql
+            counts = tx.execute(
+                f"SELECT {view_counts_sql('%(viewer)s', '%(viewed)s')} AS counts",
+                dict(viewer=viewer_id, viewed=viewed_id),
+            ).fetchone()
+            if not counts or not counts['counts']:
+                return
             # Gate on the opt-in so default-off users never get a row.
             pref = tx.execute(
                 "SELECT push_profile_views FROM notification_preference "

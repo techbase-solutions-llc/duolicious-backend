@@ -1,6 +1,7 @@
 import constants
 from commonsql import Q_IS_ALLOWED_CLUB_NAME, Q_COMPUTED_FLAIR
 from service.config import USER_IMAGES_BASE_URL
+from service.man_woman import view_counts_sql
 
 MAX_CLUB_SEARCH_RESULTS = 20
 
@@ -1056,6 +1057,11 @@ WITH prospect AS (
     -- record a visit.
     WHERE
         %(person_id)s IS NOT NULL
+    -- A view counts only between a man and a woman, and never from staff
+    -- (TEC-1845, 26 Oct 2026). The profile still opens; only the record
+    -- is skipped.
+    AND
+        {view_counts_sql('%(person_id)s', 'prospect.id')}
     ON CONFLICT (subject_person_id, object_person_id) DO UPDATE SET
         updated_at = now(),
         invisible = EXCLUDED.invisible
@@ -1301,7 +1307,7 @@ WHERE
 # Returns a small `j` with `limited: true` so the frontend renders a truncated
 # profile (primary photo + name/age + verified badge + "looking for") rather
 # than a dead-end. Deliberately omits location, bio, and all detail sections.
-Q_SELECT_PROSPECT_PROFILE_LIMITED = """
+Q_SELECT_PROSPECT_PROFILE_LIMITED = f"""
 WITH prospect AS (
     SELECT
         p.*,
@@ -1332,6 +1338,8 @@ WITH prospect AS (
         (SELECT browse_invisibly OR hide_me_from_strangers
            FROM person WHERE id = %(person_id)s)
     FROM prospect
+    -- Man and woman only, never staff, as in the full query (TEC-1845).
+    WHERE {view_counts_sql('%(person_id)s', 'prospect.id')}
     ON CONFLICT (subject_person_id, object_person_id) DO UPDATE SET
         updated_at = now(),
         invisible  = EXCLUDED.invisible
