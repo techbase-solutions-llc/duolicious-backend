@@ -10,8 +10,8 @@ Every tick inside the window calls run_campaign with the week's id from
 `service.campaigns.weekid`. The runner's `_Q_SAME_RUN` rejects a recipient
 who already has a row for that (campaign, campaign_id), so:
 
-  * a second tick in the same Monday queues nothing,
-  * a container restart mid-Monday queues nothing extra,
+  * a second tick in the same send day queues nothing,
+  * a container restart mid-day queues nothing extra,
   * an operator who presses Send in Growth > Emails the same week collides
     with the identical id and queues nothing extra either.
 
@@ -53,8 +53,9 @@ COMMUNITY_WEEKLY_POLL_SECONDS = env_int(
 
 # "It is weekly, why poll hourly" is a reasonable thought and a silent way to
 # lose most weeks: a poll longer than the window lands at a drifting offset
-# and steps straight over Monday with no error and no log line. The window is
-# from the send hour to midnight UTC, so refuse anything that cannot fit
+# and steps straight over the send day with no error and no log line. The
+# window is from the send hour to midnight UTC (on whichever day the week's
+# slot slid to, always at the same hour), so refuse anything that cannot fit
 # inside it at least twice.
 _WINDOW_SECONDS = (24 - SEND_HOUR_UTC) * 60 * 60
 if COMMUNITY_WEEKLY_POLL_SECONDS * 2 > _WINDOW_SECONDS:
@@ -70,8 +71,10 @@ def _send_once() -> None:
     now = datetime.now(timezone.utc)
     if not is_send_window(now):
         return
-    # No campaign emails in the owner's rest periods (restdays.py). A rest
-    # day on the send day skips that week's e2 (TEC-1845 admin audit).
+    # No campaign emails in the owner's rest periods (restdays.py). The
+    # window has already moved past a rest-day slot (schedule.week_slot);
+    # this is the second belt, for a rest period that begins in the evening
+    # of the slot's day (17:00 Barbados is 21:00 UTC). TEC-1845, TEC-1933.
     if _schedule.campaign_rest_now():
         return
     # Past KNOWN_THROUGH the day may be a rest day nobody has entered yet:

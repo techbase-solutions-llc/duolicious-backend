@@ -17,8 +17,15 @@ Weekly Sabbaths in this calendar fall on lunar days 8, 15, 22 and 29. For the se
 
 Scheduling rules: no campaign emails and no promotional posts on the Day of Atonement or on these Sabbaths; high holy days get warm community content only. Projected dates can move when the month is confirmed in the app; re-read before each month.
 
-## Eighth month, provisional (entered 2026-10-01)
+## Eighth and ninth months
 
-The owner's calendar account holds no record for the eighth month yet; the latest confirmed month is the sixth (2026-08-13). The conjunction is on 2026-10-10, and past months show day 1 falling one or two days after it depending on what the owner observed, so day 1 is 2026-10-11 or 2026-10-12. These dates are an inference, not a reading from the app.
+Read from the owner's Biblical Calendar Engine account (biblecalendar.app, calendar view, anchored to America/Barbados) at 02:50 Barbados time on 26 October 2026. The owner confirmed them in chat the same morning. The app marks both months as projected.
 
-Until the owner confirms the month, both candidate dates of each Sabbath are treated as rest days: 2026-10-18 and 19, 2026-10-25 and 26, 2026-11-01 and 02, 2026-11-08 and 09. When the month is confirmed, remove the four that are not Sabbaths from `service/spotlight/restdays.py` and `ahavah-admin/src/lib/rest-days.ts`. Whether the owner rests on the new moon day itself is not recorded and is not blocked.
+| Month | Day 1 | Sabbaths (lunar days 8, 15, 22, 29) |
+|---|---|---|
+| Eighth | Sun 11 Oct 2026 (30 days, to 9 Nov) | 18 Oct, 25 Oct, 1 Nov, 8 Nov (Sundays) |
+| Ninth | Tue 10 Nov 2026 (29 days, to 8 Dec) | 17 Nov, 24 Nov, 1 Dec, 8 Dec (Tuesdays) |
+
+The app's home screen still read "Day 15, Sabbath (est.)" at 02:50 on Monday 26 October, while its month grid puts day 15 on Sunday 25 October. We follow the grid, which the owner confirmed.
+
+These replace the provisional eighth month entered on 2026-10-01, which blocked both candidate dates of each Sabbath (Sundays and Mondays from 18 October to 9 November). `service/spotlight/restdays.py` and `ahavah-admin/src/lib/rest-days.ts` carry these dates, and the calendar is known through 2026-12-08. Whether the owner rests on the new moon day itself is not recorded and is not blocked.

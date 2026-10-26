@@ -101,19 +101,13 @@ _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 # late in the window the send landed.
 _OVERDUE_AFTER = timedelta(days=8)
 
-# The cron skips a Monday in a rest period and holds every Monday past
-# KNOWN_THROUGH (service/cron/communityweekly). The row follows the same two
-# rules (23 Oct 2026 review, LT-2): it names the first Monday the cron will
-# really send on, says `held` with no date when that Monday is past the known
-# calendar, and counts only a free Monday as a missed week. Without this the
-# row promised 26 Oct, a rest day, and from 10 Nov printed a Monday that
-# would never send and then called it missed.
-_HELD_SCAN_WEEKS = 520
-
-
-def _cron_would_send(slot: datetime) -> bool:
-    return not (campaign_schedule.is_campaign_rest_period(slot)
-                or campaign_schedule.is_campaign_beyond_known(slot))
+# The cron moves a week's slot off a rest day to the next free day of the
+# same ISO week, skips a week with no free day, and holds once the slots run
+# past KNOWN_THROUGH (service/campaigns/schedule.week_slot, TEC-1933). The
+# row follows the same rules (23 Oct 2026 review, LT-2) because it asks the
+# same function: next_send_at is the slot the cron will really send on, or
+# None, which the row shows as `held`. A week is missed only when one of
+# those real slots has passed unsent.
 
 
 def _schedule_for(campaign: str, now: datetime, last_sent_at: datetime | None) -> dict | None:
@@ -122,27 +116,23 @@ def _schedule_for(campaign: str, now: datetime, last_sent_at: datetime | None) -
     if not COMMUNITY_WEEKLY_ENABLED:
         return dict(enabled=False, next_send_at=None, overdue=False, held=False)
     nxt = next_send_at(now)
-    for _ in range(_HELD_SCAN_WEEKS):
-        if not campaign_schedule.is_campaign_rest_period(nxt):
-            break
-        nxt += timedelta(days=7)
-    held = campaign_schedule.is_campaign_beyond_known(nxt)
+    held = nxt is None
     if last_sent_at is None:
         overdue = True
     elif (now - last_sent_at) <= _OVERDUE_AFTER:
         overdue = False
     else:
-        # Missed only when a Monday the cron would have sent on has passed,
-        # with a day of slack for the window, since the last send.
-        overdue = False
-        slot = next_send_at(last_sent_at)
-        for _ in range(_HELD_SCAN_WEEKS):
-            if slot + timedelta(days=1) > now:
-                break
-            if _cron_would_send(slot):
-                overdue = True
-                break
-            slot += timedelta(days=7)
+        # Missed only when a slot the cron would have sent on has passed,
+        # with a day of slack for the window, since the last send. The send
+        # covers its own ISO week whenever it went, because the Send button
+        # and the cron share the week's campaign id, so the first slot that
+        # counts is in the week after it. A slid slot later in the same week
+        # would otherwise read as missed when it was deduped.
+        week_after = last_sent_at.astimezone(timezone.utc).date()
+        week_after += timedelta(days=8 - week_after.isoweekday())
+        start = datetime.combine(week_after, datetime.min.time(), timezone.utc)
+        slot = next_send_at(start - timedelta(microseconds=1))
+        overdue = slot is not None and slot + timedelta(days=1) <= now
     return dict(enabled=True, next_send_at=None if held else nxt.isoformat(),
                 overdue=overdue, held=held)
 

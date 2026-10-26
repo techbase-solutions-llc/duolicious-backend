@@ -124,7 +124,49 @@ def test_the_real_calendar_carries_the_owners_rest_days():
     for d in (date(2026, 9, 19), date(2026, 9, 21), date(2026, 9, 26),
               date(2026, 10, 3), date(2026, 10, 10)):
         assert d in rd.REST_DAYS
-    # The eighth month is provisional: both candidate dates of each Sabbath.
-    for d in (date(2026, 10, 18), date(2026, 10, 19), date(2026, 11, 8), date(2026, 11, 9)):
-        assert d in rd.REST_DAYS
-    assert rd.KNOWN_THROUGH == date(2026, 11, 9)
+    assert rd.KNOWN_THROUGH == date(2026, 12, 8)
+
+
+# Read from the owner's calendar grid on 26 Oct 2026 and confirmed by him:
+# the eighth month starts Sunday 11 Oct and the ninth Tuesday 10 Nov.
+EIGHTH_AND_NINTH = (
+    date(2026, 10, 18), date(2026, 10, 25), date(2026, 11, 1), date(2026, 11, 8),
+    date(2026, 11, 17), date(2026, 11, 24), date(2026, 12, 1), date(2026, 12, 8),
+)
+
+# The second candidate dates entered while the eighth month was provisional.
+# None of them is a Sabbath.
+FREED = (date(2026, 10, 19), date(2026, 10, 26), date(2026, 11, 2), date(2026, 11, 9))
+
+
+@pytest.mark.real_calendar
+@pytest.mark.parametrize('day', EIGHTH_AND_NINTH, ids=str)
+def test_each_sabbath_of_the_eighth_and_ninth_months_is_blocked(day):
+    eve = day - timedelta(days=1)
+    assert day in rd.REST_DAYS
+    assert rd.is_rest_period(_bb(eve, 16, 59)) is False
+    assert rd.is_rest_period(_bb(eve, 17, 0)) is True
+    assert rd.is_rest_period(_bb(day, 12)) is True
+    assert rd.is_rest_period(_bb(day, 23, 59)) is True
+    assert rd.is_rest_period(_bb(day + timedelta(days=1), 0, 0)) is False
+
+
+@pytest.mark.real_calendar
+@pytest.mark.parametrize('day', FREED, ids=str)
+def test_the_provisional_second_dates_are_open_again(day):
+    assert day not in rd.REST_DAYS
+    # 08:00 Barbados, the weekly email's slot.
+    assert rd.slot_problem(_bb(day, 8), EARLY) is None
+
+
+@pytest.mark.real_calendar
+def test_the_eighth_and_ninth_months_hold_no_other_rest_day():
+    later = [d for d in rd.REST_DAYS if d > date(2026, 10, 10)]
+    assert sorted(later) == sorted(EIGHTH_AND_NINTH)
+
+
+@pytest.mark.real_calendar
+def test_the_calendar_is_known_through_8_december_and_unknown_after():
+    assert rd.is_beyond_known(_bb(date(2026, 12, 8), 23, 59)) is False
+    assert rd.is_beyond_known(_bb(date(2026, 12, 9), 0, 0)) is True
+    assert rd.slot_problem(_bb(date(2026, 12, 9), 8), EARLY) == 'unknown'
