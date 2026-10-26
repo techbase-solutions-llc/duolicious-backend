@@ -21,8 +21,11 @@ from database import api_tx
 @pytest.mark.real_calendar
 def test_the_rule_reads_the_owners_calendar():
     from service.campaigns import schedule
-    # 26 Oct 2026, a provisional Sabbath, at 12:00 UTC (08:00 Barbados).
-    assert schedule.is_campaign_rest_period(datetime(2026, 10, 26, 12, tzinfo=timezone.utc))
+    # Tuesday 17 Nov 2026, a ninth month Sabbath, at 12:00 UTC (08:00 Barbados).
+    assert schedule.is_campaign_rest_period(datetime(2026, 11, 17, 12, tzinfo=timezone.utc))
+    # Monday 26 Oct 2026 was a provisional candidate until the owner
+    # confirmed the eighth month on 26 Oct. It is an ordinary day.
+    assert not schedule.is_campaign_rest_period(datetime(2026, 10, 26, 12, tzinfo=timezone.utc))
     # 21 Oct 2026, an ordinary Wednesday.
     assert not schedule.is_campaign_rest_period(datetime(2026, 10, 21, 12, tzinfo=timezone.utc))
 
@@ -69,10 +72,11 @@ def test_the_weekly_cron_skips_a_rest_period(monkeypatch):
 
 @pytest.mark.real_calendar
 def test_a_day_beyond_the_known_calendar_counts_as_unknown():
-    # 16 Nov 2026 is after KNOWN_THROUGH (9 Nov): nobody has read the
+    # 14 Dec 2026 is after KNOWN_THROUGH (8 Dec): nobody has read the
     # owner's calendar for it, so the weekly email must not assume it is free.
     from service.campaigns import schedule
-    assert schedule.is_campaign_beyond_known(datetime(2026, 11, 16, 12, tzinfo=timezone.utc))
+    assert schedule.is_campaign_beyond_known(datetime(2026, 12, 14, 12, tzinfo=timezone.utc))
+    assert not schedule.is_campaign_beyond_known(datetime(2026, 12, 7, 12, tzinfo=timezone.utc))
     assert not schedule.is_campaign_beyond_known(datetime(2026, 10, 21, 12, tzinfo=timezone.utc))
 
 
@@ -137,41 +141,61 @@ def _utc(*a):
     return datetime(*a, tzinfo=timezone.utc)
 
 
-def test_the_schedule_skips_a_rest_day_monday(monkeypatch):
+def test_the_schedule_names_the_tuesday_a_rest_day_monday_slides_to(monkeypatch):
+    # 26 Oct 2026 plan, section 2: a rest-day Monday moves the week's email
+    # to the next free day, so the row names Tuesday, not next week.
     import service.api.admin.growth_routes as gr
     monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
     _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
     s = gr._schedule_for('e2', _utc(2026, 10, 23, 9), _utc(2026, 10, 19, 12))
-    assert s['next_send_at'] == _utc(2026, 11, 2, 12).isoformat()
+    assert s['next_send_at'] == _utc(2026, 10, 27, 12).isoformat()
     assert s['held'] is False
 
 
 def test_the_schedule_is_held_past_the_known_calendar(monkeypatch):
-    # 23 Oct 2026: 26 Oct, 2 Nov and 9 Nov are rest days and 16 Nov is past
-    # KNOWN_THROUGH, so the cron sends nothing until the calendar is extended.
+    # Friday 23 Oct, calendar read only to Sunday 25 Oct: every day of the
+    # next week is unknown, so the cron sends nothing until it is extended.
     import service.api.admin.growth_routes as gr
     monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
-    _calendar(monkeypatch, ['2026-10-26', '2026-11-02', '2026-11-09'], '2026-11-09')
+    _calendar(monkeypatch, [], '2026-10-25')
     s = gr._schedule_for('e2', _utc(2026, 10, 23, 9), _utc(2026, 10, 19, 12))
     assert s['held'] is True
     assert s['next_send_at'] is None
     assert s['overdue'] is False
 
 
-def test_a_week_skipped_for_a_rest_day_is_not_overdue(monkeypatch):
+def test_a_slid_week_is_not_overdue_until_a_day_after_its_slot(monkeypatch):
+    # The week's slot slid to Tuesday 27 Oct 12:00; its day of slack runs to
+    # Wednesday 12:00.
     import service.api.admin.growth_routes as gr
     monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
     _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
     s = gr._schedule_for('e2', _utc(2026, 10, 28, 9), _utc(2026, 10, 19, 12))
     assert s['overdue'] is False
+    s = gr._schedule_for('e2', _utc(2026, 10, 28, 13), _utc(2026, 10, 19, 12))
+    assert s['overdue'] is True
+
+
+def test_a_week_with_no_free_day_is_not_called_missed(monkeypatch):
+    # Every day from Monday 26 Oct to Sunday 1 Nov is a rest day, so that
+    # week has no slot and is skipped. Tuesday 3 Nov 09:00 is less than a
+    # day after Monday 2 Nov's slot, so nothing has been missed yet.
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, [f'2026-10-{d}' for d in range(26, 32)] + ['2026-11-01'],
+              '2027-01-31')
+    s = gr._schedule_for('e2', _utc(2026, 11, 3, 9), _utc(2026, 10, 19, 12))
+    assert s['overdue'] is False
+    assert s['next_send_at'] == _utc(2026, 11, 9, 12).isoformat()
 
 
 def test_a_held_week_is_not_called_missed(monkeypatch):
-    # From 17 Nov the last send (19 Oct) is four weeks old, but every Monday
-    # since was a rest day or held. Nothing was missed; the row says held.
+    # From 17 Nov the last send (19 Oct) is four weeks old, but the calendar
+    # was read only to 25 Oct, so every week since was held. Nothing was
+    # missed; the row says held.
     import service.api.admin.growth_routes as gr
     monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
-    _calendar(monkeypatch, ['2026-10-26', '2026-11-02', '2026-11-09'], '2026-11-09')
+    _calendar(monkeypatch, [], '2026-10-25')
     s = gr._schedule_for('e2', _utc(2026, 11, 17, 9), _utc(2026, 10, 19, 12))
     assert s['held'] is True
     assert s['overdue'] is False
@@ -183,3 +207,17 @@ def test_a_free_monday_that_went_unsent_is_still_overdue(monkeypatch):
     _calendar(monkeypatch, ['2026-10-26'], '2027-01-31')
     s = gr._schedule_for('e2', _utc(2026, 11, 3, 13), _utc(2026, 10, 19, 12))
     assert s['overdue'] is True
+
+
+def test_a_send_by_hand_before_a_slid_slot_covers_that_week(monkeypatch):
+    # The Send button keys e2 by ISO week, the same id as the cron, so a
+    # hand send at 05:00 UTC on Tuesday 27 Oct covers that week although its
+    # slot slid to 12:00 that day. On Wednesday 4 Nov at 09:00, eight days
+    # on, the first slot that counts is the next week's, Tuesday 3 Nov
+    # 12:00 (2 Nov is a rest day), and its day of slack has not run out.
+    import service.api.admin.growth_routes as gr
+    monkeypatch.setattr(gr, 'COMMUNITY_WEEKLY_ENABLED', True)
+    _calendar(monkeypatch, ['2026-10-26', '2026-11-02'], '2027-01-31')
+    s = gr._schedule_for('e2', _utc(2026, 11, 4, 9), _utc(2026, 10, 27, 5))
+    assert s['overdue'] is False
+    assert s['next_send_at'] == _utc(2026, 11, 9, 12).isoformat()

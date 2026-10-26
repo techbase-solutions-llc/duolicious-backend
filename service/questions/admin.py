@@ -135,12 +135,23 @@ def schedule_rows(tx, now: Optional[datetime] = None, weeks: int = SCHEDULE_WEEK
     first = week_start(today)
     drops = {r['live_on']: r for r in tx.execute(
         _Q_DROPS, dict(a=first, b=first + timedelta(weeks=weeks))).fetchall()}
+    # A week that already holds a drop keeps that drop's day, even when the
+    # calendar has since given the week another drop day (TEC-1933: the
+    # owner's dates were corrected on 26 Oct 2026, moving two weeks' drop
+    # day from Tuesday to Monday). The drop still goes live for members on
+    # its own day, so the schedule shows it there and proposes nothing else.
+    by_week: dict[date, dict] = {}
+    for live_on in sorted(drops):
+        by_week.setdefault(week_start(live_on), drops[live_on])
     queue = _proposal_queue(tx)
     out = []
     for i in range(weeks):
         week_of = first + timedelta(weeks=i)
         day = drop_day(week_of)
         d = drops.get(day) if day else None
+        if d is None and week_of in by_week:
+            d = by_week[week_of]
+            day = d['live_on']
         proposed = queue.pop(0) if (day and d is None and day > today and queue) else None
         problem = None
         if day is None:
@@ -155,8 +166,14 @@ def schedule_rows(tx, now: Optional[datetime] = None, weeks: int = SCHEDULE_WEEK
     return out
 
 
-def _check_day(day: date, now: Optional[datetime]) -> None:
-    if drop_day(day) != day:
+_Q_HAS_DROP = 'SELECT 1 FROM question_drop WHERE live_on = %(d)s'
+
+
+def _check_day(day: date, now: Optional[datetime], tx=None) -> None:
+    # A day that already holds a drop stays editable after a calendar
+    # correction moved its week's drop day (see schedule_rows).
+    kept = tx is not None and tx.execute(_Q_HAS_DROP, dict(d=day)).fetchone() is not None
+    if drop_day(day) != day and not kept:
         raise ScheduleRefused('not_a_drop_day')
     if day <= barbados_today(now):
         raise ScheduleRefused('already_live')
@@ -172,14 +189,14 @@ _Q_SET_DROP = """
 
 
 def set_drop(tx, day: date, key: str, now: Optional[datetime] = None) -> None:
-    _check_day(day, now)
+    _check_day(day, now, tx)
     if live_question(tx, key) is None:
         raise ScheduleRefused('not_a_live_question')
     tx.execute(_Q_SET_DROP, dict(d=day, k=key))
 
 
 def clear_drop(tx, day: date, now: Optional[datetime] = None) -> None:
-    _check_day(day, now)
+    _check_day(day, now, tx)
     tx.execute('DELETE FROM question_drop WHERE live_on = %(d)s', dict(d=day))
 
 
@@ -188,7 +205,7 @@ def approve(tx, days: list[date], now: Optional[datetime] = None) -> list[str]:
     queue = _proposal_queue(tx)
     done = []
     for day in sorted(days):
-        _check_day(day, now)
+        _check_day(day, now, tx)
         if tx.execute('SELECT 1 FROM question_drop WHERE live_on = %(d)s', dict(d=day)).fetchone() is None:
             if not queue:
                 raise ScheduleRefused('nothing_to_propose')
