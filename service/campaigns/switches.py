@@ -158,6 +158,12 @@ SWITCHES = {
     'push_gathering_reminder': 'AHAVAH_PUSH_GATHERING_REMINDER_ENABLED',
     'push_new_guests': 'AHAVAH_PUSH_NEW_GUESTS_ENABLED',
     'push_match_played': 'AHAVAH_PUSH_MATCH_PLAYED_ENABLED',
+    # Release 4's two Together pieces: Chat > More's "the marriage
+    # checklist together" (POST /tools/chat-sessions) and a member's past
+    # results (GET /tools/mine). Both 404 until it is on, and it counts
+    # only once together_live is on (service.tools.switch_on); app_entries
+    # still has to let the member in. Reported on /tools/status.
+    'release4_together': 'AHAVAH_RELEASE4_TOGETHER_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

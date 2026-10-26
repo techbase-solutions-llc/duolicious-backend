@@ -18,12 +18,17 @@ import pytest
 from database import api_tx
 
 pytestmark = pytest.mark.usefixtures('together_schema', 'release_4_schema', 'together_live', 'no_limits',
-                                     'entries_on')
+                                     'entries_on', 'release4_together')
 
 
 @pytest.fixture
 def entries_on(monkeypatch):
     monkeypatch.setenv('AHAVAH_APP_ENTRIES', 'on')
+
+
+@pytest.fixture
+def release4_together(monkeypatch):
+    monkeypatch.setenv('AHAVAH_RELEASE4_TOGETHER_ENABLED', '1')
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +75,9 @@ def _p(importance, stance='agree'):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('env,value', [('AHAVAH_TOGETHER_LIVE_ENABLED', None), ('AHAVAH_APP_ENTRIES', 'off'),
-                                       ('AHAVAH_APP_ENTRIES', 'owner')])
+                                       ('AHAVAH_APP_ENTRIES', 'owner'),
+                                       ('AHAVAH_RELEASE4_TOGETHER_ENABLED', None),
+                                       ('AHAVAH_RELEASE4_TOGETHER_ENABLED', '0')])
 def test_both_routes_are_absent_until_together_and_the_entries_let_the_member_in(client, pair, monkeypatch,
                                                                                  env, value):
     her, him, h, _ = pair()
