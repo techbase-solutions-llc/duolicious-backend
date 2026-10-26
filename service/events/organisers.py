@@ -61,11 +61,14 @@ def me(organiser: dict) -> dict:
 
 
 def request_host(tx, *, email: str, name: str, kind: str, city: Optional[str],
-                 country: Optional[str], about: Optional[str]) -> dict:
+                 country: Optional[str], about: Optional[str],
+                 member_person_id: Optional[int] = None) -> dict:
     """The request to host, from a session whose address a sign-in code has
-    just proved. {state, token}: 'created' (new, verified now, waiting for
-    approval), 'pending' (already waiting, export 4.5) or 'approved'. The
-    token is a fresh link in every state."""
+    just proved, or a member's own (release 3, hosting from the app).
+    {state, token}: 'created' (new, verified now, waiting for approval),
+    'pending' (already waiting, export 4.5) or 'approved'. The token is a
+    fresh link in every state. `member_person_id` names the member who asked
+    (migration 0080); an organiser that already names one keeps it."""
     if kind not in PUBLIC_KINDS:
         raise EventError('bad_kind', 400)
     cleaned = clean_email(email)
@@ -80,15 +83,39 @@ def request_host(tx, *, email: str, name: str, kind: str, city: Optional[str],
         if row['revoked_at'] is not None:
             raise EventError('revoked', 403)
         state = 'approved' if row['approved_at'] is not None else 'pending'
+        if member_person_id is not None:
+            tx.execute(
+                """UPDATE organiser SET member_person_id = COALESCE(member_person_id, %(m)s)
+                    WHERE id = %(i)s""", dict(m=member_person_id, i=row['id']))
         return dict(state=state, token=issue_link(tx, row['id']))
     oid = tx.execute(
         """INSERT INTO organiser (name, kind, email, normalized_email, city, country,
-                                  about, verified_at)
-           VALUES (%(n)s, %(k)s, %(e)s, %(ne)s, %(c)s, %(co)s, %(a)s, NOW())
+                                  about, verified_at, member_person_id)
+           VALUES (%(n)s, %(k)s, %(e)s, %(ne)s, %(c)s, %(co)s, %(a)s, NOW(), %(m)s)
            RETURNING id""",
-        dict(n=name, k=kind, e=address, ne=normalised, c=city, co=country, a=about),
+        dict(n=name, k=kind, e=address, ne=normalised, c=city, co=country, a=about,
+             m=member_person_id),
     ).fetchone()['id']
     return dict(state='created', token=issue_link(tx, oid))
+
+
+_Q_MEMBER_ORGANISERS = """
+    SELECT o.id, o.name, o.kind, o.email, o.normalized_email, o.city, o.country,
+           o.about, o.approved_at, o.approved_at IS NOT NULL AS approved
+      FROM organiser o
+     WHERE o.revoked_at IS NULL
+       AND (o.normalized_email = %(ne)s OR o.member_person_id = %(p)s)
+     ORDER BY o.approved_at IS NULL, o.id
+"""
+
+
+def member_organisers(tx, person_id: int, email: str) -> list[dict]:
+    """The organisers a member's session opens (release 3, hosting from the
+    app): the one under the member's own address and any the member made
+    under another, approved ones first. A revoked one opens nothing."""
+    cleaned = clean_email(email)
+    normalised = cleaned[1] if cleaned else None
+    return [dict(r) for r in tx.execute(_Q_MEMBER_ORGANISERS, dict(ne=normalised, p=person_id)).fetchall()]
 
 
 def send_new_link(tx, email: str) -> None:
