@@ -322,6 +322,16 @@ def get_introduction_candidates(s: t.SessionInfo):
         tx, s.person_id, for_uuid, q), isolation='read committed')
 
 
+@aget('/introductions/people')
+def get_introduction_people(s: t.SessionInfo):
+    """Choose 2 members (round 2, 13.1): the first of the two, from everyone
+    the introducer can already see."""
+    from service.matchmaker import introductions
+    q = request.args.get('q') or ''
+    return _member_call('matchmaker_introductions', lambda tx: introductions.people(
+        tx, s.person_id, q), isolation='read committed')
+
+
 @apost('/introductions')
 @validate(t.PostIntroduction)
 def post_introductions(req: t.PostIntroduction, s: t.SessionInfo):
