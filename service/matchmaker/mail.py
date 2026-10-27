@@ -138,13 +138,18 @@ def _note_panel(note: str, signed: str) -> str:
     </table>"""
 
 
-def _footer(reason: str, link_label: Optional[str] = None, link_url: Optional[str] = None) -> str:
+def _footer(reason: str, link_label: Optional[str] = None, link_url: Optional[str] = None, *,
+            your_ahavah: bool = False) -> str:
+    """With `your_ahavah`, the "Your Ahavah" line under the reason (release
+    4, frame 1.7, the mentor's; emails/your_ahavah_line.py)."""
+    from emails import your_ahavah_line
     style = f'color:{MUTED};font-weight:600;text-decoration:underline;'
     first = (f'<a href="{_e(link_url)}" style="{style}">{link_label}</a>'
              '&nbsp;&nbsp;&middot;&nbsp;&nbsp;') if link_label and link_url else ''
     return ('Ahavah &middot; Matchmaking for Torah-observant believers.<br/>'
             f'{reason}'
-            f'<div style="margin-top:14px;">{first}'
+            + (your_ahavah_line.block() if your_ahavah else '')
+            + f'<div style="margin-top:14px;">{first}'
             f'<a href="https://ahavah.app/faq" style="{style}">Help</a></div>')
 
 
@@ -254,7 +259,8 @@ def pronoun_for(gender_name: Optional[str]) -> Pronoun:
     return {'Woman': 'she', 'Man': 'he'}.get(gender_name or '', 'they')  # type: ignore[return-value]
 
 
-def mentor_invite_email(single: str, pronoun: Pronoun, accept_url: str) -> tuple[str, str]:
+def mentor_invite_email(single: str, pronoun: Pronoun, accept_url: str, *,
+                        your_ahavah: bool = False) -> tuple[str, str]:
     """6.1."""
     s = _e(single)
     sees, chooses = ('see', 'choose') if pronoun == 'they' else ('sees', 'chooses')
@@ -266,7 +272,7 @@ def mentor_invite_email(single: str, pronoun: Pronoun, accept_url: str) -> tuple
             + button('Accept and sign in', accept_url)
             + _after_button(f'{s} can end this at any time.'))
     return subject, _shell(subject, _e(subject), body, _footer(
-        f'If you do not know {s}, ignore this email and nothing will happen.'))
+        f'If you do not know {s}, ignore this email and nothing will happen.', your_ahavah=your_ahavah))
 
 
 # ---------------------------------------------------------------------------
@@ -450,3 +456,8 @@ def preview_intro(to: str) -> tuple[str, str]:
 
 def preview_mentor_invite(to: str) -> tuple[str, str]:
     return mentor_invite_email('Rivka', 'she', mentor_accept_url(_SAMPLE_TOKEN))
+
+
+def preview_mentor_invite_your_ahavah(to: str) -> tuple[str, str]:
+    """Release 4, 1.7: the invitation with the "Your Ahavah" line."""
+    return mentor_invite_email('Rivka', 'she', mentor_accept_url(_SAMPLE_TOKEN), your_ahavah=True)

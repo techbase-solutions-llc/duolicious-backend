@@ -1418,3 +1418,25 @@ def release_4_schema(matchmaker_schema, together_schema):
     for name in RELEASE_4_MIGRATIONS:
         with api_tx() as tx:
             tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Release 4's follow-ups (TEC-1845)
+# ---------------------------------------------------------------------------
+# Migration 0088, the reason a request to host was refused. Idempotent, so
+# applying it here is what the deploy does. Autouse: declining an organiser
+# writes the new columns, whichever test asks.
+
+RELEASE_4_FOLLOW_UP_MIGRATIONS = ('0088_organiser_refusal.sql',)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def release_4_follow_up_schema(events_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in RELEASE_4_FOLLOW_UP_MIGRATIONS:
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))

@@ -513,6 +513,12 @@ def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
     events list is off (emails.gatherings_section)."""
     if not html:
         return html
+    # The "Your Ahavah" line in the role emails (TEC-1845, release 4): out
+    # when its switch or the light sign-in is off at the send, or the
+    # address has joined since (emails/your_ahavah_line.py). Read first and
+    # on its own, so the parts below still are.
+    from emails import your_ahavah_line
+    html = your_ahavah_line.at_send(tx, row['email'], html)
     from emails import gatherings_section
     switch = gatherings_section.SWITCHES.get(row['campaign'])
     if switch and gatherings_section.has_part(html):

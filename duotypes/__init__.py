@@ -1326,6 +1326,13 @@ class PostAdminApproveOrganiser(BaseModel):
     kind: Optional[Literal['assembly', 'fellowship_leader', 'ministry', 'other', 'ahavah']] = None
 
 
+class PostAdminDeclineOrganiser(BaseModel):
+    """Refusing a request to host (TEC-1845, 8.7): the reason the organiser
+    is emailed. Optional here, so an admin page from before it still
+    declines; Admin > Events asks for it."""
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
 class PatchInviteRequest(BaseModel):
     status: Optional[Literal['new', 'contacted', 'planned', 'declined']] = None
     notes: Optional[str] = Field(default=None, max_length=2000)

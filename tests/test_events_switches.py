@@ -72,7 +72,8 @@ def test_status_says_dark_until_live(client, monkeypatch):
         monkeypatch.delenv(env, raising=False)
     r = client.get('/events/status')
     assert r.status_code == 200 and r.headers['Cache-Control'] == 'no-store'
-    assert r.get_json() == {'live': False, 'hosting': False, 'list': False, 'invite': False}
+    assert r.get_json() == {'live': False, 'hosting': False, 'list': False, 'invite': False, 'refusal_email': False}
     monkeypatch.setenv('AHAVAH_EVENTS_LIVE_ENABLED', '1')
     monkeypatch.setenv('AHAVAH_EVENTS_INVITE_ENABLED', '1')
-    assert client.get('/events/status').get_json() == {'live': True, 'hosting': False, 'list': False, 'invite': True}
+    assert client.get('/events/status').get_json() == {'live': True, 'hosting': False, 'list': False, 'invite': True,
+                                                       'refusal_email': False}

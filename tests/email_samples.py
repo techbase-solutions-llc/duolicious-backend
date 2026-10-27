@@ -378,7 +378,12 @@ for _name, _src, _aud, _switch, _build in (
         ('event_reminder_join', 'reminder_email (in person, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_reminder_join),
         ('event_reminder_online_join', 'reminder_email (online, join block)', 'lead', 'AHAVAH_EVENTS_JOIN_BLOCK_ENABLED', EV.preview_reminder_online_join),
         ('event_join_invite', 'join_invite_email (in person)', 'lead', 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED', EV.preview_join_invite),
-        ('event_join_invite_online', 'join_invite_email (online)', 'lead', 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED', EV.preview_join_invite_online)):
+        ('event_join_invite_online', 'join_invite_email (online)', 'lead', 'AHAVAH_EVENTS_JOIN_INVITE_EMAIL_ENABLED', EV.preview_join_invite_online),
+        # Release 4's follow-ups (TEC-1845): the "Your Ahavah" line in an
+        # organiser's and a guest's email, and the refusal of a request to host.
+        ('event_your_ahavah_organiser', 'live_email (Your Ahavah line)', 'organiser', 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED', EV.preview_your_ahavah_organiser),
+        ('event_your_ahavah_guest', 'reminder_email (Your Ahavah line)', 'lead', 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED', EV.preview_your_ahavah_guest),
+        ('event_host_refused', 'refusal_email', 'organiser', 'AHAVAH_EVENTS_HOST_REFUSAL_EMAIL_ENABLED', EV.preview_refused)):
     add(_name, f'service/events/mail.py {_src}', _aud, _EV_HELD.format(_switch),
         (lambda b: lambda: b(TO))(_build), EV.FROM_ADDR)
 
@@ -395,7 +400,8 @@ for _name, _src, _aud, _switch, _build in (
         ('mm_visitor_alert', 'visitor_alert_email', 'lead', 'AHAVAH_MATCHMAKER_VISITOR_ALERT_EMAIL_ENABLED', MM.preview_visitor_alert),
         ('mm_recommend', 'recommend_email', 'lead', 'AHAVAH_MATCHMAKER_RECOMMEND_EMAIL_ENABLED', MM.preview_recommend),
         ('mm_intro', 'intro_email', 'member', 'AHAVAH_MATCHMAKER_INTRO_EMAIL_ENABLED', MM.preview_intro),
-        ('mm_mentor_invite', 'mentor_invite_email', 'lead', 'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED', MM.preview_mentor_invite)):
+        ('mm_mentor_invite', 'mentor_invite_email', 'lead', 'AHAVAH_MATCHMAKER_MENTOR_INVITE_EMAIL_ENABLED', MM.preview_mentor_invite),
+        ('mm_mentor_invite_your_ahavah', 'mentor_invite_email (Your Ahavah line)', 'lead', 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED', MM.preview_mentor_invite_your_ahavah)):
     add(_name, f'service/matchmaker/mail.py {_src}', _aud, _MM_HELD.format(_switch),
         (lambda b: lambda: b(TO))(_build), MM.FROM_ADDR)
 

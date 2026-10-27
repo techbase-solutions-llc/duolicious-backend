@@ -13,7 +13,10 @@ from scripts import send_event_proofs as ep
 ORDER = ['event_confirm', 'event_confirm_online', 'event_reminder', 'event_reminder_online', 'event_change',
          'event_cancelled', 'event_digest', 'event_manage', 'event_approved', 'event_live',
          'event_live_kit', 'event_live_kit_online', 'event_digest_share', 'event_confirm_join', 'event_confirm_online_join', 'event_reminder_join',
-         'event_reminder_online_join', 'event_join_invite', 'event_join_invite_online']
+         'event_reminder_online_join', 'event_join_invite', 'event_join_invite_online',
+         # Release 4's follow-ups: the "Your Ahavah" line (1.6, 1.8) and the
+         # refusal of a request to host (8.7).
+         'event_your_ahavah_organiser', 'event_your_ahavah_guest', 'event_host_refused']
 _TABLES = ('email_outbox', 'email_send_log', 'event_rsvp', 'organiser_link', 'lead')
 
 
@@ -38,7 +41,7 @@ def smtp(monkeypatch, events_schema):
     return s
 
 
-def test_the_plan_lists_the_19_emails_in_order():
+def test_the_plan_lists_the_22_emails_in_order():
     assert [e['name'] for e in ep.plan()] == ORDER
     assert all(e['subject'].startswith('[PROOF] ') for e in ep.plan())
 
@@ -49,7 +52,7 @@ def test_every_proof_goes_to_the_owner_only(smtp, monkeypatch):
             monkeypatch.delenv(env)
     env_before, before = dict(os.environ), _counts()
     ep.main(['--send'])
-    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 19
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 22
     assert _counts() == before and dict(os.environ) == env_before
 
 
@@ -81,7 +84,7 @@ def test_no_switch_is_read(monkeypatch, capsys):
     def refuse(name):
         raise AssertionError(f'read the switch {name}')
     monkeypatch.setattr(switches, 'enabled', refuse)
-    assert len(ep.plan()) == 19
+    assert len(ep.plan()) == 22
     ep.main([])
 
 
@@ -106,3 +109,27 @@ def test_the_join_links_are_inert():
     for e in joins:
         assert '/auth/sign-up' not in e['html'] and 'src=event' not in e['html'], e['name']
         assert ep.PROOF_LINK_DISABLED in e['html'], e['name']
+
+
+def test_the_your_ahavah_proofs_carry_the_line_with_its_link_inert():
+    """Release 4, 1.6 and 1.8: the organiser's and a guest's email with the
+    line; /your-ahavah is dark until the light sign-in opens, so the proof
+    link is inert too."""
+    from service.config import WEB_BASE_URL
+    plan = {e['name']: e for e in ep.plan()}
+    for name in ('event_your_ahavah_organiser', 'event_your_ahavah_guest'):
+        html = plan[name]['html']
+        assert 'Everything held under this email is in' in html and ', where you can also delete it.' in html
+        assert f'{WEB_BASE_URL}/your-ahavah' not in html, name
+    assert 'You are getting this because you host this gathering on Ahavah.' in plan['event_your_ahavah_organiser']['html']
+    assert 'You are getting this because you RSVPed to a gathering on Ahavah.' in plan['event_your_ahavah_guest']['html']
+    for name, e in plan.items():
+        if 'your_ahavah' not in name:
+            assert 'where you can also delete it' not in e['html'], name
+
+
+def test_the_refusal_proof_carries_a_sample_reason():
+    e = {e['name']: e for e in ep.plan()}['event_host_refused']
+    assert e['subject'] == '[PROOF] Your request to host on Ahavah'
+    assert 'We could not approve your request to host on Ahavah.' in e['html']
+    assert 'title-note.png' in e['html']
