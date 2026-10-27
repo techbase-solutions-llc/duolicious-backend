@@ -164,6 +164,14 @@ SWITCHES = {
     # only once together_live is on (service.tools.switch_on); app_entries
     # still has to let the member in. Reported on /tools/status.
     'release4_together': 'AHAVAH_RELEASE4_TOGETHER_ENABLED',
+    # Release 4's follow-ups (TEC-1845). The "Your Ahavah" line in the
+    # footer of the role emails (organisers, gathering guests and mentors;
+    # emails/your_ahavah_line.py), which counts only while the light
+    # sign-in is open; and the email to someone whose request to host was
+    # refused, with the admin's reason (service/events/mail.py), which
+    # needs events_live. Each off until the owner has seen its proof.
+    'your_ahavah_email_line': 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED',
+    'events_host_refusal_email': 'AHAVAH_EVENTS_HOST_REFUSAL_EMAIL_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

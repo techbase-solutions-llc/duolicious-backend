@@ -64,10 +64,14 @@ def post_admin_event_organiser_approve(req: t.PostAdminApproveOrganiser, s: t.Se
 
 
 @apost('/admin/events/organisers/<int:oid>/decline')
-def post_admin_event_organiser_decline(s: t.SessionInfo, oid: int):
+@validate(t.PostAdminDeclineOrganiser)
+def post_admin_event_organiser_decline(req: t.PostAdminDeclineOrganiser, s: t.SessionInfo, oid: int):
+    """Refusing a request to host, with the reason the organiser is emailed
+    (8.7). Audited with the reason as given."""
     require_admin(s)
-    return _change(s, 'events.organiser.decline', dict(organiser_id=str(oid)),
-                   lambda tx: ea.decline_organiser(tx, s.person_id, oid))
+    reason = ea.clean_reason(req.reason)
+    return _change(s, 'events.organiser.decline', dict(organiser_id=str(oid), reason=reason),
+                   lambda tx: ea.decline_organiser(tx, s.person_id, oid, reason=reason))
 
 
 @apost('/admin/events/organisers/<int:oid>/revoke')

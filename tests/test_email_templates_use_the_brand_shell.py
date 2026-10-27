@@ -31,7 +31,9 @@ ASSETS_DIR = EMAILS_DIR / 'assets'
 # senders (send_*.py) pick recipients and never build markup.
 # gatherings_section.py holds only the markers around the gatherings parts
 # and E2's preheaders, for the drain to strip them (TEC-1845); no email.
-_NOT_TEMPLATES = {'base.py', '__init__.py', 'gatherings_section.py'}
+# your_ahavah_line.py is a footer line the role emails carry, with its
+# markers (TEC-1845, release 4); no email either.
+_NOT_TEMPLATES = {'base.py', '__init__.py', 'gatherings_section.py', 'your_ahavah_line.py'}
 
 # Templates that already drew their own display type before this guard existed
 # (measured 2026-09-19). Debt, not permission: an entry goes when that email

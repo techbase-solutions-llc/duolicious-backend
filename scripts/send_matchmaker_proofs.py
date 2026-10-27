@@ -28,7 +28,9 @@ from scripts.send_proofs import PROOF_LINK_DISABLED, PROOF_TO, PUSH_PERSON_ID, _
 __all__ = ['PROOF_LINK_DISABLED', 'PROOF_TO', 'PUSH_PERSON_ID', 'plan', 'pushes', 'missing_titles', 'main']
 
 _TOKEN_PATHS = (r'/alerts/confirm/[^"\'\s<>]+', r'/alerts/stop/[^"\'\s<>]+', r'/mentor\?invite=[^"\'\s<>]+',
-                r'/i/[^"\'\s<>]+', r'/matches\?intro=[^"\'\s<>]+')
+                r'/i/[^"\'\s<>]+', r'/matches\?intro=[^"\'\s<>]+',
+                # Your Ahavah answers not found until the light sign-in opens.
+                r'/your-ahavah(?=["\'\s<>])')
 
 
 def _inert_matchmaker_links(name: str, html: str) -> str:
@@ -52,6 +54,9 @@ def plan() -> list[dict]:
         ('mm_recommend', 'The recommendation, to the single (5.1)', mail.preview_recommend),
         ('mm_intro', 'An introduction, to each member (5.2)', mail.preview_intro),
         ('mm_mentor_invite', 'The mentor invitation (6.1)', mail.preview_mentor_invite),
+        # Release 4's follow-ups (TEC-1845): with the "Your Ahavah" line.
+        ('mm_mentor_invite_your_ahavah', 'The mentor invitation with the Your Ahavah line (1.7)',
+         mail.preview_mentor_invite_your_ahavah),
     ]
     out = []
     for name, label, build in builders:

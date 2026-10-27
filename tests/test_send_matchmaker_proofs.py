@@ -11,7 +11,7 @@ from database import api_tx
 from scripts import send_matchmaker_proofs as mp
 
 ORDER = ['mm_alert_several', 'mm_alert_one', 'mm_alert_with_likes', 'mm_visitor_confirm', 'mm_visitor_alert',
-         'mm_recommend', 'mm_intro', 'mm_mentor_invite']
+         'mm_recommend', 'mm_intro', 'mm_mentor_invite', 'mm_mentor_invite_your_ahavah']
 _TABLES = ('email_outbox', 'email_send_log', 'match_alert', 'recommendation', 'introduction', 'mentor_link',
            'lead', 'push_send_log')
 
@@ -57,7 +57,7 @@ def pushed(monkeypatch):
     return sent
 
 
-def test_the_plan_lists_the_8_emails_in_order():
+def test_the_plan_lists_the_9_emails_in_order():
     assert [e['name'] for e in mp.plan()] == ORDER
     assert all(e['subject'].startswith('[PROOF] ') for e in mp.plan())
 
@@ -68,7 +68,7 @@ def test_every_proof_goes_to_the_owner_only(smtp, monkeypatch):
             monkeypatch.delenv(env)
     env_before, before = dict(os.environ), _counts()
     mp.main(['--send'])
-    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 8
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 9
     assert _counts() == before and dict(os.environ) == env_before
 
 
@@ -111,7 +111,7 @@ def test_no_switch_is_read(monkeypatch, capsys):
     def refuse(name):
         raise AssertionError(f'read the switch {name}')
     monkeypatch.setattr(switches, 'enabled', refuse)
-    assert len(mp.plan()) == 8 and len(mp.pushes()) == 3
+    assert len(mp.plan()) == 9 and len(mp.pushes()) == 3
     mp.main([])
 
 
@@ -126,3 +126,13 @@ def test_it_will_not_send_while_a_title_image_is_missing(monkeypatch, tmp_path, 
         mp.main(['--send'])
     assert e.value.code == 1 and s.sent == []
     assert 'title-alert-fits' in capsys.readouterr().out
+
+
+def test_the_mentor_proof_with_the_your_ahavah_line():
+    """Release 4, 1.7: the invitation with the line; the link inert."""
+    from service.config import WEB_BASE_URL
+    plan = {e['name']: e for e in mp.plan()}
+    html = plan['mm_mentor_invite_your_ahavah']['html']
+    assert 'Everything held under this email is in' in html and ', where you can also delete it.' in html
+    assert f'{WEB_BASE_URL}/your-ahavah' not in html
+    assert 'where you can also delete it' not in plan['mm_mentor_invite']['html']

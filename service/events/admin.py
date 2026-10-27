@@ -229,8 +229,24 @@ def revoke_organiser(tx, admin_person_id: int, organiser_id: int) -> None:
         _pause(tx, dict(ev))
 
 
-def decline_organiser(tx, admin_person_id: int, organiser_id: int) -> None:
-    """Declining a request to host revokes it (plan item 16)."""
+def clean_reason(reason: Optional[str]) -> Optional[str]:
+    """The admin's reason for refusing, trimmed; None when blank."""
+    text = (reason or '').strip()
+    return text or None
+
+
+def decline_organiser(tx, admin_person_id: int, organiser_id: int, *, reason: Optional[str] = None) -> None:
+    """Declining a request to host revokes it (plan item 16). The reason is
+    kept (migration 0088) and, while events_host_refusal_email is on, the
+    organiser gets it in one email (8.7), queued before the revoke, since
+    a revoked organiser is mailed nothing. One already revoked is not
+    told again."""
+    o = _organiser(tx, organiser_id)
+    reason = clean_reason(reason)
+    tx.execute('UPDATE organiser SET refusal_reason = %(r)s, refused_at = NOW() WHERE id = %(i)s',
+               dict(r=reason, i=organiser_id))
+    if reason and o['revoked_at'] is None:
+        mail.queue_refusal(tx, organiser_id, reason)
     revoke_organiser(tx, admin_person_id, organiser_id)
 
 

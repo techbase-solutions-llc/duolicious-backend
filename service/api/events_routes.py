@@ -62,10 +62,13 @@ def _organiser_token():
 
 @get('/events/status')
 def get_events_status():
-    """What the web needs before it shows a gathering surface."""
-    from service.events import live, surface_on
+    """What the web needs before it shows a gathering surface.
+    `refusal_email`: a refused request to host is emailed the reason, so
+    the web may say so (8.7)."""
+    from service.events import live, surface_on, switch_on
     return (dict(live=live(), hosting=surface_on('events_hosting'),
-                 list=surface_on('events_list'), invite=surface_on('events_invite')),
+                 list=surface_on('events_list'), invite=surface_on('events_invite'),
+                 refusal_email=switch_on('events_host_refusal_email')),
             200, {'Cache-Control': 'no-store'})
 
 

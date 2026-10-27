@@ -46,6 +46,9 @@ CAMPAIGN_SWITCHES: dict[str, str] = {
     # has no campaign of its own: it rides in event_confirm and
     # event_reminder and is read when they are built.
     'event_join_invite': 'events_join_invite_email',
+    # A refused request to host, with the admin's reason (release 4's
+    # follow-ups, 8.7; migration 0088).
+    'event_host_refused': 'events_host_refusal_email',
 }
 
 

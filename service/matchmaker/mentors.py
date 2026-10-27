@@ -108,8 +108,10 @@ def _queue_invite(tx, link_id: int, address: str, single_first: str, gender: Opt
         return None
 
     def go():
+        from emails import your_ahavah_line
         subject, body = mail.mentor_invite_email(single_first, mail.pronoun_for(gender),
-                                                 mail.mentor_accept_url(token))
+                                                 mail.mentor_accept_url(token),
+                                                 your_ahavah=your_ahavah_line.for_address(tx, address))
         return outbox.enqueue_for_mentor_link(
             tx, campaign=mail.CAMPAIGN_MENTOR_INVITE, campaign_id=str(link_id), mentor_link_id=link_id,
             email=address, subject=subject, html=body, from_addr=mail.FROM_ADDR)

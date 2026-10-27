@@ -36,6 +36,8 @@ def _inert_event_links(name: str, html: str) -> str:
         html = re.sub(b + r'/rsvp/[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
         html = re.sub(b + r'/host/gatherings[^"\'\s<>?]*\?t=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
         html = re.sub(b + r'/auth/sign-up\?src=[^"\'\s<>]+', PROOF_LINK_DISABLED, html)
+        # Your Ahavah answers not found until the light sign-in opens.
+        html = re.sub(b + r'/your-ahavah(?=["\'\s<>])', PROOF_LINK_DISABLED, html)
     return _inert(name, html)
 
 
@@ -69,6 +71,13 @@ def plan() -> list[dict]:
          mail.preview_reminder_online_join),
         ('event_join_invite', 'Invitation to join (3.9)', mail.preview_join_invite),
         ('event_join_invite_online', 'Invitation to join, online gathering', mail.preview_join_invite_online),
+        # Release 4's follow-ups (TEC-1845): the "Your Ahavah" line in the
+        # role emails, an organiser's and a guest's, and the refusal of a
+        # request to host with a sample reason.
+        ('event_your_ahavah_organiser', 'Gathering live with the Your Ahavah line (1.6)',
+         mail.preview_your_ahavah_organiser),
+        ('event_your_ahavah_guest', 'Reminder with the Your Ahavah line (1.8)', mail.preview_your_ahavah_guest),
+        ('event_host_refused', 'Request to host refused, with the reason (8.7)', mail.preview_refused),
     ]
     out = []
     for name, label, build in builders:

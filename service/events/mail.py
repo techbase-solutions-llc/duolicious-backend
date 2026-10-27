@@ -9,6 +9,8 @@ durable outbox.
               event_manage     the manage link (3.8)
               event_organiser_note  the manage email with a note above
                                the button: approved, or live (plan item 15)
+              event_host_refused    a refused request to host, with the
+                               admin's reason (8.7, migration 0088)
 
 Each is behind its own switch and events_live (service.events.CAMPAIGN_
 SWITCHES), read before queueing and again by the drain. Display type is a
@@ -50,6 +52,7 @@ CAMPAIGN_DIGEST = 'event_digest'
 CAMPAIGN_MANAGE = 'event_manage'
 CAMPAIGN_NOTE = 'event_organiser_note'
 CAMPAIGN_JOIN_INVITE = 'event_join_invite'
+CAMPAIGN_REFUSED = 'event_host_refused'
 UNSUB_SCOPE = 'notifications'
 FROM_ADDR = f'support@{EMAIL_DOMAIN}'
 
@@ -73,6 +76,9 @@ TITLES: dict[str, tuple[str, str, int]] = {
     # Round 2, 10.1, "Your / gathering / is live." (handoff 19, departure 1),
     # 484 x 218 at 2x.
     'live': ('title-gathering-live', 'Your gathering is live.', 242),
+    # The refusal (8.7) has no title of its own: the generic "A note from
+    # Ahavah." pair, as the member note uses (emails/member_note.py).
+    'refused': ('title-note', 'A note from Ahavah.', 281),
 }
 
 GUEST_WHY = 'You are getting this because you RSVPed to a gathering on Ahavah.'
@@ -105,6 +111,16 @@ SHARE_AGAIN = 'Share it again'
 # The tag on a link the organiser shares (migration 0081): which share
 # brought a view or an RSVP.
 HOST_TAG = 'host'
+
+
+# The refusal of a request to host (release 4's follow-ups; 8.7 and the
+# 23 Oct copy pass, claim 3). NEW LINES, for the owner's proof: 8.7 says
+# "We have emailed you the reason. Reply to that email if you would like
+# to talk it through.", so the email carries the reason and that offer.
+REFUSED_SUBJECT = 'Your request to host on Ahavah'
+REFUSED_LINE = 'We could not approve your request to host on Ahavah.'
+REFUSED_REPLY = 'Reply to this email if you would like to talk it through.'
+REFUSED_WHY = 'You are getting this because you asked to host gatherings on Ahavah.'
 
 
 # The join block (handoff 10-events-join.md, frames 3.1 to 3.3): the
@@ -264,13 +280,17 @@ def _safety(event: dict) -> str:
     return held.para(SAFETY, size=15, bottom=0, muted=True) if event['mode'] == 'in_person' else ''
 
 
-def _footer(reason: str, *, cancel_token: Optional[str] = None) -> str:
+def _footer(reason: str, *, cancel_token: Optional[str] = None, your_ahavah: bool = False) -> str:
+    """With `your_ahavah`, the "Your Ahavah" line under the reason (release
+    4, frames 1.6 to 1.8; emails/your_ahavah_line.py)."""
+    from emails import your_ahavah_line
     link = f'color:{MUTED};font-weight:600;text-decoration:underline;'
     cancel = (f'<a href="{_e(rsvp_url(cancel_token))}" style="{link}">Cancel my place</a>'
               '&nbsp;&nbsp;&middot;&nbsp;&nbsp;') if cancel_token else ''
     return ('Ahavah &middot; Matchmaking for Torah-observant believers.<br/>'
             f'{reason}'
-            f'<div style="margin-top:14px;">{cancel}'
+            + (your_ahavah_line.block() if your_ahavah else '')
+            + f'<div style="margin-top:14px;">{cancel}'
             f'<a href="https://ahavah.app/faq" style="{link}">Help</a></div>')
 
 
@@ -282,7 +302,8 @@ def _shell(subject: str, preheader: str, body: str, footer: str) -> str:
 # The builders. `view` is rsvp.rsvp_view's {event, rsvp}.
 # ---------------------------------------------------------------------------
 
-def confirm_email(view: dict, token: str, *, join_url: Optional[str] = None) -> tuple[str, str]:
+def confirm_email(view: dict, token: str, *, join_url: Optional[str] = None,
+                  your_ahavah: bool = False) -> tuple[str, str]:
     """3.1. No safety note: the address is not shared yet. The overline
     repeated the title, so it is dropped (as the checklist invite's was).
     With `join_url`, the join block after the line under the button: the
@@ -293,10 +314,11 @@ def confirm_email(view: dict, token: str, *, join_url: Optional[str] = None) -> 
              else 'We share the address once you confirm.')
     body = (_title('confirm') + _facts(ev, shown=False) + button('Confirm my place', confirm_url(token))
             + _after_button(share, 15) + (join_block(join_url) if join_url else ''))
-    return subject, _shell(subject, share, body, _footer(CONFIRM_WHY))
+    return subject, _shell(subject, share, body, _footer(CONFIRM_WHY, your_ahavah=your_ahavah))
 
 
-def reminder_email(view: dict, token: str, *, join_url: Optional[str] = None) -> tuple[str, str]:
+def reminder_email(view: dict, token: str, *, join_url: Optional[str] = None,
+                   your_ahavah: bool = False) -> tuple[str, str]:
     """3.2 and 3.3: the venue or the call link, the safety note in person.
     With `join_url`, the join block after "Cancel my place" and the safety
     note, before the footer."""
@@ -308,7 +330,8 @@ def reminder_email(view: dict, token: str, *, join_url: Optional[str] = None) ->
             + '<div style="height:14px;line-height:14px;">&nbsp;</div>'
             + _link('Cancel my place', rsvp_url(token)) + _safety(ev)
             + (join_block(join_url) if join_url else ''))
-    return subject, _shell(subject, _e(f'{day}, {time}'), body, _footer(GUEST_WHY, cancel_token=token))
+    return subject, _shell(subject, _e(f'{day}, {time}'), body,
+                           _footer(GUEST_WHY, cancel_token=token, your_ahavah=your_ahavah))
 
 
 def _body(text: str) -> str:
@@ -353,7 +376,8 @@ def _facts_words(f: dict) -> str:
     return f"{_e(f.get('date'))}, {_e(f.get('time'))}" + (f', {_e(place)}' if place else '')
 
 
-def change_email(view: dict, token: str, before: dict, after: dict) -> tuple[str, str]:
+def change_email(view: dict, token: str, before: dict, after: dict, *,
+                 your_ahavah: bool = False) -> tuple[str, str]:
     """3.4: before and now, the guest's place still saved."""
     ev = view['event']
     subject = f"A change to {ev['title']}"  # NEW LINE
@@ -363,10 +387,12 @@ def change_email(view: dict, token: str, before: dict, after: dict) -> tuple[str
     body = (chip('A change') + _title('change') + _lead(_e(line)) + _panel(rows)
             + held.para('Everything else stays the same. Your place is still saved.')
             + _link('Cancel my place', rsvp_url(token)) + _safety(ev))
-    return subject, _shell(subject, _e(line), body, _footer(GUEST_WHY, cancel_token=token))
+    return subject, _shell(subject, _e(line), body,
+                           _footer(GUEST_WHY, cancel_token=token, your_ahavah=your_ahavah))
 
 
-def cancelled_email(view: dict, token: Optional[str] = None) -> tuple[str, str]:
+def cancelled_email(view: dict, token: Optional[str] = None, *,
+                    your_ahavah: bool = False) -> tuple[str, str]:
     """3.5: the organiser's note quoted, signed with their name."""
     ev = view['event']
     line = f"{ev['title']} was cancelled"
@@ -377,7 +403,7 @@ def cancelled_email(view: dict, token: Optional[str] = None) -> tuple[str, str]:
                       + _line(_e(ev['organiser']['name']), size=13, bottom=0))
     body = (chip('Cancelled') + _title('cancelled') + _lead(_e(line)) + note
             + _link('See other gatherings', f'{WEB_BASE_URL}/events'))
-    return subject, _shell(subject, _e(line), body, _footer(GUEST_WHY))
+    return subject, _shell(subject, _e(line), body, _footer(GUEST_WHY, your_ahavah=your_ahavah))
 
 
 def _people(n: int) -> str:
@@ -389,7 +415,7 @@ def digest_lead(n: int, title: str) -> str:
 
 
 def digest_email(event: dict, new_rsvps: list[dict], total_going: int,
-                 manage_token: str, *, share: bool = False) -> tuple[str, str]:
+                 manage_token: str, *, share: bool = False, your_ahavah: bool = False) -> tuple[str, str]:
     """3.6: names and party sizes, never an email address. With `share`
     (the organiser kit is on for them), round 2's quiet line after the
     list (10.4): a text link to the host page with the kit."""
@@ -410,7 +436,7 @@ def digest_email(event: dict, new_rsvps: list[dict], total_going: int,
     body = (chip('Today') + _title('digest') + _lead(_e(line)) + table
             + held.para(f'<b>{total_going} going</b> in total.') + again
             + button('Manage your gathering', manage_url(manage_token)))
-    return subject, _shell(subject, _e(line), body, _footer(DIGEST_WHY))
+    return subject, _shell(subject, _e(line), body, _footer(DIGEST_WHY, your_ahavah=your_ahavah))
 
 
 def _town(city: Optional[str]) -> str:
@@ -447,7 +473,7 @@ def _text_link(label: str, href: str) -> str:
             f'text-decoration:underline;display:inline-block;padding:12px 0;margin:-6px 0;">{label}</a></p>')
 
 
-def live_email(event: dict, token: str) -> tuple[str, str]:
+def live_email(event: dict, token: str, *, your_ahavah: bool = False) -> tuple[str, str]:
     """Round 2, 10.1 and 10.2, "is live" with the organiser share kit: the
     title image, the line, the gathering's title, day, time and town (or
     Online), "See your gathering", then "Share it": its page with the
@@ -477,18 +503,29 @@ def live_email(event: dict, token: str) -> tuple[str, str]:
             + kit + '<div style="height:10px;line-height:10px;">&nbsp;</div>'
             # A text link that keeps its ink in dark mode (e-strong).
             + _text_link('Manage your gathering', manage_url(token)))
-    return subject, _shell(subject, _e(LIVE_LINE), body, _footer(LIVE_WHY))
+    return subject, _shell(subject, _e(LIVE_LINE), body, _footer(LIVE_WHY, your_ahavah=your_ahavah))
 
 
 def manage_email(token: str, note: Optional[str] = None, *,
-                 subject: Optional[str] = None) -> tuple[str, str]:
+                 subject: Optional[str] = None, your_ahavah: bool = False) -> tuple[str, str]:
     """3.8, and the organiser notes: one line above the button. The
     overline repeated the title, so it is dropped."""
     subject = subject or 'Manage your gatherings on Ahavah'  # NEW LINE
     body = (_title('manage') + (_lead(_e(note)) if note else '') + held.para(MANAGE_LINE)
             + button('Manage your gatherings', manage_url(token))
             + _after_button(MANAGE_TTL_LINE, 13))
-    return subject, _shell(subject, _e(note or MANAGE_LINE), body, _footer(MANAGE_WHY))
+    return subject, _shell(subject, _e(note or MANAGE_LINE), body,
+                           _footer(MANAGE_WHY, your_ahavah=your_ahavah))
+
+
+def refusal_email(reason: str) -> tuple[str, str]:
+    """8.7's email: the title image, the line, the admin's reason in the
+    panel the cancel note uses, and the offer to reply. Sent from the
+    support address, so a reply reaches Ahavah. The reason is escaped."""
+    subject = REFUSED_SUBJECT
+    body = (_title('refused') + _lead(REFUSED_LINE) + _panel(_line(_e(reason), bottom=0))
+            + held.para(REFUSED_REPLY, size=15, bottom=0))
+    return subject, _shell(subject, REFUSED_LINE, body, _footer(REFUSED_WHY))
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +561,25 @@ def _guest_to(tx, r: dict) -> Optional[dict]:
     if to is None or is_suppressed_send(to['email']):
         return None
     return to
+
+
+def _guest_line(tx, to: dict) -> bool:
+    """The "Your Ahavah" line for a guest: a visitor's lead only, never a
+    member (emails/your_ahavah_line.py)."""
+    from emails import your_ahavah_line
+    return 'lead_id' in to and your_ahavah_line.for_address(tx, to['email'])
+
+
+def _organiser_line(tx, organiser_id: int) -> bool:
+    """The "Your Ahavah" line for an organiser, unless a member hosts as
+    them (migration 0080) or holds the address."""
+    from emails import your_ahavah_line
+    if not your_ahavah_line.on():
+        return False
+    row = tx.execute('SELECT email, member_person_id FROM organiser WHERE id = %(i)s',
+                     dict(i=organiser_id)).fetchone()
+    return (row is not None and row['member_person_id'] is None
+            and your_ahavah_line.for_address(tx, row['email']))
 
 
 def _queue_guest(tx, *, campaign: str, campaign_id: str, to: dict, subject: str, html_: str) -> Optional[int]:
@@ -583,7 +639,8 @@ def queue_confirm(tx, rsvp_id: int, token: str) -> Optional[int]:
         to = _guest_to(tx, r) if r else None
         if to is None:
             return None
-        subject, body = confirm_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r))
+        subject, body = confirm_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r),
+                                      your_ahavah=_guest_line(tx, to))
         return _queue_guest(tx, campaign=CAMPAIGN_CONFIRM, campaign_id=f"{rsvp_id}:{r['resends']}",
                             to=to, subject=subject, html_=body)
     return _guarded(tx, 'event_confirm', go)
@@ -597,10 +654,10 @@ def _confirmed_guests(tx, event_id: int) -> list[dict]:
 
 
 def _for_each_guest(tx, event_id: int, campaign: str, campaign_id_for: Callable[[dict], str],
-                    build: Callable[[dict, str], tuple[str, str]], *, new_token: bool) -> int:
+                    build: Callable[[dict, Optional[str], bool], tuple[str, str]], *, new_token: bool) -> int:
     """One email per confirmed guest. A guest gets a fresh token only when
     their email is about to be queued, so a link retires only when a newer
-    one is on its way."""
+    one is on its way. `build(rsvp, token, your_ahavah)`."""
     from service.events import rsvp as rsvp_mod
     n = 0
     for r in _confirmed_guests(tx, event_id):
@@ -611,7 +668,7 @@ def _for_each_guest(tx, event_id: int, campaign: str, campaign_id_for: Callable[
 
         def go(r=r, cid=cid, to=to):
             token = rsvp_mod.reissue_token(tx, r['id']) if new_token else None
-            subject, body = build(r, token)
+            subject, body = build(r, token, _guest_line(tx, to))
             return _queue_guest(tx, campaign=campaign, campaign_id=cid, to=to, subject=subject, html_=body)
         if _guarded(tx, f'{campaign}_{r["id"]}', go) is not None:
             n += 1
@@ -631,7 +688,8 @@ def queue_change(tx, event_id: int) -> int:
     stamp = ev['changed_at'].astimezone(timezone.utc).strftime('%Y%m%d%H%M%S')
     return _for_each_guest(
         tx, event_id, CAMPAIGN_CHANGE, lambda r: f"{r['id']}:{stamp}",
-        lambda r, token: change_email(rsvp_view(tx, token), token, ev['change_before'], ev['change_after']),
+        lambda r, token, ya: change_email(rsvp_view(tx, token), token, ev['change_before'], ev['change_after'],
+                                          your_ahavah=ya),
         new_token=True)
 
 
@@ -646,7 +704,7 @@ def queue_cancelled(tx, event_id: int) -> int:
         return 0
     view = dict(event=public.view_of(public.event_row(tx, row['slug']), datetime.now(timezone.utc)))
     return _for_each_guest(tx, event_id, CAMPAIGN_CANCELLED, lambda r: str(r['id']),
-                           lambda r, token: cancelled_email(view), new_token=False)
+                           lambda r, token, ya: cancelled_email(view, your_ahavah=ya), new_token=False)
 
 
 def reminder_campaign_id(rsvp_id: int, starts_at: datetime) -> str:
@@ -668,7 +726,8 @@ def queue_reminder(tx, rsvp_id: int, token: str) -> Optional[int]:
         if to is None:
             return None
         starts = tx.execute('SELECT starts_at FROM event WHERE id = %(i)s', dict(i=r['event_id'])).fetchone()
-        subject, body = reminder_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r))
+        subject, body = reminder_email(rsvp_view(tx, token), token, join_url=_join_url_for(tx, r),
+                                       your_ahavah=_guest_line(tx, to))
         return _queue_guest(tx, campaign=CAMPAIGN_REMINDER,
                             campaign_id=reminder_campaign_id(rsvp_id, starts['starts_at']),
                             to=to, subject=subject, html_=body)
@@ -755,7 +814,8 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
         o = tx.execute('SELECT email, member_person_id FROM organiser WHERE id = %(i)s',
                        dict(i=ev['organiser_id'])).fetchone()
         subject, body = digest_email(ev, new, total, issue_link(tx, ev['organiser_id']),
-                                     share=o is not None and kit_on(dict(o)))
+                                     share=o is not None and kit_on(dict(o)),
+                                     your_ahavah=_organiser_line(tx, ev['organiser_id']))
         out = _queue_organiser(tx, campaign=CAMPAIGN_DIGEST, campaign_id=cid,
                                organiser_id=ev['organiser_id'], subject=subject, html_=body)
         if out is not None:
@@ -790,7 +850,7 @@ def queue_live(tx, event_id: int) -> Optional[int]:
     event = dict(row, organiser=dict(name=row['organiser_name']))
 
     def go():
-        s, body = live_email(event, token)
+        s, body = live_email(event, token, your_ahavah=_organiser_line(tx, oid))
         return _queue_organiser(tx, campaign=CAMPAIGN_NOTE, campaign_id=f'{oid}:{token_hash(token)[:12]}',
                                 organiser_id=oid, subject=s, html_=body)
     return _guarded(tx, 'event_live', go)
@@ -806,10 +866,24 @@ def queue_manage_link(tx, organiser_id: int, token: str, *, note: Optional[str] 
         return None
 
     def go():
-        s, body = manage_email(token, note, subject=subject)
+        s, body = manage_email(token, note, subject=subject, your_ahavah=_organiser_line(tx, organiser_id))
         return _queue_organiser(tx, campaign=campaign, campaign_id=f'{organiser_id}:{token_hash(token)[:12]}',
                                 organiser_id=organiser_id, subject=s, html_=body)
     return _guarded(tx, 'event_manage', go)
+
+
+def queue_refusal(tx, organiser_id: int, reason: str) -> Optional[int]:
+    """The refusal, once per organiser, while events_host_refusal_email is
+    on. The caller queues it before revoking (_queue_organiser mails no
+    revoked organiser)."""
+    if not _on(CAMPAIGN_REFUSED):
+        return None
+
+    def go():
+        s, body = refusal_email(reason)
+        return _queue_organiser(tx, campaign=CAMPAIGN_REFUSED, campaign_id=str(organiser_id),
+                                organiser_id=organiser_id, subject=s, html_=body)
+    return _guarded(tx, 'event_host_refused', go)
 
 
 # ---------------------------------------------------------------------------
@@ -953,3 +1027,23 @@ def preview_digest_share(to: str) -> tuple[str, str]:
                                          dict(name='The Adeyemi family', party_size=4),
                                          dict(name='Lydia Cruz', party_size=1)], 14, _SAMPLE_TOKEN,
                         share=True)
+
+
+# Release 4's follow-ups: the "Your Ahavah" line in the organiser's (1.6,
+# the live email, whose reason line the frame draws) and a guest's (1.8,
+# the reminder) emails, and the refusal of a request to host (8.7).
+
+def preview_your_ahavah_organiser(to: str) -> tuple[str, str]:
+    return live_email(sample_event(), _SAMPLE_TOKEN, your_ahavah=True)
+
+
+def preview_your_ahavah_guest(to: str) -> tuple[str, str]:
+    return reminder_email(sample_view(confirmed=True), _SAMPLE_TOKEN, your_ahavah=True)
+
+
+SAMPLE_REFUSAL = ('For now we approve hosts who already run gatherings for an assembly or fellowship. '
+                  'You are welcome to ask again once you do.')
+
+
+def preview_refused(to: str) -> tuple[str, str]:
+    return refusal_email(SAMPLE_REFUSAL)
