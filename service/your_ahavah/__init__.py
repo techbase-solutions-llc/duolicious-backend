@@ -19,11 +19,15 @@ member's duo_session and from the half-finished sign-up record:
                 bearer token: the member routes read duo_session only, so
                 it opens none of them
   held          what the address holds: gatherings hosted, places,
-                singles mentored (first name only), saved Together
+                singles mentored (first name only, and a count of the
+                conversations each shares), saved Together
                 results, a visitor alert and recommendations sent (date
                 and count only). Never a member's name (but a mentored
                 single's first name), photo or profile; never a guest's
                 name; never a venue
+  start_profile "Start a matchmaking profile" with no second code: the
+                members' sign-up for the proved address, after which the
+                address session is gone
   erase         everything under the address, by the account erase code
                 (service/hard_delete), and ends the session
 
@@ -161,6 +165,47 @@ def end_session(tx, token: object) -> None:
         tx.execute('DELETE FROM address_session WHERE session_token_hash = %(h)s', dict(h=_sha(token)))
 
 
+def is_member(tx, email: str, normalized_email: str) -> bool:
+    """The address belongs to a member, matched as the members' sign-in
+    matches a session to its person (service.person, Q_INSERT_DUO_SESSION)."""
+    from service.person import normalize_email
+    nes = sorted({normalized_email, normalize_email(email)})
+    return tx.execute('SELECT 1 FROM person WHERE normalized_email = ANY(%(n)s) LIMIT 1',
+                      dict(n=nes)).fetchone() is not None
+
+
+def start_profile(tx, token: object, *, source: Optional[str] = None, inviter_code: Optional[str] = None,
+                  now: Optional[datetime] = None) -> dict:
+    """"Start a matchmaking profile" (design 4.2): the address was proved a
+    moment ago, so no second code. The address session is used up first, so
+    a token starts one sign-up however often it is sent; a refusal raises,
+    the caller's transaction rolls back and the session stays. Then the
+    members' own sign-up makes and signs in the session
+    (service.person.sign_up_proved_address), and the answer is what
+    /request-otp and a right code at /check-otp give: {session_token,
+    onboarded, ...}. The finish-sign-up steps then bring across what the
+    address holds, by address, as after a code.
+
+    'expired' (401) for a lapsed or unknown session, 'member' (409) for an
+    address that belongs to a member (they sign in instead), 'refused'
+    (403) when the address may not sign up now (a ban, a bad domain)."""
+    from service.person import sign_up_proved_address
+    if not isinstance(token, str) or not 16 <= len(token) <= 64:
+        raise YourAhavahError('expired', 401)
+    who = tx.execute(
+        """DELETE FROM address_session
+            WHERE session_token_hash = %(h)s AND session_expires_at > %(now)s
+           RETURNING email, normalized_email""", dict(h=_sha(token), now=_now(now))).fetchone()
+    if who is None:
+        raise YourAhavahError('expired', 401)
+    if is_member(tx, who['email'], who['normalized_email']):
+        raise YourAhavahError('member', 409)
+    out = sign_up_proved_address(tx, who['email'], source=source, inviter_code=inviter_code)
+    if out is None:
+        raise YourAhavahError('refused', 403)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # What the address holds
 # ---------------------------------------------------------------------------
@@ -198,9 +243,20 @@ _Q_PLACES = """
 """
 
 # Singles the address mentors: a confirmed, live link, to its account or
-# its address. First name only.
+# its address. First name only, and how many conversations the single
+# shares with this mentor now: a count, never who or what. A share counts
+# while the mentor can open it (service/matchmaker/mentor_view): live, on
+# this link, with someone the single is still matched with, not blocked and
+# not deactivated.
 _Q_MENTORING = """
-    SELECT p.name, l.relation, l.confirmed_at
+    SELECT p.name, l.relation, l.confirmed_at,
+           (SELECT count(*)::int FROM shared_conversation sc
+              JOIN person o ON o.id = sc.other_person_id
+             WHERE sc.mentor_link_id = l.id AND sc.revoked_at IS NULL AND o.activated
+               AND EXISTS (SELECT 1 FROM ahavah_match m
+                            WHERE m.user_a_id = LEAST(sc.single_person_id, sc.other_person_id)
+                              AND m.user_b_id = GREATEST(sc.single_person_id, sc.other_person_id))
+               AND NOT is_blocked_pair(sc.single_person_id, sc.other_person_id)) AS conversations_shared
       FROM mentor_link l
       JOIN person p ON p.id = l.single_person_id
       LEFT JOIN mentor_account a ON a.id = l.mentor_account_id
@@ -278,7 +334,8 @@ def held(tx, normalized_email: str, now: Optional[datetime] = None) -> dict:
                    ended=r['ends_at'] <= now)
               for r in tx.execute(_Q_PLACES, dict(ne=ne, n=n)).fetchall()]
 
-    mentoring = [dict(first_name=first_name(r['name']), relation=r['relation'], since=_iso(r['confirmed_at']))
+    mentoring = [dict(first_name=first_name(r['name']), relation=r['relation'], since=_iso(r['confirmed_at']),
+                      conversations_shared=r['conversations_shared'])
                  for r in tx.execute(_Q_MENTORING, dict(ne=ne, n=n)).fetchall()]
 
     results = []

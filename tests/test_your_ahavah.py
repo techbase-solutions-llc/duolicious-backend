@@ -282,7 +282,8 @@ def test_it_lists_what_the_address_holds_and_nothing_of_anyone_else(client, code
     assert (g['slug'], g['status'], g['going'], g['ended']) == (held['hosted'], 'published', 2, False)
     (p,) = out['places']
     assert (p['slug'], p['state'], p['party_size'], p['cancelled']) == (held['going_to'], 'going', 1, False)
-    assert out['mentoring'] == [dict(first_name='Rivka', relation='parent', since=out['mentoring'][0]['since'])]
+    assert out['mentoring'] == [dict(first_name='Rivka', relation='parent', since=out['mentoring'][0]['since'],
+                                     conversations_shared=0)]
     (res,) = out['results']
     assert (res['session_id'], res['mode'], res['seat'], res['completed'], res['result']) == \
         (held['session'], 'us', 'owner', True, dict(score=72))
@@ -292,6 +293,42 @@ def test_it_lists_what_the_address_holds_and_nothing_of_anyone_else(client, code
     for secret in ('Hannah', 'Okafor', 'Elm Street', 'Oak Road', 'Levi', 'Jonathan', held['recipient'],
                    'You would like it', 'photo', 'uuid'):
         assert secret not in text, secret
+
+
+def test_a_mentored_single_says_how_many_conversations_they_share(client, codes, single_with_mentor,
+                                                                   introducer_with_two):
+    """Copy 2.1: "Sharing {n} conversation with you". The count of what the
+    mentor can open now: a live share, on this link, with someone the
+    single is still matched with. Never a name or a word of it."""
+    from service.matchmaker import mentors
+    single, samuel, _, _ = single_with_mentor()
+    daniel = introducer_with_two.member('Daniel Stone', 'Man', 'Woman')
+    gone = introducer_with_two.member('Jonathan Gone', 'Man', 'Woman')
+    stopped = introducer_with_two.member('Aaron Stopped', 'Man', 'Woman')
+    for other in (daniel, gone, stopped):
+        introducer_with_two.match(single, other)
+    try:
+        headers = _sign_in(client, codes, single['mentor_email'])
+        assert _held(client, headers)['mentoring'][0]['conversations_shared'] == 0
+        with api_tx() as tx:
+            mentors.share(tx, single['id'], samuel['uuid'])
+        (m,) = _held(client, headers)['mentoring']
+        assert m['conversations_shared'] == 1
+        with api_tx() as tx:
+            for other in (daniel, gone, stopped):
+                mentors.share(tx, single['id'], other['uuid'])
+            mentors.unshare(tx, single['id'], stopped['uuid'])
+            # Unmatched after the share: the mentor can no longer open it.
+            tx.execute('DELETE FROM ahavah_match WHERE %(g)s IN (user_a_id, user_b_id)', dict(g=gone['id']))
+        out = _held(client, headers)
+        (m,) = out['mentoring']
+        assert m['conversations_shared'] == 2
+        text = json.dumps(out)
+        for secret in ('Samuel', 'Stone', 'Daniel', 'Jonathan', 'Aaron', samuel['uuid'], daniel['uuid']):
+            assert secret not in text, secret
+    finally:
+        with api_tx() as tx:
+            tx.execute('DELETE FROM address_session WHERE normalized_email = %(e)s', dict(e=single['mentor_email']))
 
 
 def test_an_address_that_holds_nothing_gets_the_same_shape_empty(client, codes, address, published,

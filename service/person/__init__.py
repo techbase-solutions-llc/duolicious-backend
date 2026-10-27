@@ -370,6 +370,31 @@ def _send_otp(email: str, otp: str):
         print('_send_otp: thread dispatch failed:')
         print(traceback.format_exc())
 
+def _open_pending_session(tx, params: dict, inviter_code: Optional[str]) -> list:
+    """/request-otp's write: a pending sign-in session for the address,
+    holding a fresh code, and the referral it came with. Returns the
+    inserted row ([{otp}]), or no rows for a banned address or network or a
+    new address on a bad domain (the code CTE issues no code for them).
+    Shared with Your Ahavah's start-a-profile (sign_up_proved_address), so
+    both make the same session."""
+    # Purge any stale UNSIGNED-IN sessions for this email first so the
+    # zoo of pre-auth bearers doesn't grow unbounded across attempts
+    # (audit Auth #5). Signed-in sessions on other devices stay.
+    # Matches on duo_session.email (the literal stored value); future
+    # cleanup work could also normalize case + dot/plus aliases SQL-side.
+    tx.execute(
+        Q_PURGE_STALE_UNSIGNED_SESSIONS,
+        dict(email=params['email']),
+    )
+    rows = tx.execute(Q_INSERT_DUO_SESSION, params).fetchall()
+
+    # Record referral attribution if the FE carried an inviter_code
+    # from /i/<code>. Best-effort: bad codes / self-referrals /
+    # already-attributed invitees return None silently. Same tx so
+    # any later failure rolls this back too. See parent spec.
+    attribute_referral(tx, inviter_code, params['email'])
+    return rows
+
 def post_request_otp(req: t.PostRequestOtp):
     # Honeypot: bots that scrape the form and submit every field hit this.
     # Real users never see the field. Return a success-shaped response so
@@ -443,22 +468,7 @@ def post_request_otp(req: t.PostRequestOtp):
     )
 
     with api_tx() as tx:
-        # Purge any stale UNSIGNED-IN sessions for this email first so the
-        # zoo of pre-auth bearers doesn't grow unbounded across attempts
-        # (audit Auth #5). Signed-in sessions on other devices stay.
-        # Matches on duo_session.email (the literal stored value); future
-        # cleanup work could also normalize case + dot/plus aliases SQL-side.
-        tx.execute(
-            Q_PURGE_STALE_UNSIGNED_SESSIONS,
-            dict(email=req.email),
-        )
-        rows = tx.execute(Q_INSERT_DUO_SESSION, params).fetchall()
-
-        # Record referral attribution if the FE carried an inviter_code
-        # from /i/<code>. Best-effort: bad codes / self-referrals /
-        # already-attributed invitees return None silently. Same tx so
-        # any later failure rolls this back too. See parent spec.
-        attribute_referral(tx, getattr(req, "inviter_code", None), req.email)
+        rows = _open_pending_session(tx, params, getattr(req, "inviter_code", None))
 
     try:
         row, *_ = rows
@@ -519,94 +529,188 @@ def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
     if _ip_blocked(s.email):
         return 'IP address blocked', 460
 
-    params = dict(
-        otp=req.otp,
-        session_token_hash=s.session_token_hash,
-        pending_club_name=s.pending_club_name,
-    )
-
     with api_tx() as tx:
-        tx.execute(Q_MAYBE_DELETE_ONBOARDEE, params)
-        tx.execute(Q_MAYBE_SIGN_IN, params)
-        row = tx.fetchone()
-
-        if not row and tx.execute(
-                Q_ADMIN_DEACTIVATED_CODE, params).fetchone():
-            # The right code, but an admin deactivated the account. The
-            # session stays signed out; the attempt counter is untouched.
-            return 'Account deactivated', 403
-
-        if not row:
-            # Wrong OTP. Increment the per-session attempt counter and
-            # null the OTP after 5 failures so it cannot be brute-forced
-            # within its 10-minute lifetime (audit Auth #1).
-            attempts_row = tx.execute(
-                Q_INCREMENT_OTP_ATTEMPTS,
-                dict(session_token_hash=s.session_token_hash),
-            ).fetchone()
-            if attempts_row and attempts_row.get('locked'):
-                return 'Too many attempts. Request a new code.', 401
-            return 'Invalid OTP', 401
-
-        club_params = dict(
-            person_id=s.person_id,
-            club_name=s.pending_club_name,
+        out = _sign_in_with_code(
+            tx,
+            email=s.email,
+            session_token_hash=s.session_token_hash,
+            otp=req.otp,
             pending_club_name=s.pending_club_name,
-            do_modify=True,
+            person_id=s.person_id,
+            source=req.source,
         )
 
-        if \
-                club_params['person_id'] is not None and \
-                club_params['club_name'] is not None:
-            tx.execute(Q_JOIN_CLUB, club_params)
-            tx.execute(Q_UPSERT_SEARCH_PREFERENCE_CLUB, club_params)
-
-        clubs = tx.execute(Q_GET_SESSION_CLUBS, club_params).fetchone()
-
-        tx.execute(Q_UPDATE_LAST, dict(person_uuid=row['person_uuid']))
-
-        # Qualified-lead attribution: tag NEW onboardees created via a
-        # tagged flow (a couple tool or the marriage checklist). Existing
-        # members (person_id set) and already-tagged rows are untouched,
-        # so an organic lead is never downgraded. The code just entered
-        # proves the address, so the tool's lead is recorded confirmed
-        # (TEC-1845, service/leads), but only once the privacy page says
-        # so: AHAVAH_TOOL_LEADS_ENABLED stays off until then.
-        # A gathering's join link sends event:{slug} (TEC-1845, inviting
-        # guests to join): it counts only for a gathering that exists, in
-        # any status, and writes no lead; anything else is ignored. The
-        # visitor alert email's sign-up link sends alert:visitor (TEC-1929),
-        # which writes no lead either: the visitor's own alert lead already
-        # exists, and only a tool records one here.
-        source = signup_source(req.source)
-        if is_event_source(source) and not tx.execute(
-                'SELECT 1 FROM event WHERE slug = %(s)s',
-                dict(s=source[len('event:'):])).fetchone():
-            source = None
-        if source and row['person_id'] is None:
-            tx.execute(
-                """
-                UPDATE onboardee
-                   SET lead_source = %(source)s
-                 WHERE email = %(email)s
-                   AND lead_source IS NULL
-                """,
-                dict(source=source, email=s.email),
-            )
-            if tool_leads_enabled() and source in TOOL_SOURCES:
-                lead_id = record_lead(tx, email=s.email, source=source)
-                if lead_id is not None:
-                    confirm_lead(tx, lead_id, 'otp')
+    if out == 'deactivated':
+        # The right code, but an admin deactivated the account. The
+        # session stays signed out; the attempt counter is untouched.
+        return 'Account deactivated', 403
+    if out == 'locked':
+        return 'Too many attempts. Request a new code.', 401
+    if out == 'wrong':
+        return 'Invalid OTP', 401
 
     # Admin > System counts codes that were never entered (TEC-1848). Its
     # own best-effort transaction, after the sign-in has committed.
     signupguard.record_entered(s.session_token_hash)
+
+    return out
+
+
+def _sign_in_with_code(
+    tx,
+    *,
+    email: str,
+    session_token_hash: str,
+    otp: str,
+    pending_club_name: Optional[str],
+    person_id: Optional[int],
+    source: Optional[str],
+):
+    """/check-otp's write, inside the caller's transaction: the code
+    against the session, which signs the session in (an onboardee record
+    for a new address, the person's sign-in for a member), then the club
+    and the acquisition tag. Returns the /check-otp answer, or 'deactivated',
+    'locked' or 'wrong' for the caller to refuse; a wrong code's count is
+    written either way. Shared with Your Ahavah's start-a-profile
+    (sign_up_proved_address), so both sign in the same way.
+    """
+    params = dict(
+        otp=otp,
+        session_token_hash=session_token_hash,
+        pending_club_name=pending_club_name,
+    )
+
+    tx.execute(Q_MAYBE_DELETE_ONBOARDEE, params)
+    tx.execute(Q_MAYBE_SIGN_IN, params)
+    row = tx.fetchone()
+
+    if not row and tx.execute(
+            Q_ADMIN_DEACTIVATED_CODE, params).fetchone():
+        return 'deactivated'
+
+    if not row:
+        # Wrong OTP. Increment the per-session attempt counter and
+        # null the OTP after 5 failures so it cannot be brute-forced
+        # within its 10-minute lifetime (audit Auth #1).
+        attempts_row = tx.execute(
+            Q_INCREMENT_OTP_ATTEMPTS,
+            dict(session_token_hash=session_token_hash),
+        ).fetchone()
+        if attempts_row and attempts_row.get('locked'):
+            return 'locked'
+        return 'wrong'
+
+    club_params = dict(
+        person_id=person_id,
+        club_name=pending_club_name,
+        pending_club_name=pending_club_name,
+        do_modify=True,
+    )
+
+    if \
+            club_params['person_id'] is not None and \
+            club_params['club_name'] is not None:
+        tx.execute(Q_JOIN_CLUB, club_params)
+        tx.execute(Q_UPSERT_SEARCH_PREFERENCE_CLUB, club_params)
+
+    clubs = tx.execute(Q_GET_SESSION_CLUBS, club_params).fetchone()
+
+    tx.execute(Q_UPDATE_LAST, dict(person_uuid=row['person_uuid']))
+
+    # Qualified-lead attribution: tag NEW onboardees created via a
+    # tagged flow (a couple tool or the marriage checklist). Existing
+    # members (person_id set) and already-tagged rows are untouched,
+    # so an organic lead is never downgraded. The code just entered
+    # proves the address, so the tool's lead is recorded confirmed
+    # (TEC-1845, service/leads), but only once the privacy page says
+    # so: AHAVAH_TOOL_LEADS_ENABLED stays off until then.
+    # A gathering's join link sends event:{slug} (TEC-1845, inviting
+    # guests to join): it counts only for a gathering that exists, in
+    # any status, and writes no lead; anything else is ignored. The
+    # visitor alert email's sign-up link sends alert:visitor (TEC-1929),
+    # which writes no lead either: the visitor's own alert lead already
+    # exists, and only a tool records one here.
+    source = signup_source(source)
+    if is_event_source(source) and not tx.execute(
+            'SELECT 1 FROM event WHERE slug = %(s)s',
+            dict(s=source[len('event:'):])).fetchone():
+        source = None
+    if source and row['person_id'] is None:
+        tx.execute(
+            """
+            UPDATE onboardee
+               SET lead_source = %(source)s
+             WHERE email = %(email)s
+               AND lead_source IS NULL
+            """,
+            dict(source=source, email=email),
+        )
+        if tool_leads_enabled() and source in TOOL_SOURCES:
+            lead_id = record_lead(tx, email=email, source=source)
+            if lead_id is not None:
+                confirm_lead(tx, lead_id, 'otp')
 
     return dict(
         onboarded=row['person_id'] is not None,
         **row,
         **clubs,
     )
+
+
+def sign_up_closed_to(email: str) -> bool:
+    """/request-otp's gates that come before any code, for a sign-up that
+    needs none: sign-ups not open to the address yet, or a blocked network.
+    True when the address may not sign up from here now."""
+    norm = normalize_email(email)
+    if not SIGNUPS_OPEN and norm.rpartition("@")[2] not in SIGNUP_ALLOWED_DOMAINS:
+        return True
+    return _ip_blocked(email)
+
+
+def sign_up_proved_address(
+    tx,
+    email: str,
+    *,
+    source: Optional[str] = None,
+    inviter_code: Optional[str] = None,
+) -> Optional[dict]:
+    """Your Ahavah's "Start a matchmaking profile" (TEC-1845, release 4,
+    design 4.2): the address was proved a moment ago with the light
+    sign-in's code, so no second code is mailed. The session is made by
+    /request-otp's own write and signed in by /check-otp's, with the code
+    the first wrote handed straight to the second. The answer is what the
+    two would have given: /request-otp's session_token with /check-otp's
+    answer. Nothing is mailed, and Admin > System counts no code, as none
+    was sent.
+
+    Inside the caller's transaction. The caller refuses a member's address
+    and checks the network first. Returns None when the address may not
+    sign up (a banned address or network, a new address on a bad domain).
+    """
+    session_token = secrets.token_hex(64)
+    session_token_hash = sha512(session_token)
+    rows = _open_pending_session(tx, dict(
+        email=email,
+        normalized_email=normalize_email(email),
+        pending_club_name=None,
+        is_dev=DUO_ENV == 'dev',
+        session_token_hash=session_token_hash,
+        ip_address=request.remote_addr,
+    ), inviter_code)
+    if not rows:
+        return None
+    out = _sign_in_with_code(
+        tx,
+        email=email,
+        session_token_hash=session_token_hash,
+        otp=rows[0]['otp'],
+        pending_club_name=None,
+        person_id=None,
+        source=source,
+    )
+    if not isinstance(out, dict):
+        return None
+    return dict(session_token=session_token, **out)
 
 def post_marriage_checklist_send(req: t.PostMarriageChecklistSend, s: t.SessionInfo):
     """Email the marriage-checklist results to the respondent and their

@@ -1250,6 +1250,25 @@ class PostYourAhavahSession(BaseModel):
     code: str = Field(min_length=1, max_length=16)
 
 
+class PostYourAhavahStartProfile(BaseModel):
+    """POST /your-ahavah/start-profile (design 4.2): what the code step
+    carries, so the sign-up is credited as it would be there. `source` as
+    on /check-otp (anything unexpected reads as none) and `inviter_code` as
+    on /request-otp."""
+    source: Optional[str] = Field(None, max_length=60)
+    inviter_code: Optional[str] = Field(
+        default=None,
+        min_length=7,
+        max_length=7,
+        pattern=r"^[0-9A-HJKM-NP-TV-Z]+$",
+    )
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def _source_or_none(cls, v):
+        return v if isinstance(v, str) and len(v) <= 60 else None
+
+
 class EventDraftBody(BaseModel):
     """POST /organiser/events and PATCH /organiser/events/<slug>. Every
     field optional here: service.events.fields.clean_draft holds the rules,
