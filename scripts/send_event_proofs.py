@@ -99,8 +99,16 @@ def missing_titles() -> list[str]:
 def main(argv: Optional[list[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--send', action='store_true', help='send the proofs (default: dry run)')
+    ap.add_argument('--only', default='', help='comma-separated proof names to send, and no others')
     a = ap.parse_args(argv)
     emails = plan()
+    if a.only:
+        wanted = {n.strip() for n in a.only.split(',') if n.strip()}
+        unknown = wanted - {e['name'] for e in emails}
+        if unknown:
+            print('No such proof: ' + ', '.join(sorted(unknown)))
+            sys.exit(2)
+        emails = [e for e in emails if e['name'] in wanted]
     missing = missing_titles()
     print(f"{'SEND' if a.send else 'DRY RUN'}: {len(emails)} proof emails to {PROOF_TO}")
     for e in emails:

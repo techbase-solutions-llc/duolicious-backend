@@ -133,3 +133,16 @@ def test_the_refusal_proof_carries_a_sample_reason():
     assert e['subject'] == '[PROOF] Your request to host on Ahavah'
     assert 'We could not approve your request to host on Ahavah.' in e['html']
     assert 'title-note.png' in e['html']
+
+
+def test_only_sends_just_the_named_proofs(smtp):
+    ep.main(['--send', '--only', 'event_host_refused,event_your_ahavah_guest'])
+    assert sorted(s['subject'] for s in smtp.sent) == sorted(
+        e['subject'] for e in ep.plan() if e['name'] in ('event_host_refused', 'event_your_ahavah_guest'))
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'}
+
+
+def test_only_refuses_a_name_it_does_not_know(smtp):
+    with pytest.raises(SystemExit) as e:
+        ep.main(['--send', '--only', 'no_such_proof'])
+    assert e.value.code == 2 and smtp.sent == []
