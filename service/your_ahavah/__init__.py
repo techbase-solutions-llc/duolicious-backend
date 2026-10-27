@@ -161,6 +161,47 @@ def end_session(tx, token: object) -> None:
         tx.execute('DELETE FROM address_session WHERE session_token_hash = %(h)s', dict(h=_sha(token)))
 
 
+def is_member(tx, email: str, normalized_email: str) -> bool:
+    """The address belongs to a member, matched as the members' sign-in
+    matches a session to its person (service.person, Q_INSERT_DUO_SESSION)."""
+    from service.person import normalize_email
+    nes = sorted({normalized_email, normalize_email(email)})
+    return tx.execute('SELECT 1 FROM person WHERE normalized_email = ANY(%(n)s) LIMIT 1',
+                      dict(n=nes)).fetchone() is not None
+
+
+def start_profile(tx, token: object, *, source: Optional[str] = None, inviter_code: Optional[str] = None,
+                  now: Optional[datetime] = None) -> dict:
+    """"Start a matchmaking profile" (design 4.2): the address was proved a
+    moment ago, so no second code. The address session is used up first, so
+    a token starts one sign-up however often it is sent; a refusal raises,
+    the caller's transaction rolls back and the session stays. Then the
+    members' own sign-up makes and signs in the session
+    (service.person.sign_up_proved_address), and the answer is what
+    /request-otp and a right code at /check-otp give: {session_token,
+    onboarded, ...}. The finish-sign-up steps then bring across what the
+    address holds, by address, as after a code.
+
+    'expired' (401) for a lapsed or unknown session, 'member' (409) for an
+    address that belongs to a member (they sign in instead), 'refused'
+    (403) when the address may not sign up now (a ban, a bad domain)."""
+    from service.person import sign_up_proved_address
+    if not isinstance(token, str) or not 16 <= len(token) <= 64:
+        raise YourAhavahError('expired', 401)
+    who = tx.execute(
+        """DELETE FROM address_session
+            WHERE session_token_hash = %(h)s AND session_expires_at > %(now)s
+           RETURNING email, normalized_email""", dict(h=_sha(token), now=_now(now))).fetchone()
+    if who is None:
+        raise YourAhavahError('expired', 401)
+    if is_member(tx, who['email'], who['normalized_email']):
+        raise YourAhavahError('member', 409)
+    out = sign_up_proved_address(tx, who['email'], source=source, inviter_code=inviter_code)
+    if out is None:
+        raise YourAhavahError('refused', 403)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # What the address holds
 # ---------------------------------------------------------------------------

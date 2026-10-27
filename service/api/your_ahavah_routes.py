@@ -11,6 +11,11 @@ nothing about itself.
                                -> 200 {address_token, expires_at}
                                |  401 {error: 'wrong_code' | 'expired'}
   GET    /your-ahavah          X-Address-Token -> 200 what the address holds
+  POST   /your-ahavah/start-profile  X-Address-Token, {source?, inviter_code?}
+                               -> 200 {session_token, onboarded, ...}: what
+                                  /request-otp and a right /check-otp give
+                               |  401 {error: 'expired'} | 409 {error: 'member'}
+                               |  403 {error: 'refused'}
   POST   /your-ahavah/delete   X-Address-Token -> 200 {deleted: true}
                                |  409 {error: 'member'}
   DELETE /your-ahavah/session  X-Address-Token -> 200 {} (signs out)
@@ -136,6 +141,34 @@ def get_your_ahavah():
         return _refused(e)
     from service.your_ahavah import _iso
     return dict(email=who['email'], expires_at=_iso(who['session_expires_at']), **out), 200, _NO_STORE
+
+
+# As the code is entered (/your-ahavah/session): a session is the proof,
+# and nothing is mailed.
+_start_ip_limit = limiter.shared_limit('10 per minute; 40 per day', scope='your_ahavah_start')
+
+
+@post('/your-ahavah/start-profile', limiter=_start_ip_limit)
+@validate(t.PostYourAhavahStartProfile)
+def post_your_ahavah_start_profile(req: t.PostYourAhavahStartProfile):
+    """Start a matchmaking profile with the address just proved, with no
+    second code (design 4.2). Answers what /request-otp and a right code at
+    /check-otp give a new address, and ends the address session."""
+    from service import your_ahavah
+    from service.person import sign_up_closed_to
+    try:
+        with api_tx('read committed') as tx:
+            who = your_ahavah.address_for(tx, _token())
+            if your_ahavah.is_member(tx, who['email'], who['normalized_email']):
+                raise your_ahavah.YourAhavahError('member', 409)
+        # Outside a transaction: the network check opens its own.
+        if sign_up_closed_to(who['email']):
+            raise your_ahavah.YourAhavahError('refused', 403)
+        with api_tx() as tx:
+            out = your_ahavah.start_profile(tx, _token(), source=req.source, inviter_code=req.inviter_code)
+    except your_ahavah.YourAhavahError as e:
+        return _refused(e)
+    return out, 200, _NO_STORE
 
 
 @post('/your-ahavah/delete')
