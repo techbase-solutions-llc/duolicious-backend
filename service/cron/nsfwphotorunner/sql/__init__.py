@@ -20,7 +20,13 @@ LIMIT
 #   score <  0.30           -> approved
 #   score >= 0.70           -> rejected
 #   0.30 <= score < 0.70    -> manual_review
-#   score = -1.0 (download failed) -> left at 'pending' for the next tick.
+#   score = -1.0 (download failed) -> left at 'pending'. On a photo uploaded in
+#     the last 10 minutes the score stays NULL, so the next tick tries again:
+#     the API commits the row before it uploads the image, and the cron polls
+#     every second, so it can reach a new photo before its image is there.
+#     Stamping -1 took it out of the queue for good, pending and "Reviewing"
+#     to its owner (31 Oct 2026). An older photo with no image is stamped -1,
+#     so one whose image is really gone does not hold a queue place for ever.
 #   A photo a person has already approved or taken down is not touched.
 #
 # This statement records the face count but does not apply the face rule.
@@ -38,7 +44,11 @@ Q_SET_NSFW_SCORE = """
 UPDATE
     photo
 SET
-    nsfw_score = %(nsfw_score)s,
+    nsfw_score = CASE
+        WHEN %(nsfw_score)s < 0
+         AND uploaded_at > NOW() - INTERVAL '10 minutes' THEN NULL
+        ELSE %(nsfw_score)s
+    END,
     face_count = COALESCE(%(face_count)s::int, face_count),
     face_checked_at = CASE
         WHEN %(face_count)s::int IS NULL THEN face_checked_at
