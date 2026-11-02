@@ -58,6 +58,11 @@ async def autodeactivate2_once():
         else:
             print(f'  - autodeactive2: deactivated {p}')
 
+    # A dry run hides nobody, so it must email nobody. It used to email the same
+    # members "Your Ahavah profile is resting" every 10 minutes (owner, 2 Nov 2026).
+    if DRY_RUN:
+        return
+
     for p in rows_deactivated:
         maybe_send_email(p['email'])
 
