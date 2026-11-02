@@ -87,3 +87,26 @@ def test_the_payload_counts_and_names_nobody():
     assert sent[0][1]['body'] == '1 new member since you were last here. Come and see who.'
     assert sent[1][1]['body'] == body_for(3) == '3 new members since you were last here. Come and see who.'
     assert all(p['url'] == '/discover' and '—' not in p['title'] for _, p in sent)
+
+
+# Send safeguards (2 Nov 2026, task 0): each run used to push every match
+# again with no record. Now each push writes a push_send_log row first, and
+# anyone already logged for this push is neither picked nor pushed again.
+
+def test_a_pushed_member_is_logged_and_not_picked_or_pushed_again(make_person):
+    from scripts.push_reactivation import CAMPAIGN, CAMPAIGN_ID, claim
+    gone = make_person(name='GoneTwice', gender='Man')
+    _offline(gone['id'])
+    _subscribe(gone['id'])
+    make_person(name='Newcomer6', gender='Woman')
+    rows = [r for r in [dict(person_id=gone['id'], total_new=1)]]
+    sent = []
+    send_all(rows, lambda pid, payload: sent.append(pid), claim=claim)
+    assert sent == [gone['id']]
+    with api_tx() as tx:
+        assert tx.execute(
+            "SELECT 1 FROM push_send_log WHERE person_id = %(p)s AND campaign = %(c)s AND campaign_id = %(cid)s",
+            dict(p=gone['id'], c=CAMPAIGN, cid=CAMPAIGN_ID)).fetchone()
+    assert gone['id'] not in _ids()
+    send_all(rows, lambda pid, payload: sent.append(pid), claim=claim)
+    assert sent == [gone['id']]

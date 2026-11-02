@@ -95,8 +95,12 @@ async def main():
         # place a row's image_key is cleared. Every 10 minutes.
         spotlight_cleanup_forever(),
 
-        # The single drain of the durable email outbox: the only place SMTP
-        # is spoken anywhere in the system. Every 30 seconds.
+        # The single drain of the durable email outbox: the only sender of
+        # queued mail. It is not the only sender: direct senders still exist
+        # (sign-in codes, owner notices, some crons and the manual scripts)
+        # and the crons among them are listed in service/cron/send_registry.py.
+        # Every email and push, queued or direct, passes smtp/guard.py.
+        # Every 30 seconds.
         email_outbox_forever(),
 
         # e2, the weekly community email. Monday 12:00 UTC, guarded by the

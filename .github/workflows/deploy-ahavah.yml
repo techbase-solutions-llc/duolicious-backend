@@ -28,6 +28,10 @@ name: Deploy ahavah/main → droplet
 # Rollback: `ssh root@droplet "cd /opt/ahavah-api && git reset --hard
 # <previous-sha> && docker compose -f docker-compose.yml -f docker-compose
 # .production.yml --env-file .env.production up -d --build api chat"`.
+# A manual rollback runs no tests: the `rules` job below never sees it. Never
+# roll back to a commit before eb5b1b3, whose dormancy dry run emailed the
+# same members every 10 minutes for a month (2 Nov 2026). See
+# docs/runbooks/mail-guard.md.
 
 on:
   push:
