@@ -411,3 +411,44 @@ def test_status_buckets_a_state_it_does_not_know(make_person):
                           CHECK (state IN ('queued','reserved','accepted','acceptance_unknown','failed','skipped'))""")
     assert counts['other'] == 1
     assert counts['queued'] == 0 and counts['accepted'] == 0
+
+
+# ---------------------------------------------------------------------------
+# The send guard (send safeguards, 2 Nov 2026)
+# ---------------------------------------------------------------------------
+
+def test_the_drain_names_the_kind_and_bulk_and_asks_for_refusals_raised(make_person):
+    email = _addr('guardkw')
+    p = make_person(name='GuardKw', email=email)
+    _enqueue(p['id'], email, campaign='e2', cid='guard-kw')
+    _only(p['id'])
+    smtp = _Smtp()
+    outbox.drain(api_tx, smtp)
+    sent = smtp.sent[0]
+    assert sent['kind'] == 'e2' and sent['bulk'] is True and sent['raise_on_refusal'] is True
+
+
+def test_an_exempt_row_is_not_bulk(make_person):
+    email = _addr('guardex')
+    p = make_person(name='GuardEx', email=email)
+    _enqueue(p['id'], email, campaign='match', cid='guard-ex', exempt=True)
+    _only(p['id'])
+    smtp = _Smtp()
+    outbox.drain(api_tx, smtp)
+    assert smtp.sent[0]['kind'] == 'match' and smtp.sent[0]['bulk'] is False
+
+
+def test_a_row_the_guard_refuses_is_skipped_with_the_rule_and_never_retried(make_person, monkeypatch):
+    import smtp as smtp_mod
+    from smtp import guard
+    email = _addr('guardskip')
+    p = make_person(name='GuardSkip', email=email)
+    _enqueue(p['id'], email, campaign='e2', cid='guard-skip')
+    _only(p['id'])
+    calls = []
+    monkeypatch.setattr(smtp_mod.Smtp, '_try_send', lambda self, **kw: calls.append(kw) or 'mid')
+    guard.set_halt('email', 'e2', reason='test')
+    out = outbox.drain(api_tx, smtp_mod.make_aws_smtp())
+    r = _row(p['id'])
+    assert calls == [] and out['skipped'] == 1
+    assert r['state'] == 'skipped' and r['last_error'] == 'mail_guard:halt_kind'

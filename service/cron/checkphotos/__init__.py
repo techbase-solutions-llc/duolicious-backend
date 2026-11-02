@@ -7,6 +7,7 @@ from service.cron.cronutil import (
     env_int,
     print_stacktrace,
 )
+from smtp.guard import dry_run
 import asyncio
 import boto3
 import os
@@ -136,6 +137,12 @@ def compute_blurhashes(images: list[io.BytesIO]) -> list[str]:
     return blurhashes
 
 async def check_photos_once():
+    # The send guard's tripwire (2 Nov 2026): in a dry run any send raises
+    # and alerts the owner.
+    with dry_run(DRY_RUN):
+        await _check_photos_once()
+
+async def _check_photos_once():
     for chunk in list_uuids_in_object_store():
         uuids_to_update, uuids_to_delete = await resolve_uuids(chunk)
 

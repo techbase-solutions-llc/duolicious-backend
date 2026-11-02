@@ -504,3 +504,27 @@ def test_replay_of_the_resting_email_loop(sent, monkeypatch):
     assert refused and refused[0]['alert'] is True
     halts = _events_of('halt')
     assert len(halts) == 1 and halts[0]['kind'] == 'profile_resting'
+
+
+# ---------------------------------------------------------------------------
+# every cron with a DRY_RUN runs its _once() inside no_send()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('module,once', [
+    ('service.cron.photocleaner', 'clean_photos_once'),
+    ('service.cron.audiocleaner', 'clean_audio_once'),
+    ('service.cron.checkphotos', 'check_photos_once'),
+])
+@pytest.mark.parametrize('flag', [True, False])
+def test_each_dry_run_cron_runs_inside_the_tripwire(monkeypatch, module, once, flag):
+    import importlib
+    mod = importlib.import_module(module)
+    seen = []
+
+    async def body():
+        seen.append(guard.in_no_send())
+
+    monkeypatch.setattr(mod, 'DRY_RUN', flag)
+    monkeypatch.setattr(mod, f'_{once}', body)
+    asyncio.run(getattr(mod, once)())
+    assert seen == [flag]

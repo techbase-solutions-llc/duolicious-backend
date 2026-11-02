@@ -37,6 +37,7 @@ from typing import Any, Optional
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
 from service.leads import address_unsubscribed, lead_unsubscribed, news_refusal
+from smtp.guard import MailGuardRefused, SendDuringDryRun
 
 # Backoff applied AFTER attempt n fails, indexed by n - 1. An attempt that
 # takes the row to MAX_ATTEMPTS is terminal: it goes to 'failed' instead of
@@ -386,7 +387,7 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
 def mark_skipped(tx, id: int, reason: str) -> None:
     """A send-time re-check refused this row: 'withdrawn', 'suppressed',
     'unsubscribed', 'capped', 'switched_off', 'member_now', 'withdrawn',
-    'cancelled' or 'lapsed'. Terminal, and
+    'cancelled', 'lapsed' or 'mail_guard:<rule>' (the send guard). Terminal, and
     deliberately distinct from 'failed' -- nothing went wrong, we simply
     must not send it. The same
     state and reason string `withdraw_member` writes directly onto the
@@ -700,9 +701,24 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
             continue
         personal = {k: payload[k] for k in _PERSONAL_FIELDS if payload.get(k)}
         try:
+            # The send guard (smtp/guard.py, 2 Nov 2026): the campaign is the
+            # kind, a campaign row (not exempt) is a list send, and a refusal
+            # raises so the row is marked skipped below, never retried into
+            # the limit.
             message_id = smtp.send(subject=payload.get('subject'), body=html,
                                    to_addr=row['email'], from_addr=payload.get('from_addr'),
-                                   list_unsubscribe=payload.get('list_unsubscribe'), **personal)
+                                   list_unsubscribe=payload.get('list_unsubscribe'),
+                                   kind=row['campaign'], bulk=not row['exempt'],
+                                   raise_on_refusal=True, **personal)
+        except MailGuardRefused as e:
+            with tx_factory() as tx:
+                mark_skipped(tx, row['id'], f'mail_guard:{e.rule}')
+            skipped += 1
+            print(f"email_outbox: skipped {row['campaign']} for {mask_email(row['email'])} "
+                  f"(mail_guard:{e.rule})")
+            continue
+        except SendDuringDryRun:
+            raise
         except Exception as e:      # noqa: BLE001 -- any SMTP failure is a retryable attempt
             with tx_factory() as tx:
                 mark_failed_attempt(tx, row['id'], str(e), int(row['attempts']))

@@ -193,6 +193,13 @@ def in_no_send() -> bool:
     return _no_send_var.get()
 
 
+def dry_run(flag: bool):
+    """`no_send()` when `flag` is on, otherwise nothing. Every cron with a
+    DRY_RUN wraps its whole `_once()` in this."""
+    from contextlib import nullcontext
+    return no_send() if flag else nullcontext()
+
+
 def spawn(target: Callable, *args, **kwargs) -> threading.Thread:
     """Start a daemon thread that carries the caller's context variables (the
     tripwire among them). A bare threading.Thread does not, so every module
