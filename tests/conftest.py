@@ -437,6 +437,23 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _send_guard_on_fakeredis():
+    """Every test gets a fresh, empty Redis for the send guard (smtp/guard.py,
+    send safeguards plan of 2 Nov 2026). Its per-address counters would
+    otherwise carry across tests and runs: the 4th test to email one address
+    would be refused. The in-process fallback is emptied too."""
+    import fakeredis
+
+    from smtp import guard
+    previous = guard._redis_client
+    guard.set_redis(fakeredis.FakeRedis(server=fakeredis.FakeServer(), decode_responses=True))
+    guard.reset_local_state()
+    yield
+    guard.set_redis(previous)
+    guard.reset_local_state()
+
+
+@pytest.fixture(autouse=True)
 def _calendar_without_rest_days(monkeypatch, request):
     """Every test runs as though no rest day is anywhere near.
 
@@ -557,7 +574,7 @@ def signup_env(client, monkeypatch):
             return False
 
     sent: list[str] = []
-    monkeypatch.setattr(person, '_send_otp', lambda email, otp: sent.append(email))
+    monkeypatch.setattr(person, '_send_otp', lambda email, otp, **kw: sent.append(email))
     monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
     monkeypatch.setattr(person, 'firehol', _NotListed())
     monkeypatch.setattr(limiter, 'enabled', False)

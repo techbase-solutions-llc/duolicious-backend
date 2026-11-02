@@ -30,7 +30,7 @@ def _email(make_person, name, admin):
 
 def test_a_member_on_a_listed_address_is_still_refused(client, make_person, monkeypatch):
     monkeypatch.setattr(person, 'firehol', _Listed())
-    monkeypatch.setattr(person, '_send_otp', lambda email, otp: None)
+    monkeypatch.setattr(person, '_send_otp', lambda email, otp, **kw: None)
     monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
     email = _email(make_person, 'Listed', admin=False)
     r = client.post('/request-otp', json=dict(email=email))
@@ -39,7 +39,7 @@ def test_a_member_on_a_listed_address_is_still_refused(client, make_person, monk
 
 def test_an_unknown_email_on_a_listed_address_is_refused(client, monkeypatch):
     monkeypatch.setattr(person, 'firehol', _Listed())
-    monkeypatch.setattr(person, '_send_otp', lambda email, otp: None)
+    monkeypatch.setattr(person, '_send_otp', lambda email, otp, **kw: None)
     monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
     r = client.post('/request-otp', json=dict(email='nobody-here@gatetest.ahavah.app'))
     assert r.status_code == 460
@@ -60,7 +60,7 @@ def _session(email, otp='123456'):
 
 def test_an_admin_on_a_listed_address_may_ask_for_a_code(client, make_person, monkeypatch):
     monkeypatch.setattr(person, 'firehol', _Listed())
-    monkeypatch.setattr(person, '_send_otp', lambda email, otp: None)
+    monkeypatch.setattr(person, '_send_otp', lambda email, otp, **kw: None)
     monkeypatch.setattr(person, 'SIGNUPS_OPEN', True)
     email = _email(make_person, 'Operator', admin=True)
     r = client.post('/request-otp', json=dict(email=email))

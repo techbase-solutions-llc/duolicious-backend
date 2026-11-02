@@ -338,7 +338,10 @@ def bump_presence(person_id: int) -> None:
             """, dict(id=person_id))
 
 
-def _send_otp(email: str, otp: str):
+def _send_otp(email: str, otp: str, *, kind: str):
+    """`kind` is `sign_in_code` or `change_email_code` (send safeguards, 2 Nov
+    2026): both are essential to the send guard, never halted, capped at 25
+    per address a day, and every refusal alerts the owner."""
     if email.endswith('@example.com'):
         return
 
@@ -361,11 +364,13 @@ def _send_otp(email: str, otp: str):
             # while the campaign mail from support@ rendered properly.
             # support@ also has a real inbox, so a reply reaches a human.
             from_addr=f'support@{EMAIL_DOMAIN}',
+            kind=kind,
         )
 
     try:
-        import threading
-        threading.Thread(target=_go, daemon=True).start()
+        # guard.spawn carries the dry-run tripwire into the thread.
+        from smtp import guard
+        guard.spawn(_go)
     except Exception:
         print('_send_otp: thread dispatch failed:')
         print(traceback.format_exc())
@@ -481,7 +486,7 @@ def post_request_otp(req: t.PostRequestOtp):
         # an OTP and can't complete /check-otp.
         return dict(session_token=session_token)
 
-    _send_otp(req.email, otp)
+    _send_otp(req.email, otp, kind='sign_in_code')
     signupguard.record_issued(session_token_hash, new_address)
 
     return dict(session_token=session_token)
@@ -523,7 +528,7 @@ def post_resend_otp(s: t.SessionInfo):
     except:
         return 'Banned', 461
 
-    _send_otp(s.email, otp)
+    _send_otp(s.email, otp, kind='sign_in_code')
 
 def post_check_otp(req: t.PostCheckOtp, s: t.SessionInfo):
     if _ip_blocked(s.email):
@@ -1734,7 +1739,7 @@ def change_email_request(s: t.SessionInfo, new_email: str):
             ),
         )
 
-    _send_otp(new_email, otp)
+    _send_otp(new_email, otp, kind='change_email_code')
     return dict(pending_email=new_email)
 
 def change_email_verify(s: t.SessionInfo, otp: str):

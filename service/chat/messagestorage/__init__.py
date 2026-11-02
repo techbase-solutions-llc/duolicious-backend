@@ -133,6 +133,8 @@ def _push_chat_message(from_id: int, to_id: int, body: str, is_audio: bool):
         url=f'/chat/{sender_uuid}',
         tag=f'chat:{sender_uuid}',
         event_kind="message",
+        # The send guard allows 100 chat pushes a day to one member, not 6.
+        kind='chat_message',
     )
 
 

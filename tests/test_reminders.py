@@ -346,10 +346,13 @@ def test_a_reminder_push_still_goes_fire_and_forget_to_every_device(make_person,
         def start(self):
             self._target(**self._kwargs)
 
-    monkeypatch.setattr(notifications, 'threading', SimpleNamespace(Thread=_InlineThread))
+    # Every thread in a module that sends starts through guard.spawn (send
+    # safeguards, 2 Nov 2026).
+    from smtp import guard
+    monkeypatch.setattr(guard, 'spawn', lambda target, *a, **kw: _InlineThread(target, kwargs=kw).start())
     monkeypatch.setattr(notifications, 'PUSH_ENABLED', True)
     monkeypatch.setattr(notifications, '_send_one',
-                        lambda endpoint, p256dh, auth, payload: sends.append(payload))
+                        lambda endpoint, p256dh, auth, payload, kind=None: sends.append(payload))
     monkeypatch.setattr(rm, 'PUSH_READY', lambda: True)
     a, b = _person(make_person, 'ThreadA'), _person(make_person, 'ThreadB', 'Man')
     mid = _match(a, b, 4)

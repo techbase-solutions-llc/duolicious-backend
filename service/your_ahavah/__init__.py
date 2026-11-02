@@ -92,7 +92,7 @@ def send_code(email: str, code: str) -> None:
     code step as it is, so there is nothing new to learn. Threaded and
     best effort, as person._send_otp is."""
     from service.person import _send_otp
-    _send_otp(email, code)
+    _send_otp(email, code, kind='sign_in_code')
 
 
 def request_code(tx, email: str, *, refused: bool = False,

@@ -27,7 +27,6 @@ infrastructure is ready.
 
 import json
 import os
-import threading
 import traceback
 import uuid
 from typing import Any, Dict, Literal, Optional
@@ -187,11 +186,24 @@ def delete_subscribe(s, req):
     return {'ok': True}
 
 
-def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any]) -> Optional[int]:
+def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any],
+              kind: Optional[str] = None):
     """Send a single push. Returns the HTTP status code on a typed error
     (so the caller can prune dead subscriptions on 404/410), None on
-    success, and re-raises only catastrophic failures."""
+    success, 'refused' when the send guard's global push ceiling refused it
+    (nothing was sent and the subscription is fine), and re-raises only
+    catastrophic failures. Inside guard.no_send() it raises
+    SendDuringDryRun (send safeguards, 2 Nov 2026)."""
     from pywebpush import webpush, WebPushException
+    from smtp import guard
+
+    _kind = kind or guard.push_kind(payload)
+    try:
+        guard.check_push_send(_kind)
+    except guard.SendDuringDryRun:
+        raise
+    except guard.MailGuardRefused:
+        return 'refused'
 
     try:
         webpush(
@@ -204,8 +216,10 @@ def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any]) ->
             vapid_claims={'sub': VAPID_SUBJECT},
             ttl=60 * 60 * 24,
         )
+        guard.record_push(_kind, 'sent')
         return None
     except WebPushException as exc:
+        guard.record_push(_kind, 'failed')
         status = getattr(exc.response, 'status_code', None)
         return status
 
@@ -215,13 +229,28 @@ def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any]) ->
 _MAX_PUSH_FAILURES = 8
 
 
-def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]) -> int:
+def _send_to_user_blocking(person_id: int, payload: Dict[str, Any],
+                           kind: Optional[str] = None) -> int:
     """Look up every push_subscription for the user and send to each.
     Prune rows that 404/410 immediately, or that cross _MAX_PUSH_FAILURES
     consecutive failures. A successful send resets the failure counter.
     Push is best-effort - other errors are logged but swallowed. Returns
-    how many subscriptions accepted the push."""
+    how many subscriptions accepted the push.
+
+    The send guard (send safeguards, 2 Nov 2026) checks the member once
+    before any device: `kind` names the push, and without it the payload's
+    tag does (never the title). A refused push returns 0 and touches no
+    subscription. Inside guard.no_send() it raises SendDuringDryRun."""
+    from smtp import guard
+    _kind = kind or guard.push_kind(payload)
+    guard.tripwire('push', _kind)
     if not PUSH_ENABLED:
+        return 0
+    try:
+        guard.check_push(person_id, _kind)
+    except guard.SendDuringDryRun:
+        raise
+    except guard.MailGuardRefused:
         return 0
 
     from database import api_tx
@@ -243,13 +272,17 @@ def _send_to_user_blocking(person_id: int, payload: Dict[str, Any]) -> int:
     ok_ids = []      # success - reset the counter
     for r in rows:
         try:
-            status = _send_one(r['endpoint'], r['p256dh'], r['auth'], payload)
+            status = _send_one(r['endpoint'], r['p256dh'], r['auth'], payload, kind=_kind)
+            if status == 'refused':
+                continue    # the global ceiling: nothing sent, nothing wrong with the device
             if status in (404, 410):
                 dead_ids.append(r['id'])
             elif status is None:
                 ok_ids.append(r['id'])
             else:
                 failed_ids.append(r['id'])
+        except guard.SendDuringDryRun:
+            raise
         except Exception:
             failed_ids.append(r['id'])
             print(traceback.format_exc())
@@ -306,6 +339,7 @@ def send_to_user_safe(
     tag: Optional[str] = None,
     *,
     event_kind: Optional[EventKind] = None,
+    kind: Optional[str] = None,
 ):
     """Fire-and-forget push. Always returns immediately; the actual
     network I/O happens on a background thread so callers (request
@@ -330,11 +364,9 @@ def send_to_user_safe(
     if tag is not None:
         payload['tag'] = tag
 
-    threading.Thread(
-        target=_send_to_user_blocking,
-        kwargs=dict(person_id=person_id, payload=payload),
-        daemon=True,
-    ).start()
+    # guard.spawn carries the dry-run tripwire into the thread.
+    from smtp import guard
+    guard.spawn(_send_to_user_blocking, person_id=person_id, payload=payload, kind=kind)
 
 
 def send_to_user_counted(
@@ -345,6 +377,7 @@ def send_to_user_counted(
     tag: Optional[str] = None,
     *,
     event_kind: EventKind,
+    kind: Optional[str] = None,
 ) -> int:
     """send_to_user_safe without the thread, for a caller that must know
     whether the push arrived (the quick-question pushes take back their
@@ -358,7 +391,7 @@ def send_to_user_counted(
     payload: Dict[str, Any] = {'title': title, 'body': body, 'url': url}
     if tag is not None:
         payload['tag'] = tag
-    return _send_to_user_blocking(person_id, payload)
+    return _send_to_user_blocking(person_id, payload, kind=kind)
 
 
 def record_profile_view(viewer_id: int, viewed_uuid: str):
@@ -368,11 +401,10 @@ def record_profile_view(viewer_id: int, viewed_uuid: str):
     default-off majority incur NO DB write (the pref is checked first), and
     the uuid->id lookup happens off the request thread so the hot
     profile-view path pays no latency."""
-    threading.Thread(
-        target=_record_profile_view_blocking,
-        kwargs=dict(viewer_id=viewer_id, viewed_uuid=viewed_uuid),
-        daemon=True,
-    ).start()
+    # Through guard.spawn like every thread in a module that sends: it ends
+    # in send_to_user_safe, so the dry-run tripwire must reach it.
+    from smtp import guard
+    guard.spawn(_record_profile_view_blocking, viewer_id=viewer_id, viewed_uuid=viewed_uuid)
 
 
 def _record_profile_view_blocking(viewer_id: int, viewed_uuid: str):
@@ -526,7 +558,7 @@ def _queue_event_email(person_id, event_kind, event_id, subject, html_factory):
             list_unsubscribe=f"<{unsub}>")
 
 
-def _send_event_email_blocking(person_id, subject, html_factory):
+def _send_event_email_blocking(person_id, subject, html_factory, kind=None):
     from database import api_tx
     from emails.base import is_suppressed_send
     from smtp import make_aws_smtp
@@ -547,6 +579,7 @@ def _send_event_email_blocking(person_id, subject, html_factory):
             body=html_factory(unsub),
             to_addr=email,
             list_unsubscribe=f"<{unsub}>",
+            kind=kind,
         )
     except Exception:
         print(traceback.format_exc())
@@ -569,7 +602,7 @@ def _send_transactional_blocking(person_id, subject, html):
         email = (row or {}).get('email')
         if not email or is_suppressed_send(email):
             return
-        make_aws_smtp().send(subject=subject, body=html, to_addr=email)
+        make_aws_smtp().send(subject=subject, body=html, to_addr=email, kind='receipt')
     except Exception:
         print(traceback.format_exc())
 
@@ -578,11 +611,8 @@ def send_transactional(person_id, subject, html):
     """Fire-and-forget transactional email (receipt). Never raises to the
     caller; the body is fully pre-rendered (no unsubscribe interpolation)."""
     try:
-        threading.Thread(
-            target=_send_transactional_blocking,
-            kwargs=dict(person_id=person_id, subject=subject, html=html),
-            daemon=True,
-        ).start()
+        from smtp import guard
+        guard.spawn(_send_transactional_blocking, person_id=person_id, subject=subject, html=html)
     except Exception:
         print(traceback.format_exc())
 
@@ -598,6 +628,7 @@ def notify(
     email_subject: Optional[str] = None,
     email_html_factory=None,
     email_event_id: Optional[str] = None,
+    kind: Optional[str] = None,
 ):
     """Per-event dispatch with email fallback. Push if push_<event> is on AND
     the user has a live subscription; otherwise email if email_<event> is on
@@ -615,7 +646,7 @@ def notify(
             and _has_live_subscription(person_id)
         ):
             send_to_user_safe(
-                person_id, title, body, url, tag, event_kind=event_kind)
+                person_id, title, body, url, tag, event_kind=event_kind, kind=kind)
             return
         if (
             email_html_factory is not None
@@ -627,15 +658,9 @@ def notify(
                     email_event_id or f'{event_kind}-{uuid.uuid4().hex}',
                     email_subject, email_html_factory)
                 return
-            threading.Thread(
-                target=_send_event_email_blocking,
-                kwargs=dict(
-                    person_id=person_id,
-                    subject=email_subject,
-                    html_factory=email_html_factory,
-                ),
-                daemon=True,
-            ).start()
+            from smtp import guard
+            guard.spawn(_send_event_email_blocking, person_id=person_id, subject=email_subject,
+                        html_factory=email_html_factory, kind=kind)
     except Exception:
         print(traceback.format_exc())
 

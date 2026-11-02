@@ -34,6 +34,7 @@ def maybe_send_email(email: str):
         subject="Your Ahavah profile is resting",
         body=emailtemplate(),
         to_addr=email,
+        kind='profile_resting',
     )
 
     from emails.base import mask_email

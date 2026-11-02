@@ -134,7 +134,10 @@ def pushes(monkeypatch):
         def start(self):
             _DEFERRED.append(self)
 
-    monkeypatch.setattr(notifications.threading, 'Thread', _Deferred)
+    # Every thread in a module that sends starts through guard.spawn (send
+    # safeguards, 2 Nov 2026).
+    from smtp import guard
+    monkeypatch.setattr(guard, 'spawn', lambda target, *a, **kw: _Deferred(target, kwargs=kw).start())
     monkeypatch.setattr(notifications, 'send_to_user_safe', lambda **kw: sent.append(kw))
     return sent
 
