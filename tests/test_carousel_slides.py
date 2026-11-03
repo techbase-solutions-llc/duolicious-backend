@@ -664,3 +664,124 @@ def test_a_single_image_row_carries_no_slide_keys(client, stored, presigned):
         assert 'slides' not in listed and 'slide_count' not in listed
     finally:
         _cancel(rk)
+
+
+# ---------------------------------------------------------------------------
+# Two slide uploads racing for one row (plan A3: 409 image_race, as now)
+# ---------------------------------------------------------------------------
+# Helpers copied from tests/test_spotlight_routes.py, on purpose: test files
+# in this suite do not import from each other.
+
+def _one_connection_per_tx(m):
+    import database
+
+    def _enter(self):
+        self._own_conn = psycopg.Connection.connect(
+            conninfo=database._api_conninfo, row_factory=psycopg.rows.dict_row)
+        self.cur = self._own_conn.cursor()
+        if self.isolation_level != database._default_transaction_isolation:
+            self.cur.execute(f'SET TRANSACTION ISOLATION LEVEL {self.isolation_level}')
+        return self.cur
+
+    def _exit(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self._own_conn.commit()
+            else:
+                self._own_conn.rollback()
+        finally:
+            self._own_conn.close()
+
+    m.setattr(database.api_tx, '__enter__', _enter)
+    m.setattr(database.api_tx, '__exit__', _exit)
+
+
+def _wait_for_lock_waiter(pids, timeout: float = 10.0) -> bool:
+    import time
+
+    import database
+    deadline = time.monotonic() + timeout
+    with psycopg.connect(database._api_conninfo, autocommit=True) as conn:
+        while time.monotonic() < deadline:
+            n = conn.execute(
+                """SELECT count(*) FROM pg_stat_activity
+                    WHERE pid = ANY(%(p)s) AND wait_event_type = 'Lock'""",
+                dict(p=list(pids))).fetchone()[0]
+            if n:
+                return True
+            time.sleep(0.02)
+    return False
+
+
+def _burst(app, n, call):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def worker(i):
+        with app.test_client() as c:
+            try:
+                return call(c, i)
+            except Exception as e:      # noqa: BLE001 -- recorded as the evidence
+                return type(e).__name__
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        return list(pool.map(worker, range(n)))
+
+
+def _status(result):
+    return result[0] if isinstance(result, tuple) else result
+
+
+@pytest.mark.parametrize('slides_raced', [(2, 3), (2, 2)], ids=['two-slides', 'one-slide-different-bytes'])
+def test_two_racing_slide_uploads_one_lands_one_answers_image_race(client, app, monkeypatch, stored, slides_raced):
+    """Two uploads for one carousel row at once: both pass the up-front
+    checks, both upload, and both reach the slide table's lock. The first
+    commits; the second is refused as `image_race` (409) rather than a 500
+    or a silent overwrite, and its object, which nothing names, is queued
+    for deletion. The row stays waiting for its other slides."""
+    import threading
+
+    import service.api.admin.spotlight_routes as sr
+    rk = _carousel(client)
+    try:
+        barrier = threading.Barrier(2)
+        pids: set = set()
+        real_attach = sr.attach_slide
+
+        def racing_attach(tx, *args):
+            me = tx.connection.info.backend_pid
+            pids.add(me)
+            barrier.wait(timeout=30)
+            outcome = real_attach(tx, *args)
+            if outcome[0] == 'stored':
+                # Hold this transaction open until the other upload's backend
+                # is provably blocked on the row lock this one took.
+                assert _wait_for_lock_waiter(pids - {me})
+            return outcome
+
+        shades = (40, 220)
+        with monkeypatch.context() as m:
+            _one_connection_per_tx(m)
+            m.setattr(sr, 'attach_slide', racing_attach)
+
+            def call(c, i):
+                r = _upload(c, rk, slide=slides_raced[i], shade=shades[i])
+                return (r.status_code, r.get_json(silent=True))
+
+            results = _burst(app, 2, call)
+
+        assert sorted(map(_status, results), key=str) == [200, 409], results
+        winner = next(i for i, r in enumerate(results) if _status(r) == 200)
+        loser = 1 - winner
+        assert results[loser][1] == {'error': 'image_race'}
+        row = _row(rk)
+        assert row['status'] == 'awaiting_render' and row['image_key'] is None
+        slides = _slides(row['id'])
+        assert [s['position'] for s in slides] == [slides_raced[winner]]
+        winner_key = slides[0]['image_key']
+        assert results[winner][1]['image_url'].endswith(winner_key)
+        # Both uploads reached storage; only the winner's object is named.
+        loser_keys = [k for k in stored if k != winner_key]
+        assert len(loser_keys) == 1, list(stored)
+        assert _pending_delete(loser_keys[0])
+        assert not _pending_delete(winner_key)
+    finally:
+        _cancel(rk)
