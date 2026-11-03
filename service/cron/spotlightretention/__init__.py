@@ -53,18 +53,35 @@ _Q_SWEEP = """
                           AND c.state = 'abandoned')
 """
 
+# A carousel's slides (TEC-1845): the same rule for every slide key of the
+# same rows. Slide 1 is also the row's own key, found above as well; enqueueing
+# is idempotent on the key, so it is queued once.
+_Q_SWEEP_SLIDES = """
+    SELECT q.id, s.image_key FROM publishing_queue_slide s
+      JOIN publishing_queue q ON q.id = s.queue_id
+     WHERE q.status = 'published'
+       AND q.updated_at < NOW() - make_interval(days => %(days)s)
+       AND s.image_key IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM cleanup_job c
+                        WHERE c.kind = 'asset_delete'
+                          AND c.target = s.image_key
+                          AND c.state = 'abandoned')
+"""
+
 
 def retention_sweep(tx) -> int:
-    """Enqueue one cleanup job per retained image key. Returns the number of
-    rows swept, not the number of jobs newly created: a row whose job is
-    already queued from an earlier tick is still a row this sweep is waiting
-    on, and it stops being counted the moment the job confirms and the key is
-    cleared. Deletes nothing and clears nothing -- that is the cleanup batch's
-    job, and only against a confirmed deletion."""
+    """Enqueue one cleanup job per retained image key, a carousel's slides
+    included. Returns the number of rows swept, not the number of jobs newly
+    created: a row whose job is already queued from an earlier tick is still
+    a row this sweep is waiting on, and it stops being counted the moment its
+    jobs confirm and its keys are cleared. Deletes nothing and clears nothing
+    -- that is the cleanup batch's job, and only against a confirmed
+    deletion."""
     rows = tx.execute(_Q_SWEEP, dict(days=RETENTION_DAYS)).fetchall()
-    for r in rows:
-        enqueue_asset_delete(tx, r['image_key'])
-    return len(rows)
+    slides = tx.execute(_Q_SWEEP_SLIDES, dict(days=RETENTION_DAYS)).fetchall()
+    for key in dict.fromkeys(r['image_key'] for r in [*rows, *slides]):
+        enqueue_asset_delete(tx, key)
+    return len({r['id'] for r in [*rows, *slides]})
 
 
 def _retention_sweep_once():

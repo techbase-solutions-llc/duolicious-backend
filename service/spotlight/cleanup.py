@@ -92,6 +92,12 @@ _Q_REFERENCES = """
     SELECT image_key AS target, 'revision:' || id::text AS ref
       FROM spotlight_revision
      WHERE image_key = ANY(%(k)s::text[])
+    UNION ALL
+    -- A carousel's slides (TEC-1845, migration 0090). Slide 1's key is also
+    -- on its queue row; every other slide is named only here.
+    SELECT image_key AS target, 'slide:' || queue_id::text || ':' || position::text AS ref
+      FROM publishing_queue_slide
+     WHERE image_key = ANY(%(k)s::text[])
 """
 
 # ON CONFLICT infers migration 0047's PARTIAL unique index, so the conflict
@@ -165,6 +171,15 @@ _Q_CLEAR_KEY = """
 # tables can never disagree about whether the object exists.
 _Q_CLEAR_REVISION_KEY = """
     UPDATE spotlight_revision SET image_key = NULL, image_url = NULL WHERE image_key = %(k)s
+"""
+
+# A carousel's slides (TEC-1845) name objects too: a slide whose object is
+# confirmed gone is cleared beside the queue row and the revision, in the same
+# transaction, so the three never disagree.
+_Q_CLEAR_SLIDE_KEY = """
+    UPDATE publishing_queue_slide
+       SET image_key = NULL, image_url = NULL, image_sha256 = NULL, updated_at = NOW()
+     WHERE image_key = %(k)s
 """
 
 _Q_OUTSTANDING = "SELECT count(*) AS n FROM cleanup_job WHERE state = 'pending'"
@@ -375,6 +390,7 @@ def run_cleanup_batch(tx_factory, delete: Callable[[list], list] = delete_images
                 if ok and outcome == 'done':
                     tx.execute(_Q_CLEAR_KEY, dict(k=key))
                     tx.execute(_Q_CLEAR_REVISION_KEY, dict(k=key))
+                    tx.execute(_Q_CLEAR_SLIDE_KEY, dict(k=key))
                 if outcome == 'done':
                     done += 1
                 elif outcome == 'abandoned':

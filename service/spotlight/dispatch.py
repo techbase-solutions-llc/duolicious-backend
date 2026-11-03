@@ -25,14 +25,23 @@ from service.spotlight.restdays import is_beyond_known, is_rest_period
 from service.spotlight.revisions import consent_complete
 
 REASONS = ('not_found', 'not_processing', 'lease_required', 'lease_mismatch', 'lease_expired', 'withdrawn',
-           'no_revision', 'not_rendered', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
+           'no_revision', 'not_rendered', 'slides_incomplete', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
            'participant:<person_id>:<reason>', 'rest_day', 'calendar_unknown', 'publication_disabled',
            'external_access_disabled')
 
 _Q_ROW = """
     SELECT status, lease_token, (lease_until IS NOT NULL AND lease_until > NOW()) AS lease_valid,
-           cancellation_requested_at, current_revision_id, kind, subject_person_id, request_key
+           cancellation_requested_at, current_revision_id, kind, subject_person_id, request_key,
+           slide_count
       FROM publishing_queue WHERE id = %(id)s
+"""
+
+# The slides of a carousel row that can be posted: positions 1 to slide_count
+# carrying both a key and a URL.
+_Q_SLIDES_WHOLE = """
+    SELECT count(*) AS n FROM publishing_queue_slide
+     WHERE queue_id = %(id)s AND position BETWEEN 1 AND %(n)s
+       AND image_key IS NOT NULL AND image_url IS NOT NULL
 """
 
 _Q_REVISION = """
@@ -60,6 +69,12 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
     rev = tx.execute(_Q_REVISION, dict(id=row['current_revision_id'])).fetchone()
     if not rev or rev['asset_hash'] is None:
         return False, 'not_rendered'
+    # A carousel (TEC-1845) posts every slide or nothing: one missing, or
+    # stored without its key or URL, sends the row back before any Graph call.
+    if row['slide_count'] is not None:
+        whole = tx.execute(_Q_SLIDES_WHOLE, dict(id=queue_id, n=row['slide_count'])).fetchone()['n']
+        if whole < row['slide_count']:
+            return False, 'slides_incomplete'
     if not consent_complete(tx, row['current_revision_id']):
         return False, 'consent_incomplete'
     # SUBJECTLESS_KINDS, not `!= 'roundup'`: this line used to read the

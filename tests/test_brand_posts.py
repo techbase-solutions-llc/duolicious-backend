@@ -173,7 +173,7 @@ def test_the_same_slug_twice_is_one_post_and_is_not_rewritten(client):
     try:
         again = _create(client, slug=slug, caption='A different caption.')
         assert again.status_code == 200
-        assert again.get_json() == dict(request_key=rk, already=True)
+        assert again.get_json() == dict(request_key=rk, already=True, slide_count=None)
         rows = _rows(rk)
         assert len(rows) == 2
         assert all(x['caption'].startswith('The first caption.') for x in rows)
@@ -197,6 +197,69 @@ def test_bad_input_is_refused_before_anything_is_written(client, body, error):
     assert r.status_code == 400 and r.get_json() == dict(error=error)
     with api_tx('read committed') as tx:
         assert tx.execute("SELECT 1 FROM publishing_queue WHERE request_key = 'brand:ok-slug'").fetchone() is None
+
+
+# ---------------------------------------------------------------------------
+# Carousels: `slides` (TEC-1845, ahavah-admin docs/plans/2026-11-02-carousel-posts.md)
+# ---------------------------------------------------------------------------
+
+def _slide_counts(rk: str) -> list:
+    with api_tx('read committed') as tx:
+        return [r['slide_count'] for r in tx.execute(
+            "SELECT slide_count FROM publishing_queue WHERE request_key = %(rk)s ORDER BY platform",
+            dict(rk=rk)).fetchall()]
+
+
+def test_no_slides_is_a_single_image_with_the_old_answer(client, carousel_schema):
+    r = _create(client)
+    assert r.status_code == 200, r.get_json()
+    rk = r.get_json()['request_key']
+    try:
+        assert r.get_json() == dict(request_key=rk, slide_count=None)
+        assert _slide_counts(rk) == [None, None]
+    finally:
+        _cancel(rk)
+
+
+@pytest.mark.parametrize('slides', [2, 7, 10])
+def test_slides_from_2_to_10_are_stored_on_every_row(client, carousel_schema, slides):
+    body = dict(slug=_slug(), caption='c', scheduled_for=_soon().isoformat(), slides=slides)
+    r = client.post('/admin/growth/brand', json=body, headers=H)
+    assert r.status_code == 200, r.get_json()
+    rk = r.get_json()['request_key']
+    try:
+        assert r.get_json() == dict(request_key=rk, slide_count=slides)
+        assert _slide_counts(rk) == [slides, slides]
+    finally:
+        _cancel(rk)
+
+
+@pytest.mark.parametrize('slides', [1, 11, 0, -7, '7', True, 7.5, [7], {'n': 7}])
+def test_bad_slides_are_refused_before_anything_is_written(client, carousel_schema, slides):
+    slug = _slug()
+    body = dict(slug=slug, caption='c', scheduled_for=_soon().isoformat(), slides=slides)
+    r = client.post('/admin/growth/brand', json=body, headers=H)
+    assert r.status_code == 400 and r.get_json() == dict(error='bad_slides')
+    assert _rows(f'brand:{slug}') == []
+
+
+def test_the_already_answer_carries_the_stored_slide_count(client, carousel_schema):
+    """The admin checks the count before it uploads any slide, so a
+    repeated call must report what is stored, not what it was sent."""
+    slug = _slug()
+    first = client.post('/admin/growth/brand', json=dict(
+        slug=slug, caption='c', scheduled_for=_soon().isoformat(), slides=7), headers=H)
+    rk = first.get_json()['request_key']
+    try:
+        again = client.post('/admin/growth/brand', json=dict(
+            slug=slug, caption='c', scheduled_for=_soon().isoformat(), slides=3), headers=H)
+        assert again.status_code == 200
+        assert again.get_json() == dict(request_key=rk, already=True, slide_count=7)
+        no_slides = _create(client, slug=slug)
+        assert no_slides.get_json() == dict(request_key=rk, already=True, slide_count=7)
+        assert _slide_counts(rk) == [7, 7]
+    finally:
+        _cancel(rk)
 
 
 def test_a_slot_is_required(client):
