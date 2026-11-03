@@ -1457,3 +1457,25 @@ def release_4_follow_up_schema(events_schema):
     for name in RELEASE_4_FOLLOW_UP_MIGRATIONS:
         with api_tx() as tx:
             tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Send safeguards (2 Nov 2026)
+# ---------------------------------------------------------------------------
+# Migration 0089, the send guard's record. Idempotent, so applying it here is
+# what the deploy does. Autouse: the sendguard cron, the stats route and the
+# admin clear route read it, whichever test asks.
+
+SEND_GUARD_MIGRATIONS = ('0089_send_guard.sql',)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def send_guard_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in SEND_GUARD_MIGRATIONS:
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))

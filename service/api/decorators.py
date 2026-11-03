@@ -150,13 +150,16 @@ def _recipient_email_key() -> str:
     client IP for non-JSON requests so the limiter never crashes."""
     try:
         body = request.get_json(silent=True) or {}
-        email = (body.get("email") or "").strip().lower()
+        # `new_email` is /account/change-email-request's target (send
+        # safeguards, 2 Nov 2026).
+        email = (body.get("email") or body.get("new_email") or "").strip().lower()
     except Exception:
         email = ""
     return f"to:{email}" if email else _get_remote_address()
 
 
-# Per-recipient mail-send cap across /request-otp, /waitlist, /beta-tester.
+# Per-recipient mail-send cap across /request-otp, /waitlist, /beta-tester
+# and /account/change-email-request.
 # 5/hour + 20/day per *target* email prevents N-IP botnets from spraying
 # verified-sender mail at a single victim's inbox. Bypassed on private IPs
 # so local/CI tests aren't affected.

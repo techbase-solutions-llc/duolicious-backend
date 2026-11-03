@@ -25,11 +25,10 @@ again. Written after the dormancy loop of 2 Nov 2026: a dry run of
 
 In order, fastest first. Each step works on its own.
 
-1. Halt every non-essential email and push at the gate (sign-in and change-of-email codes still
-   go):
-   `docker compose exec cron python scripts/mail_guard_halt.py --all --reason "<why>"`
-   or, without a script, in the Redis container: `SET sg:halt:all '{"reason":"manual"}'` and the
-   same for `sg:p:halt:all` (push).
+1. Halt every non-essential email at the gate (sign-in and change-of-email codes still go):
+   `docker compose exec cron env PYTHONPATH=/app python3 scripts/mail_guard_halt.py --all --reason "<why>" --by <your name>`
+   and the same with `--push` for push. `--kind <kind>` halts one kind. The halt alerts the
+   owner on the next `sendguard` tick and stays until cleared.
 2. Stop the cron container, which runs every scheduled sender:
    `docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production stop cron`.
 3. Revoke the Ahavah Resend key in the Resend dashboard. This also stops sign-in codes, so
@@ -40,7 +39,7 @@ In order, fastest first. Each step works on its own.
 
 A halt never clears itself. Once the cause is fixed:
 
-- `docker compose exec cron python scripts/mail_guard_clear.py --kind <kind> --by <your name>`, or
+- `docker compose exec cron env PYTHONPATH=/app python3 scripts/mail_guard_clear.py --kind <kind> --by <your name>`, or
   `--all` for the global halt. Add `--push` for a push halt.
 - Or, signed in as an admin: `POST /admin/system/mail-guard/clear` with
   `{"kind": "<kind>"}` or `{"all": true}`, and `"channel": "push"` for a push halt.

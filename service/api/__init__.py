@@ -699,7 +699,10 @@ def get_unmatched(s: t.SessionInfo):
 def post_inbox_info(req: t.PostInboxInfo, s: t.SessionInfo):
     return person.post_inbox_info(req, s)
 
-@apost('/account/change-email-request')
+# The per-recipient cap of /request-otp as well (send safeguards, 2 Nov
+# 2026): the change-of-email code is never halted by the send guard, so its
+# target address needs this bound.
+@apost('/account/change-email-request', limiter=shared_recipient_limit)
 @validate(t.PostChangeEmailRequest)
 def post_change_email_request(req: t.PostChangeEmailRequest, s: t.SessionInfo):
     """Stage an email change. Sends an OTP to the new address; the

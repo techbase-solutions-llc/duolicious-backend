@@ -20,6 +20,7 @@ from service.cron.leadretention import lead_retention_forever
 from service.cron.questionofweek import question_of_week_forever
 from service.cron.returnmail import return_mail_forever
 from service.cron.adminalerts import admin_alerts_forever
+from service.cron.sendguard import sendguard_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
@@ -134,6 +135,12 @@ async def main():
         # nothing unless AHAVAH_ADMIN_ALERTS_CRON_ENABLED=1; the email also
         # needs AHAVAH_STALE_POST_ALERT_ENABLED=1.
         admin_alerts_forever(),
+
+        # The send guard (send safeguards plan, 2 Nov 2026): moves what
+        # smtp/guard.py recorded to Postgres, keeps halts across a Redis
+        # restart, alerts the owner and writes the heartbeat the watchdog
+        # reads. Every minute.
+        sendguard_forever(),
 
         check_connections_forever(),
 
