@@ -11,7 +11,6 @@ blocked or broken by SMTP.
 from __future__ import annotations
 
 import html
-import threading
 import traceback
 from datetime import datetime, timezone
 from typing import Optional
@@ -144,4 +143,6 @@ def send_feedback_async(
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)

@@ -1580,16 +1580,14 @@ def delete_or_ban_account(
     # we don't want the client waiting on it).
     if s and _email_row:
         try:
-            import threading
-            threading.Thread(
-                target=_send_deletion_pending_email,
-                kwargs=dict(
-                    email=_email_row['email'],
-                    name=_email_row['name'],
-                    deletion_requested_at=_email_row['deletion_requested_at'],
-                ),
-                daemon=True,
-            ).start()
+            # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+            from smtp import guard
+            guard.spawn(
+                _send_deletion_pending_email,
+                email=_email_row['email'],
+                name=_email_row['name'],
+                deletion_requested_at=_email_row['deletion_requested_at'],
+            )
         except Exception:
             import traceback
             print('delete_or_ban_account: deletion-email dispatch failed:')

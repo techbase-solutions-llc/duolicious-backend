@@ -8,7 +8,6 @@ sign-in code). Inline-styled + dark-mode aware via emails.base.
 """
 from __future__ import annotations
 
-import threading
 import traceback
 
 from service.config import EMAIL_DOMAIN, WEB_BASE_URL
@@ -142,4 +141,6 @@ def send_waitlist_welcome_async(email: str) -> None:
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)

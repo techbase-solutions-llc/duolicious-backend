@@ -9,7 +9,6 @@ retries then gives up without raising); the async helper swallows failures.
 from __future__ import annotations
 
 import html
-import threading
 import traceback
 from datetime import datetime, timezone
 from typing import Optional
@@ -136,7 +135,9 @@ def send_new_signup_notice_async(email: str, answers: Optional[dict] = None, cou
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)
 
 
 def send_onboarding_complete_notice(email: str, answers: Optional[dict] = None, beta: Optional[bool] = None) -> None:
@@ -179,7 +180,9 @@ def send_beta_optin_notice_async(email: str, count: Optional[int] = None) -> Non
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)
 
 
 def send_onboarding_complete_notice_async(email: str, answers: Optional[dict] = None, beta: Optional[bool] = None) -> None:
@@ -193,4 +196,6 @@ def send_onboarding_complete_notice_async(email: str, answers: Optional[dict] = 
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)
