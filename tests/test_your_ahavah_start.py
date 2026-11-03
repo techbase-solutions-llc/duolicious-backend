@@ -46,7 +46,7 @@ def codes(monkeypatch):
     import service.person as person
     sent = dict(address=[], sign_up=[])
     monkeypatch.setattr(your_ahavah, 'send_code', lambda email, code: sent['address'].append((email, code)))
-    monkeypatch.setattr(person, '_send_otp', lambda email, code: sent['sign_up'].append((email, code)))
+    monkeypatch.setattr(person, '_send_otp', lambda email, code, **kw: sent['sign_up'].append((email, code)))
     return sent
 
 

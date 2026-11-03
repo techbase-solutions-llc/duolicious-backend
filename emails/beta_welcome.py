@@ -6,7 +6,6 @@ styled + dark-mode aware via emails.base. Best-effort send (aws_smtp retries
 then gives up without raising)."""
 from __future__ import annotations
 
-import threading
 import traceback
 
 from service.config import EMAIL_DOMAIN, WEB_BASE_URL
@@ -90,4 +89,6 @@ def send_beta_welcome_async(email: str) -> None:
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)

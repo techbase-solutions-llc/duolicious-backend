@@ -135,9 +135,13 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      # The send guard's counters and halts live in Redis (smtp/guard.py).
+      redis:
+        condition: service_started
     volumes:
       - .:/app
     environment:
+      DUO_REDIS_HOST: redis
       DUO_SMTP_HOST: smtp
       DUO_SMTP_PORT: 1025
       DUO_SMTP_USER: unused-in-dev-env

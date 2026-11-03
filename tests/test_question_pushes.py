@@ -289,7 +289,7 @@ def real_push(monkeypatch):
     sends: list[str] = []
     status: list = [None]
 
-    def send_one(endpoint, p256dh, auth, payload):
+    def send_one(endpoint, p256dh, auth, payload, kind=None):
         sends.append(endpoint)
         return status[0]
 

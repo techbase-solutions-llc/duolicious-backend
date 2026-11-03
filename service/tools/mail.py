@@ -24,7 +24,6 @@ them.
 from __future__ import annotations
 
 import html
-import threading
 import traceback
 from typing import Callable, Optional
 
@@ -332,4 +331,6 @@ def send_invite_later(msg: dict) -> None:
                           from_addr=FROM_ADDR, reply_to=REPLY_TO)
         except Exception:
             print(traceback.format_exc())
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)

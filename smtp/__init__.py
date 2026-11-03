@@ -25,6 +25,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from emails.base import ASSETS_DIR, remote_asset_url
+from smtp import guard
 from service.config import EMAIL_DOMAIN, PRODUCT_NAME
 
 SMTP_HOST: str = os.environ["DUO_SMTP_HOST"]
@@ -468,6 +469,10 @@ class Smtp:
         text_body: str | None = None,
         retries: int | None = None,
         backoff: int | None = None,
+        kind: str | None = None,
+        bulk: bool = False,
+        raise_on_refusal: bool = False,
+        raise_on_failure: bool = False,
     ) -> str | None:
         """Send an email, retrying on failure.
 
@@ -482,9 +487,32 @@ class Smtp:
           from_name:        the display name on From (default PRODUCT_NAME),
                             for a note sent personally by someone.
           text_body:        a text/plain alternative to the html.
+
+        The send guard (smtp/guard.py, send safeguards plan of 2 Nov 2026)
+        runs before the first attempt:
+          kind:             a short stable name (`e2`, `sign_in_code`).
+                            Missing, it comes from the subject.
+          bulk:             part of a list send: once per address in 24 hours.
+          raise_on_refusal: raise MailGuardRefused instead of returning None
+                            when the guard refuses (the outbox drain).
+          raise_on_failure: raise SendFailed instead of returning None when
+                            every attempt fails (the outbox drain, the
+                            guard's own alert).
+        A send inside guard.no_send() always raises SendDuringDryRun.
         """
+        _kind = kind or guard.derive_kind(subject)
+        try:
+            guard.check(to_addr, _kind, bulk=bulk)
+        except guard.SendDuringDryRun:
+            raise
+        except guard.MailGuardRefused:
+            if raise_on_refusal:
+                raise
+            return None
+
         max_attempts: int = 1 + (2 if retries is None else retries)
 
+        last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
                 with self._lock:
@@ -498,11 +526,14 @@ class Smtp:
                         from_name=from_name,
                         text_body=text_body,
                     )
+                guard.record(to_addr, _kind, 'sent')
                 return message_id  # Success (Resend message id, or None for SMTP)
-            except Exception:
+            except Exception as exc:
+                last_exc = exc
                 print(traceback.format_exc())
                 if attempt == max_attempts:
                     print("All retry attempts exhausted. Giving up.")
+                    break
 
                 delay_base: float = 1.0 if backoff is None else backoff
                 delay = delay_base * (2 ** (attempt - 1))
@@ -517,6 +548,14 @@ class Smtp:
                 if not USE_RESEND_API:
                     with suppress(Exception):
                         self._connect()
+
+        # Every attempt failed. Counted as failed either way; until 2 Nov
+        # 2026 this returned None exactly as a success did, so the outbox
+        # marked a failed send accepted.
+        guard.record(to_addr, _kind, 'failed')
+        if raise_on_failure:
+            raise guard.SendFailed(f"{_kind}: every attempt failed: {last_exc}") from last_exc
+        return None
 
     # ------------------------------------------------------------------
 

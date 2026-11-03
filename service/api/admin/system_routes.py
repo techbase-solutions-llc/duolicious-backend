@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import duotypes as t
 
-from service.api.decorators import aget
+from service.api.decorators import aget, apost
 from service.admin import require_admin
 from service.admin.queries import (
     Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_FEEDBACK_RECENT,
@@ -73,3 +73,22 @@ def get_system_errors(s: t.SessionInfo):
             return dict(available=True, **error_tally.summary(tx))
     except psycopg.Error:
         return dict(available=False, last_24h=None, last_7d=None, routes=[])
+
+
+# The send guard (send safeguards plan, 2 Nov 2026): clear a halt. A halt
+# never clears itself; this and scripts/mail_guard_clear.py are the two ways.
+# Both close the Postgres row and the Redis key and record who cleared it.
+@apost('/admin/system/mail-guard/clear')
+def post_mail_guard_clear(s: t.SessionInfo):
+    require_admin(s)
+    from flask import abort, request
+    from service import sendguard
+    body = request.get_json(silent=True) or {}
+    kind, everything = body.get('kind'), body.get('all') is True
+    channel = body.get('channel') or 'email'
+    if channel not in ('email', 'push'):
+        abort(400)
+    if everything == bool(kind) or (kind is not None and not isinstance(kind, str)):
+        abort(400)
+    cleared = sendguard.clear_halt(channel, None if everything else kind, by=f'admin:{s.person_id}')
+    return {'cleared': cleared}

@@ -158,7 +158,8 @@ def test_a_suppressed_address_is_sent_nothing(monkeypatch):
             self.target()
 
     from smtp import aws_smtp
-    monkeypatch.setattr(mail.threading, 'Thread', _Now)
+    from smtp import guard
+    monkeypatch.setattr(guard, 'spawn', lambda target, *a, **kw: _Now(target).start())
     monkeypatch.setattr(aws_smtp, 'send', lambda **kw: sent.append(kw['to_addr']))
     msg = dict(subject='s', html='h')
     mail.send_invite_later(dict(msg, to='someone@example.com'))

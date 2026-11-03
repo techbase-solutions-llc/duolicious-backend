@@ -15,7 +15,6 @@ Copy rules: NO em dashes. Sentence case. Not wordy.
 from __future__ import annotations
 
 import html as _html
-import threading
 import traceback
 from datetime import datetime, timezone
 from typing import Optional
@@ -228,4 +227,6 @@ def send_member_welcome_async(email: str) -> None:
         except Exception:
             print(traceback.format_exc())
 
-    threading.Thread(target=_go, daemon=True).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(_go)

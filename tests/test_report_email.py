@@ -121,7 +121,8 @@ def captured(monkeypatch) -> list[dict]:
         def start(self):
             self.target(**self.kwargs)
 
-    monkeypatch.setattr(lodgereport.threading, 'Thread', _Now)
+    from smtp import guard
+    monkeypatch.setattr(guard, 'spawn', lambda target, *a, **kw: _Now(target, kw).start())
     return calls
 
 

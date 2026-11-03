@@ -237,8 +237,10 @@ def _delivery_harness(monkeypatch) -> list[str]:
         def start(self):
             self._target(**self._kwargs)
 
-    monkeypatch.setattr(
-        notifications, 'threading', SimpleNamespace(Thread=_InlineThread))
+    # Every thread in a module that sends starts through guard.spawn (send
+    # safeguards, 2 Nov 2026).
+    from smtp import guard
+    monkeypatch.setattr(guard, 'spawn', lambda target, *a, **kw: _InlineThread(target, kwargs=kw).start())
     monkeypatch.setattr(notifications, 'PUSH_ENABLED', True)
     monkeypatch.setattr(
         notifications, '_send_to_user_blocking',

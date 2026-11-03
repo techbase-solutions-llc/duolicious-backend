@@ -6,6 +6,7 @@ from service.cron.cronutil import (
     env_int,
     print_stacktrace,
 )
+from smtp.guard import dry_run
 import asyncio
 import os
 import random
@@ -20,6 +21,12 @@ PHOTO_CLEANER_POLL_SECONDS = env_int('DUO_CRON_PHOTO_CLEANER_POLL_SECONDS', 60) 
 print(f'Hello from cron module: {__name__}')
 
 async def clean_photos_once():
+    # The send guard's tripwire (2 Nov 2026): in a dry run any send raises
+    # and alerts the owner.
+    with dry_run(DRY_RUN):
+        await _clean_photos_once()
+
+async def _clean_photos_once():
     params = dict(polling_interval_seconds=PHOTO_CLEANER_POLL_SECONDS)
 
     async with api_tx() as tx:

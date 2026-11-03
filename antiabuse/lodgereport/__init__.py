@@ -9,7 +9,6 @@ import os
 from service.config import EMAIL_DOMAIN
 from smtp import aws_smtp
 import traceback
-import threading
 import html
 from emails.base import INK, INK_SOFT, SANS, button, render
 import erlastic
@@ -209,14 +208,14 @@ def lodge_report(
     if not report:
         return
 
-    threading.Thread(
-        target=_send_report_email,
-        kwargs=dict(
-            report=dict(report),
-            reason=reason,
-            is_automoded_bot=is_automoded_bot,
-        )
-    ).start()
+    # guard.spawn carries the dry-run tripwire into the thread (send safeguards).
+    from smtp import guard
+    guard.spawn(
+        _send_report_email,
+        report=dict(report),
+        reason=reason,
+        is_automoded_bot=is_automoded_bot,
+    )
 
 
 def is_bot_report(reason: str):

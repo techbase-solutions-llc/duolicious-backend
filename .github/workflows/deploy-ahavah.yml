@@ -28,6 +28,10 @@ name: Deploy ahavah/main → droplet
 # Rollback: `ssh root@droplet "cd /opt/ahavah-api && git reset --hard
 # <previous-sha> && docker compose -f docker-compose.yml -f docker-compose
 # .production.yml --env-file .env.production up -d --build api chat"`.
+# A manual rollback runs no tests: the `rules` job below never sees it. Never
+# roll back to a commit before eb5b1b3, whose dormancy dry run emailed the
+# same members every 10 minutes for a month (2 Nov 2026). See
+# docs/runbooks/mail-guard.md.
 
 on:
   push:
@@ -50,8 +54,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Send safeguards (2 Nov 2026): rules the code cannot break. Nothing that
+  # sends around the send guard, no cron that sends without a record of
+  # what it sent, and no new sending cron without a switch that is off by
+  # default. Static source scans: they import no app code, so pytest and
+  # pyyaml are all they need, and --noconftest keeps the suite's database
+  # fixtures out. A failing rule stops the deploy below.
+  rules:
+    name: Send rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pytest and pyyaml
+        run: pip install pytest pyyaml
+      - name: Run the send rules
+        run: >
+          python -m pytest --noconftest -p no:cacheprovider -q
+          tests/test_send_rules_static.py
+          tests/test_cron_send_registry.py
+          tests/test_send_switches_default_off.py
+
   deploy:
     name: Pull + rebuild api/chat
+    needs: rules
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

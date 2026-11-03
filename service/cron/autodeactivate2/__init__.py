@@ -10,6 +10,7 @@ from service.cron.autodeactivate2.sql import *
 from service.cron.autodeactivate2.template import emailtemplate
 from service.cron.cronutil import env_int, print_stacktrace, MAX_RANDOM_START_DELAY
 from smtp import aws_smtp
+from smtp.guard import dry_run
 import asyncio
 import os
 import random
@@ -34,6 +35,7 @@ def maybe_send_email(email: str):
         subject="Your Ahavah profile is resting",
         body=emailtemplate(),
         to_addr=email,
+        kind='profile_resting',
     )
 
     from emails.base import mask_email
@@ -41,6 +43,12 @@ def maybe_send_email(email: str):
     aws_smtp.send(**send_args)
 
 async def autodeactivate2_once():
+    # The send guard's tripwire (2 Nov 2026): in a dry run any send raises
+    # and alerts the owner, whatever the code below does.
+    with dry_run(DRY_RUN):
+        await _autodeactivate2_once()
+
+async def _autodeactivate2_once():
     params = dict(
         dry_run=DRY_RUN,
     )
