@@ -169,3 +169,44 @@ def test_these_rule_tests_import_nothing_but_the_standard_library_pytest_and_yam
                 continue
             bad += [f'{name} imports {r}' for r in roots if r not in allowed_roots]
     assert bad == [], '\n'.join(bad)
+
+
+# Kinds that pass every halt and ceiling (smtp/guard.py ESSENTIAL_KINDS and
+# GUARD_ALERT_KIND). Any caller could name one and go around the guard, so
+# only these files may (review, 2 Nov 2026). The lists may shrink.
+PRIVILEGED_KINDS = {
+    'sign_in_code': frozenset({'smtp/guard.py', 'service/person/__init__.py', 'service/your_ahavah/__init__.py'}),
+    'change_email_code': frozenset({'smtp/guard.py', 'service/person/__init__.py'}),
+    'guard_alert': frozenset({'smtp/guard.py'}),
+}
+PRIVILEGED_NAMES = {
+    'GUARD_ALERT_KIND': frozenset({'smtp/guard.py', 'service/sendguard/__init__.py'}),
+    'ESSENTIAL_KINDS': frozenset({'smtp/guard.py'}),
+}
+
+
+def test_only_the_code_and_alert_senders_name_a_kind_that_passes_every_halt():
+    bad = []
+    for path in py_files():
+        r = rel(path)
+        tree = parse(path)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and node.value in PRIVILEGED_KINDS and r not in PRIVILEGED_KINDS[node.value]):
+                bad.append(f'{r}:{node.lineno} names {node.value!r}')
+        for name in names_used(tree):
+            if name in PRIVILEGED_NAMES and r not in PRIVILEGED_NAMES[name]:
+                bad.append(f'{r} uses {name}')
+        for mod, name in imports(tree, module_name(path)):
+            if name in PRIVILEGED_NAMES and r not in PRIVILEGED_NAMES[name]:
+                bad.append(f'{r} imports {name}')
+    assert bad == [], 'A kind that passes every halt, named outside its sender:\n' + '\n'.join(sorted(set(bad)))
+
+
+def test_the_privileged_kind_lists_only_shrink():
+    assert PRIVILEGED_KINDS['sign_in_code'] <= {'smtp/guard.py', 'service/person/__init__.py',
+                                                'service/your_ahavah/__init__.py'}
+    assert PRIVILEGED_KINDS['change_email_code'] <= {'smtp/guard.py', 'service/person/__init__.py'}
+    assert PRIVILEGED_KINDS['guard_alert'] <= {'smtp/guard.py'}
+    assert PRIVILEGED_NAMES['GUARD_ALERT_KIND'] <= {'smtp/guard.py', 'service/sendguard/__init__.py'}
+    assert PRIVILEGED_NAMES['ESSENTIAL_KINDS'] <= {'smtp/guard.py'}
