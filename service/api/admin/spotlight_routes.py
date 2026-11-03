@@ -55,7 +55,7 @@ from service.spotlight.queue import (CALENDAR_HELD_KINDS, CAPTION_MAX, TEMPLATE_
                                      record_receipt, release_unposted, OUTCOMES,
                                      OUTCOME_DELIVERY_STATE, PLATFORMS,
                                      SETTING_KEYS, FREE_KEYS)
-from service.spotlight.assets import asset_key, attach_platform_image, complete_render_if_ready
+from service.spotlight.assets import asset_key, attach_platform_image, attach_slide, complete_render_if_ready
 from service.spotlight.country import display_country
 from service.spotlight import cleanup
 from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enqueue_asset_delete,
@@ -896,7 +896,7 @@ def post_growth_queue_image(request_key: str):
 
     with api_tx('read committed') as tx:
         known = tx.execute(
-            """SELECT kind, status, current_revision_id FROM publishing_queue
+            """SELECT kind, status, current_revision_id, slide_count FROM publishing_queue
                 WHERE request_key = %(rk)s AND platform = %(pl)s""",
             dict(rk=request_key, pl=platform)).fetchone()
     if not known:
@@ -926,9 +926,20 @@ def post_growth_queue_image(request_key: str):
     # not have its artwork swapped underneath it.
     if known['status'] not in ('awaiting_member', 'awaiting_render', 'review'):
         return dict(error='bad_status'), 409
+    # A carousel row (TEC-1845) takes its pictures one slide at a time, by
+    # 1-based position; a single-image row takes none. Checked after every
+    # check above, so those answer exactly as before.
+    slide = body.get('slide')
+    slide_count = known['slide_count']
+    if slide_count is None:
+        if slide is not None:
+            return dict(error='bad_slide'), 400
+    elif type(slide) is not int or not 1 <= slide <= slide_count:
+        return dict(error='bad_slide'), 400
 
     revision_id = known['current_revision_id']
-    key = asset_key(request_key, revision_id, sha256, platform, content_type)
+    key = asset_key(request_key, revision_id, sha256, platform, content_type,
+                    slide=slide if slide_count is not None else None)
     url = f'{USER_IMAGES_BASE_URL}/{key}'
 
     # Upload outside any transaction: a network round trip must not hold the
@@ -961,44 +972,82 @@ def post_growth_queue_image(request_key: str):
     # answers 409 image_race rather than 500, and the admin tick reads that
     # as rendered by another run. Caught outside the `with` block so the
     # loser's transaction rolls back first; not retried.
+    #
+    # A carousel slide (TEC-1845) is stored on the slide table first, in the
+    # same transaction and under the same compare-and-set conditions
+    # (`attach_slide`). Only once every slide of the row is there does slide 1
+    # go through `attach_platform_image`, exactly as a single image does,
+    # which is what completes the render and moves the row to review. Until
+    # then the answer says how far the set has got.
+    progress: Optional[dict] = None
     try:
         with api_tx() as tx:
-            outcome, previous_key = attach_platform_image(tx, request_key, platform, revision_id,
-                                                          key, url, sha256)
-            if previous_key and previous_key != key and not is_referenced(tx, previous_key):
-                # Fix wave item 6: this upload displaced an earlier one. Keys are
-                # content-hashed, so different bytes for the same revision land on
-                # a different key and nothing names the old object any more -- the
-                # ordinary case while an operator iterates on artwork, and the one
-                # the superseded branch below never covered. Guarded by the same
-                # reference check: a sibling platform row or a revision may still
-                # name it (identical bytes share a key), in which case there is no
-                # orphan to clean up.
-                enqueue_asset_delete(tx, previous_key)
-            if outcome == 'superseded' and not is_referenced(tx, key):
-                # Nothing points at the just-uploaded object and nothing ever
-                # will, so it is queued for deletion (Wave 2 Task 5) rather than
-                # deleted inline: enqueueing is a database write and commits with
-                # this transaction, where a storage call would have held the api
-                # connection lock across a network round trip.
-                #
-                # Fix round 1, ruling 2: guarded by the same reference check the
-                # cleanup batch re-runs. The key is content-hashed, so a re-upload
-                # of identical bytes lands on the identical key -- if a live row
-                # or revision still names it, the object is in use and there is no
-                # orphan to clean up.
-                enqueue_asset_delete(tx, key)
-            if outcome == 'attached':
-                if complete_render_if_ready(tx, request_key, revision_id):
-                    # A roundup (no subject) row is ready to schedule as soon as
-                    # it is rendered. A subject row stays `awaiting_member` even
-                    # once rendered -- approve_card is what moves it on to
-                    # review, and only once the member actually consents.
-                    tx.execute(
-                        """UPDATE publishing_queue SET status = 'review', updated_at = NOW()
-                            WHERE request_key = %(rk)s AND status = 'awaiting_render'""",
-                        dict(rk=request_key))
-                _audit(tx, s, 'growth.queue.image', request_key=request_key, platform=platform)
+            attach = dict(key=key, url=url, sha=sha256)
+            outcome = None
+            if slide_count is not None:
+                slide_outcome, displaced, first = attach_slide(
+                    tx, request_key, platform, revision_id, slide, key, url, sha256)
+                if displaced and not is_referenced(tx, displaced):
+                    # Different bytes for the same slide: nothing names the
+                    # old object any more (fix wave item 6's rule, below).
+                    enqueue_asset_delete(tx, displaced)
+                if slide_outcome == 'superseded':
+                    outcome = 'superseded'
+                    if not is_referenced(tx, key):
+                        enqueue_asset_delete(tx, key)
+                elif first is None:
+                    outcome = 'slide_stored'
+                    stored = tx.execute(
+                        """SELECT count(*) AS n FROM publishing_queue_slide s
+                             JOIN publishing_queue q ON q.id = s.queue_id
+                            WHERE q.request_key = %(rk)s AND q.platform = %(pl)s
+                              AND s.image_key IS NOT NULL""",
+                        dict(rk=request_key, pl=platform)).fetchone()['n']
+                    progress = dict(slide=slide, slides_stored=stored, slide_count=slide_count)
+                    _audit(tx, s, 'growth.queue.slide', request_key=request_key, platform=platform,
+                           slide=slide)
+                else:
+                    attach = dict(key=first['image_key'], url=first['image_url'], sha=first['image_sha256'])
+                    progress = dict(slide=slide, slides_stored=slide_count, slide_count=slide_count)
+            if outcome is None:
+                outcome, previous_key = attach_platform_image(tx, request_key, platform, revision_id,
+                                                              attach['key'], attach['url'], attach['sha'])
+                if (previous_key and previous_key != attach['key']
+                        and not is_referenced(tx, previous_key)):
+                    # Fix wave item 6: this upload displaced an earlier one. Keys are
+                    # content-hashed, so different bytes for the same revision land on
+                    # a different key and nothing names the old object any more -- the
+                    # ordinary case while an operator iterates on artwork, and the one
+                    # the superseded branch below never covered. Guarded by the same
+                    # reference check: a sibling platform row or a revision may still
+                    # name it (identical bytes share a key), in which case there is no
+                    # orphan to clean up.
+                    enqueue_asset_delete(tx, previous_key)
+                if outcome == 'superseded' and not is_referenced(tx, key):
+                    # Nothing points at the just-uploaded object and nothing ever
+                    # will, so it is queued for deletion (Wave 2 Task 5) rather than
+                    # deleted inline: enqueueing is a database write and commits with
+                    # this transaction, where a storage call would have held the api
+                    # connection lock across a network round trip.
+                    #
+                    # Fix round 1, ruling 2: guarded by the same reference check the
+                    # cleanup batch re-runs. The key is content-hashed, so a re-upload
+                    # of identical bytes lands on the identical key -- if a live row
+                    # or revision still names it, the object is in use and there is no
+                    # orphan to clean up.
+                    enqueue_asset_delete(tx, key)
+                if outcome == 'attached':
+                    if complete_render_if_ready(tx, request_key, revision_id):
+                        # A roundup (no subject) row is ready to schedule as soon as
+                        # it is rendered. A subject row stays `awaiting_member` even
+                        # once rendered -- approve_card is what moves it on to
+                        # review, and only once the member actually consents.
+                        tx.execute(
+                            """UPDATE publishing_queue SET status = 'review', updated_at = NOW()
+                                WHERE request_key = %(rk)s AND status = 'awaiting_render'""",
+                            dict(rk=request_key))
+                    _audit(tx, s, 'growth.queue.image', request_key=request_key, platform=platform,
+                           **({} if slide is None else dict(slide=slide)))
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
         # Same orphan rule as 'superseded' below: identical bytes land on the
         # winner's key, which a row now names, so nothing is queued; different
@@ -1009,6 +1058,8 @@ def post_growth_queue_image(request_key: str):
         return dict(error='image_race'), 409
     if outcome == 'superseded':
         return dict(error='superseded'), 409
+    if progress is not None:
+        return dict(image_url=url, **progress)
     return dict(image_url=url)
 
 

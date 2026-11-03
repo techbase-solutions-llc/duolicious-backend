@@ -17,13 +17,85 @@ from service.spotlight.storage import card_image_extension
 
 
 def asset_key(request_key: str, revision_id: int, sha256: str, platform: str,
-              content_type: str = 'image/png') -> str:
+              content_type: str = 'image/png', slide: Optional[int] = None) -> str:
     """Wave 3d Task 6: the extension follows the stored content type, `.jpg`
     for the JPEG cards the admin renders now and `.png` for an upload through
     the old `png_base64` field. Cleanup and retention match keys exactly, as
-    stored on the rows, so either extension is found and deleted."""
+    stored on the rows, so either extension is found and deleted.
+
+    A carousel slide (TEC-1845) adds its position after the platform, still
+    content-hashed, so two slides of one row never share a key."""
     ext = card_image_extension(content_type)
-    return f"spotlight/{request_key}/{revision_id}-{sha256[:16]}-{platform}.{ext}"
+    suffix = '' if slide is None else f'-{slide}'
+    return f"spotlight/{request_key}/{revision_id}-{sha256[:16]}-{platform}{suffix}.{ext}"
+
+
+# The carousel slide upload's lock and re-check, in one statement. It repeats
+# `attach_platform_image`'s compare-and-set conditions (still on the revision
+# the bytes were rendered for, still in an uploadable status, delivery
+# resolved, revision not yet rendered) and touches `updated_at`, so two slide
+# uploads for one row serialise: under REPEATABLE READ the second fails with
+# SerializationFailure once the first commits, and the route answers 409
+# image_race, as it does for two single-image uploads.
+_Q_LOCK_FOR_SLIDE = """
+    UPDATE publishing_queue SET updated_at = NOW()
+     WHERE request_key = %(rk)s AND platform = %(pl)s
+       AND current_revision_id = %(rev)s
+       AND status IN ('awaiting_member', 'awaiting_render', 'review')
+       AND (delivery_state IS NULL OR delivery_state NOT IN ('attempting', 'delivery_unknown'))
+       AND NOT EXISTS (
+             SELECT 1 FROM spotlight_revision r
+              WHERE r.id = publishing_queue.current_revision_id AND r.asset_hash IS NOT NULL)
+ RETURNING id, slide_count
+"""
+
+_Q_UPSERT_SLIDE = """
+    INSERT INTO publishing_queue_slide (queue_id, position, image_key, image_url, image_sha256)
+    VALUES (%(q)s, %(n)s, %(k)s, %(u)s, %(h)s)
+    ON CONFLICT (queue_id, position) DO UPDATE
+       SET image_key = EXCLUDED.image_key, image_url = EXCLUDED.image_url,
+           image_sha256 = EXCLUDED.image_sha256, updated_at = NOW()
+"""
+
+_Q_SLIDES = """
+    SELECT position, image_key, image_url, image_sha256 FROM publishing_queue_slide
+     WHERE queue_id = %(q)s ORDER BY position
+"""
+
+
+def attach_slide(tx, request_key: str, platform: str, revision_id: int, slide: int,
+                 key: str, url: str, sha256: str) -> tuple[str, Optional[str], Optional[dict]]:
+    """Store one carousel slide on its queue row (TEC-1845). Runs in the
+    caller's transaction.
+
+    Returns `(outcome, previous_key, first)`:
+      * outcome 'superseded' when the row moved on while the bytes were in
+        flight (nothing written), else 'stored' or 'same' (identical bytes
+        already there, nothing written);
+      * previous_key, the key this upload displaced (different bytes for the
+        same slide), for the caller to queue for deletion;
+      * first, slide 1's key, url and sha256 once every slide of the row is
+        stored, for the caller to attach to the row as a single image is;
+        None while any slide is still missing."""
+    locked = tx.execute(_Q_LOCK_FOR_SLIDE, dict(rk=request_key, pl=platform, rev=revision_id)).fetchone()
+    if not locked:
+        return 'superseded', None, None
+    queue_id = locked['id']
+    current = {r['position']: r for r in tx.execute(_Q_SLIDES, dict(q=queue_id)).fetchall()}
+    prev = current.get(slide)
+    previous_key = prev['image_key'] if prev else None
+    if prev and prev['image_key'] == key and prev['image_sha256'] == sha256 and prev['image_url'] == url:
+        outcome = 'same'
+    else:
+        tx.execute(_Q_UPSERT_SLIDE, dict(q=queue_id, n=slide, k=key, u=url, h=sha256))
+        current[slide] = dict(position=slide, image_key=key, image_url=url, image_sha256=sha256)
+        outcome = 'stored'
+    if previous_key == key:
+        previous_key = None
+    complete = all(current.get(n) and current[n]['image_key'] and current[n]['image_url']
+                   for n in range(1, (locked['slide_count'] or 0) + 1))
+    first = dict(current[1]) if complete else None
+    return outcome, previous_key, first
 
 
 def attach_platform_image(tx, request_key: str, platform: str, revision_id: int,
