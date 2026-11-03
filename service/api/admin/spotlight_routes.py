@@ -1803,9 +1803,19 @@ def post_growth_queue_approve(s: t.SessionInfo, qid: str):
             dict(w=when, id=queue_id))
         _audit(tx, s, 'growth.queue.approve', queue_id=str(queue_id),
                scheduled_for=when.isoformat())
-    if row['image_key']:
+        # A carousel (TEC-1845): every slide is made public, in order. Slide
+        # 1 is the row's own key, so it is not flipped twice.
+        keys = [row['image_key']] if row['image_key'] else []
+        for r in tx.execute(
+                """SELECT image_key FROM publishing_queue_slide
+                    WHERE queue_id = %(id)s AND image_key IS NOT NULL ORDER BY position""",
+                dict(id=queue_id)).fetchall():
+            if r['image_key'] not in keys:
+                keys.append(r['image_key'])
+    if keys:
         try:
-            st.make_public(row['image_key'])
+            for key in keys:
+                st.make_public(key)
         except Exception:
             with api_tx() as tx:
                 # Back to the slot the row had BEFORE this approval, not to

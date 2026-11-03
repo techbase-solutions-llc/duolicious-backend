@@ -13,6 +13,7 @@ purpose: test files in this suite do not import from each other.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -307,3 +308,80 @@ def test_the_existing_checks_run_before_the_slide_check(client, stored):
     _cancel(rk)
     r = _upload(client, rk, slide=99)
     assert r.status_code == 409 and r.get_json() == dict(error='bad_status')
+
+
+# ---------------------------------------------------------------------------
+# A4. Approve makes every slide public
+# ---------------------------------------------------------------------------
+
+def _session_for(p) -> str:
+    tok = secrets.token_hex(32)
+    with api_tx() as tx:
+        email = tx.execute("SELECT email FROM person WHERE id = %(i)s",
+                           dict(i=p['id'])).fetchone()['email']
+        tx.execute(
+            """INSERT INTO duo_session (session_token_hash, email, person_id, signed_in, otp)
+               VALUES (%(h)s, %(e)s, %(p)s, TRUE, '123456')""",
+            dict(h=hashlib.sha512(tok.encode()).hexdigest(), e=email, p=p['id']))
+    return tok
+
+
+def _admin_headers(make_person) -> dict:
+    p = make_person(name='CarouselAdmin')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s",
+                   dict(i=p['id']))
+    return {'Authorization': f'Bearer {_session_for(p)}'}
+
+
+def _rendered_carousel(client, slides=7) -> tuple[str, dict, list[dict]]:
+    rk = _carousel(client, slides=slides)
+    for n in range(1, slides + 1):
+        r = _upload(client, rk, slide=n)
+        assert r.status_code == 200, r.get_json()
+    row = _row(rk)
+    assert row['status'] == 'review'
+    return rk, row, _slides(row['id'])
+
+
+def test_approve_makes_every_slide_public_in_order(client, stored, monkeypatch, make_person):
+    import service.spotlight.storage as st
+    A = _admin_headers(make_person)
+    rk, row, slides = _rendered_carousel(client)
+    flipped: list = []
+    monkeypatch.setattr(st, 'make_public', flipped.append)
+    try:
+        r = client.post(f"/admin/growth/queue/{row['id']}/approve", json={}, headers=A)
+        assert r.status_code == 200, r.get_json()
+        assert flipped == [s['image_key'] for s in slides]
+        assert flipped[0] == row['image_key']
+        assert _row(rk)['status'] == 'scheduled'
+    finally:
+        _cancel(rk)
+
+
+def test_a_storage_failure_on_slide_4_reverts_the_row(client, stored, monkeypatch, make_person):
+    import service.spotlight.storage as st
+    A = _admin_headers(make_person)
+    rk, row, slides = _rendered_carousel(client)
+    with api_tx('read committed') as tx:
+        slot = tx.execute("SELECT scheduled_for FROM publishing_queue WHERE id = %(id)s",
+                          dict(id=row['id'])).fetchone()['scheduled_for']
+    flipped: list = []
+
+    def flip(key):
+        if key == slides[3]['image_key']:
+            raise RuntimeError('storage down')
+        flipped.append(key)
+
+    monkeypatch.setattr(st, 'make_public', flip)
+    try:
+        r = client.post(f"/admin/growth/queue/{row['id']}/approve", json={}, headers=A)
+        assert r.status_code == 503 and r.get_json() == dict(error='storage_unavailable', in_flight=False)
+        assert flipped == [s['image_key'] for s in slides[:3]]
+        with api_tx('read committed') as tx:
+            after = tx.execute("SELECT status, scheduled_for FROM publishing_queue WHERE id = %(id)s",
+                               dict(id=row['id'])).fetchone()
+        assert after['status'] == 'review' and after['scheduled_for'] == slot
+    finally:
+        _cancel(rk)
