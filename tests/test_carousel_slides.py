@@ -564,6 +564,10 @@ def test_the_retention_sweep_queues_every_slide_of_an_old_published_carousel(cli
         assert [_pending_delete(s['image_key']) for s in slides] == [True, True, False, True]
     finally:
         _cancel(rk)
+        # The suite shares one database: an abandoned job left behind would
+        # crowd the abandoned listing other tests read.
+        with api_tx() as tx:
+            tx.execute("DELETE FROM cleanup_job WHERE target LIKE %(p)s", dict(p=f'spotlight/{rk}/%'))
 
 
 def test_the_retention_sweep_leaves_a_recent_carousel_alone(client, stored):
