@@ -264,6 +264,9 @@ def _send_alert(events: list[dict]) -> list[dict]:
     own, and the api connection lock is not re-entrant). Returns the
     failures to record."""
     from smtp import make_aws_smtp
+    # The push shares the email's daily cap (review, 2 Nov 2026): without it
+    # an event source that never stops pushed to the owner every minute.
+    capped = guard.alerts_sent_today() >= guard.limit('alerts_per_day')
     last = guard.alerts_sent_today() + 1 >= guard.limit('alerts_per_day')
     subject, html = _alert_text(events, last=last)
     failures: list[dict] = []
@@ -279,7 +282,7 @@ def _send_alert(events: list[dict]) -> list[dict]:
             failures.append(dict(channel='email', event='alert_failed', rule='send_failed',
                                  detail=dict(error=type(e).__name__)))
     pid = alert_person_id()
-    if pid is not None:
+    if pid is not None and not capped:
         from service import notifications
         try:
             n = notifications._send_to_user_blocking(
@@ -308,11 +311,49 @@ def _shadow_ended(r) -> list[dict]:
     return []
 
 
+_redis_outage_alerted = False
+
+
+def _tick_without_redis(exc: BaseException) -> None:
+    """Redis cannot be reached. Record what this process kept in memory and
+    tell the owner once per outage, then let the tick fail so the heartbeat
+    stays stale (review, 2 Nov 2026: the tick used to fail at its first
+    Redis read, so the plan's redis_down alert was never stored or sent
+    while Redis was down). The alert email passes the guard on its
+    in-process counters; halts and tallies wait for Redis."""
+    global _redis_outage_alerted
+    local = guard.drain_local_events()
+    if not _redis_outage_alerted:
+        local.append(dict(at=datetime.now(timezone.utc).isoformat(), channel='guard', event='redis_down',
+                          alert=True, detail=dict(error=type(exc).__name__, seen_by='sendguard')))
+    try:
+        with api_tx() as tx:
+            insert_events(tx, local)
+    except Exception:
+        for ev in local:
+            guard._local_events.append(json.dumps(ev))
+        raise
+    alertable = [e for e in local if e.get('alert')
+                 and not (_redis_outage_alerted and e.get('event') == 'redis_down')]
+    if alertable:
+        _redis_outage_alerted = True
+        failures = _send_alert(alertable)
+        if failures:
+            with api_tx() as tx:
+                insert_events(tx, failures)
+
+
 def tick() -> dict:
     """One pass. Raises on a failure part way, leaving the heartbeat stale."""
+    global _redis_outage_alerted
     now = datetime.now(timezone.utc)
     r = guard._redis()
-    raw = _read_redis_events(r)
+    try:
+        raw = _read_redis_events(r)
+    except Exception as exc:  # noqa: BLE001 -- recorded and alerted, then raised
+        _tick_without_redis(exc)
+        raise
+    _redis_outage_alerted = False
     local = guard.drain_local_events()
     events = [json.loads(x) for x in raw] + local
     try:

@@ -233,6 +233,44 @@ def test_the_20th_alert_of_a_day_says_it_is_the_last(mail, pushes, monkeypatch):
     assert len(_db_events('alert_capped')) == 1
 
 
+def test_with_redis_down_the_tick_records_and_alerts_once_per_outage(mail, pushes, monkeypatch):
+    """Review, 2 Nov 2026: the tick failed at its first Redis read, so the
+    plan's redis_down alert was never stored or sent while Redis was down,
+    and nothing told the owner until the outside watchdog exists."""
+    class _Down:
+        def __getattr__(self, name):
+            def _fail(*a, **k):
+                raise ConnectionError('redis down')
+            return _fail
+
+    monkeypatch.setattr(sendguard, '_redis_outage_alerted', False)
+    guard.set_redis(_Down())
+    for _ in range(3):
+        with pytest.raises(ConnectionError):
+            sendguard.tick()
+    alerts = [m for m in mail if m['subject'].startswith('Ahavah mail guard')]
+    assert len(alerts) == 1 and 'Redis could not be reached' in alerts[0]['body']
+    assert len(pushes) == 1
+    assert _db_events('redis_down')
+    # Something else alertable during the outage still alerts.
+    guard._local_events.append(json.dumps(guard._event('dry_run_send', channel='email', kind='k', alert=True)))
+    with pytest.raises(ConnectionError):
+        sendguard.tick()
+    alerts = [m for m in mail if m['subject'].startswith('Ahavah mail guard')]
+    assert len(alerts) == 2 and 'Redis' not in alerts[1]['body'].split('</p>')[0]
+
+
+def test_the_alert_push_stops_with_the_alert_email_at_the_daily_cap(mail, pushes, monkeypatch):
+    """Review, 2 Nov 2026: the push to the owner had no cap, so an event
+    source that never stops pushed to the owner's phone every minute."""
+    monkeypatch.setenv('AHAVAH_ALERT_EMAILS', 'admin@techbaseltd.com')
+    for _ in range(30):
+        guard.record_event('dry_run_send', channel='email', kind='k', alert=True)
+        sendguard.tick()
+    assert len([m for m in mail if m['subject'].startswith('Ahavah mail guard')]) == 20
+    assert len(pushes) == 20
+
+
 def test_the_end_of_the_trial_week_alerts_once(mail, pushes, monkeypatch):
     monkeypatch.setenv('AHAVAH_SEND_GUARD_GLOBAL_SHADOW_UNTIL', '2026-11-10')
     with freeze_time('2026-11-09 12:00:00'):
