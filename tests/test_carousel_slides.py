@@ -607,3 +607,56 @@ def test_the_caption_route_refuses_a_carousel(client, stored, make_person):
         assert _slides(row['id']) == slides
     finally:
         _cancel(rk)
+
+
+# ---------------------------------------------------------------------------
+# A7. The Growth tab listing
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def presigned(monkeypatch):
+    import service.spotlight.storage as st
+    monkeypatch.setattr(st, 'presign', lambda key, seconds=900: f'https://signed.test/{key}')
+
+
+def _listed(client, rk) -> list[dict]:
+    r = client.get('/admin/growth/queue', headers=H)
+    assert r.status_code == 200
+    return [x for x in r.get_json() if x['request_key'] == rk]
+
+
+def test_the_listing_gives_every_slide_preview_in_order(client, stored, presigned):
+    rk, row, slides = _rendered_carousel(client)
+    try:
+        (listed,) = _listed(client, rk)
+        assert listed['slide_count'] == 7
+        assert listed['slides'] == [dict(position=s['position'], preview_url=f"https://signed.test/{s['image_key']}")
+                                    for s in slides]
+        assert listed['preview_url'] == f"https://signed.test/{slides[0]['image_key']}"
+    finally:
+        _cancel(rk)
+
+
+def test_a_carousel_still_waiting_lists_the_slides_it_has(client, stored, presigned):
+    rk = _carousel(client)
+    try:
+        for n in (2, 5):
+            assert _upload(client, rk, slide=n).status_code == 200
+        (listed,) = _listed(client, rk)
+        assert listed['status'] == 'awaiting_render'
+        assert listed['slide_count'] == 7
+        assert [s['position'] for s in listed['slides']] == [2, 5]
+    finally:
+        _cancel(rk)
+
+
+def test_a_single_image_row_carries_no_slide_keys(client, stored, presigned):
+    r = client.post('/admin/growth/brand', headers=H, json=dict(
+        slug=_slug(), caption='c', scheduled_for=_soon().isoformat(), platforms=['facebook']))
+    rk = r.get_json()['request_key']
+    try:
+        assert _upload(client, rk).status_code == 200
+        (listed,) = _listed(client, rk)
+        assert 'slides' not in listed and 'slide_count' not in listed
+    finally:
+        _cancel(rk)

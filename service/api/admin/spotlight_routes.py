@@ -327,6 +327,14 @@ _Q_ROWS = f"""
            q.render_next_attempt_at,
            q.render_error,
            q.current_revision_id,
+           -- A carousel's slides (TEC-1845), in order: only those stored so
+           -- far, so the Growth tab can say how far a set has got.
+           q.slide_count,
+           (SELECT COALESCE(json_agg(json_build_object('position', s.position, 'image_key', s.image_key,
+                                                       'image_url', s.image_url) ORDER BY s.position),
+                            '[]'::json)
+              FROM publishing_queue_slide s
+             WHERE s.queue_id = q.id AND s.image_key IS NOT NULL) AS slide_rows,
            -- When the row last changed (a cancel, a failed try) and when an
            -- admin approved it, for the queue's status lines (TEC-1845,
            -- handoff 17). The approval time is the audit row's own.
@@ -685,6 +693,14 @@ def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
     # with (TEC-1845). Every other kind leaves the key out.
     if r['kind'] in TEMPLATE_KINDS and r['payload']:
         row['template_data'] = r['payload']
+    # A carousel (TEC-1845): how many slides it takes and each one stored so
+    # far, in order. `preview_url` starts as the public URL and is presigned
+    # by get_growth_queue, as the row's own is. A single image leaves both
+    # keys out, so an admin that knows nothing of carousels sees no change.
+    if r.get('slide_count') is not None:
+        row['slide_count'] = r['slide_count']
+        row['slides'] = [dict(position=sl['position'], preview_url=sl['image_url'])
+                         for sl in (r.get('slide_rows') or [])]
     return row
 
 
@@ -725,6 +741,10 @@ def get_growth_queue():
         key = r['image_key']
         if key:
             row['preview_url'] = storage.presign(key) or row['image_url']
+        if 'slides' in row:
+            keys = {sl['position']: sl['image_key'] for sl in (r['slide_rows'] or [])}
+            for sl in row['slides']:
+                sl['preview_url'] = storage.presign(keys[sl['position']]) or sl['preview_url']
     return jsonify(out)
 
 
