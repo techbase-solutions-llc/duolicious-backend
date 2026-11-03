@@ -83,8 +83,10 @@ _ENV_READ_RE = re.compile(
 
 
 def _discover_cron_module_names() -> list[str]:
+    # Each cron is a package. A plain module beside them (send_registry.py,
+    # the send safeguards' list of sending crons) is not a cron.
     return sorted(
-        info.name for info in pkgutil.iter_modules(cron_pkg.__path__)
+        info.name for info in pkgutil.iter_modules(cron_pkg.__path__) if info.ispkg
     )
 
 
