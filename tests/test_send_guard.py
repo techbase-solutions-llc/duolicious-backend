@@ -528,3 +528,36 @@ def test_each_dry_run_cron_runs_inside_the_tripwire(monkeypatch, module, once, f
     monkeypatch.setattr(mod, f'_{once}', body)
     asyncio.run(getattr(mod, once)())
     assert seen == [flag]
+
+
+# ---------------------------------------------------------------------------
+# failed sends (task 6)
+# ---------------------------------------------------------------------------
+
+def _tally(kind, outcome):
+    vals = guard._redis().hgetall(f'sg:tally:{guard.utc_hour()}')
+    return int(vals.get(f'email|{kind}|{outcome}', 0))
+
+
+def _down(monkeypatch):
+    def _boom(self, **kw):
+        raise RuntimeError('provider down')
+    monkeypatch.setattr(smtp_mod.Smtp, '_try_send', _boom)
+
+
+def test_a_failed_send_returns_none_by_default_and_is_counted_failed(monkeypatch):
+    _down(monkeypatch)
+    assert _send('down@ahavah-test.invalid', kind='receipt', subject='Your receipt') is None
+    assert _tally('receipt', 'failed') == 1 and _tally('receipt', 'sent') == 0
+
+
+def test_raise_on_failure_raises_send_failed_and_counts_once(monkeypatch):
+    _down(monkeypatch)
+    with pytest.raises(guard.SendFailed):
+        _send('down2@ahavah-test.invalid', kind='receipt', subject='Your receipt', raise_on_failure=True)
+    assert _tally('receipt', 'failed') == 1
+
+
+def test_a_success_is_counted_sent(sent):
+    _send('ok@ahavah-test.invalid', kind='receipt', subject='Your receipt')
+    assert _tally('receipt', 'sent') == 1 and _tally('receipt', 'failed') == 0

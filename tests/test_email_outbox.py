@@ -452,3 +452,37 @@ def test_a_row_the_guard_refuses_is_skipped_with_the_rule_and_never_retried(make
     r = _row(p['id'])
     assert calls == [] and out['skipped'] == 1
     assert r['state'] == 'skipped' and r['last_error'] == 'mail_guard:halt_kind'
+
+
+def test_a_send_that_fails_every_attempt_leaves_the_row_failed_never_accepted(make_person, monkeypatch):
+    """Until 2 Nov 2026 Smtp.send returned None after its last failed attempt,
+    exactly as a success did, so the drain marked the row accepted (send
+    safeguards, task 6). The drain now asks for the failure raised."""
+    import smtp as smtp_mod
+
+    def _down(self, **kw):
+        raise RuntimeError('provider down')
+
+    monkeypatch.setattr(smtp_mod.Smtp, '_try_send', _down)
+    monkeypatch.setattr(smtp_mod.time, 'sleep', lambda s: None)
+    email = _addr('neveraccepted')
+    p = make_person(name='NeverAccepted', email=email)
+    _enqueue(p['id'], email, cid='never-accepted', exempt=True, campaign='match')
+    _only(p['id'])
+    for _ in range(outbox.MAX_ATTEMPTS):
+        with api_tx() as tx:
+            tx.execute("UPDATE email_outbox SET next_attempt_at = NOW() WHERE person_id = %(p)s AND state = 'queued'",
+                       dict(p=p['id']))
+        outbox.drain(api_tx, smtp_mod.make_aws_smtp())
+    r = _row(p['id'])
+    assert r['state'] == 'failed' and r['sent_at'] is None and 'every attempt failed' in r['last_error']
+
+
+def test_the_drain_asks_for_failures_raised(make_person):
+    email = _addr('raisefail')
+    p = make_person(name='RaiseFail', email=email)
+    _enqueue(p['id'], email, campaign='e2', cid='raise-fail')
+    _only(p['id'])
+    smtp = _Smtp()
+    outbox.drain(api_tx, smtp)
+    assert smtp.sent[0]['raise_on_failure'] is True

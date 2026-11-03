@@ -705,11 +705,14 @@ def drain(tx_factory, smtp, limit: int = BATCH) -> dict:
             # kind, a campaign row (not exempt) is a list send, and a refusal
             # raises so the row is marked skipped below, never retried into
             # the limit.
+            # A send whose every attempt failed raises too (task 6): until
+            # then it returned None, as a success does, and the row was
+            # marked accepted.
             message_id = smtp.send(subject=payload.get('subject'), body=html,
                                    to_addr=row['email'], from_addr=payload.get('from_addr'),
                                    list_unsubscribe=payload.get('list_unsubscribe'),
                                    kind=row['campaign'], bulk=not row['exempt'],
-                                   raise_on_refusal=True, **personal)
+                                   raise_on_refusal=True, raise_on_failure=True, **personal)
         except MailGuardRefused as e:
             with tx_factory() as tx:
                 mark_skipped(tx, row['id'], f'mail_guard:{e.rule}')
