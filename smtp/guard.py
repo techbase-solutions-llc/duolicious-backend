@@ -369,6 +369,12 @@ class _RedisStore:
             pipe.execute()
         return counts
 
+    def decr_many(self, keys: list[str]) -> None:
+        pipe = self.r.pipeline()
+        for key in keys:
+            pipe.decr(key)
+        pipe.execute()
+
     def set_nx(self, key: str, value: str, ttl: Optional[int] = None) -> bool:
         return bool(self.r.set(key, value, nx=True, ex=ttl))
 
@@ -428,6 +434,13 @@ class _LocalStore:
                     self._v[key] = (int(cur) + 1, exp)
                     out.append(int(cur) + 1)
         return out
+
+    def decr_many(self, keys):
+        with self._lock:
+            for key in keys:
+                cur = self._get(key)
+                if cur is not None:
+                    self._v[key] = (int(cur) - 1, self._v[key][1])
 
     def set_nx(self, key, value, ttl=None):
         with self._lock:
@@ -624,11 +637,13 @@ def _decide_email(store, *, recipient: str, kind: str, bulk: bool, owner: bool, 
                                              recipient=recipient)])
 
     bulk = bulk or kind in BULK_KINDS
+    all_key = f'sg:r:{recipient}:all'
+    global_keys = [f'sg:g:mail:{bb_hour(now)}', f'sg:g:mail:day:{day}']
     items = [(f'sg:r:{recipient}:{kind}', DAY_SECONDS)]
     if not owner:
-        items.append((f'sg:r:{recipient}:all', DAY_SECONDS))
-    items += [(f'sg:g:mail:{bb_hour(now)}', 2 * DAY_SECONDS),
-              (f'sg:g:mail:day:{day}', 35 * DAY_SECONDS),
+        items.append((all_key, DAY_SECONDS))
+    items += [(global_keys[0], 2 * DAY_SECONDS),
+              (global_keys[1], 35 * DAY_SECONDS),
               (f'sg:k:{kind}:{day}', 35 * DAY_SECONDS)]
     counts = store.incr_many(items)
     per_kind = counts[0]
@@ -643,10 +658,17 @@ def _decide_email(store, *, recipient: str, kind: str, bulk: bool, owner: bool, 
         kind_limit, rule = limit('email_chat_per_kind'), 'chat_per_kind'
     else:
         kind_limit, rule = limit('email_per_kind'), 'per_kind'
+    # A copy a per-person rule refuses is never sent, so it gives back what
+    # it took from the person's total and the global ceilings: one person's
+    # contained loop must not use up their other mail for the day, or tip
+    # every member's mail into a global halt (review, 2 Nov 2026). Only the
+    # counter of the rule that refused keeps counting the attempts.
     if per_kind > kind_limit:
+        store.decr_many(([] if owner else [all_key]) + global_keys)
         return Decision(False, rule, _refusal_events(
             store, channel='email', kind=kind, rule=rule, recipient=recipient, now=now, trip=True))
     if per_all is not None and per_all > limit('email_per_person_all'):
+        store.decr_many(global_keys)
         return Decision(False, 'per_person_all', _refusal_events(
             store, channel='email', kind=kind, rule='per_person_all', recipient=recipient, now=now,
             trip=False))
@@ -685,6 +707,8 @@ def _decide_push_person(store, *, person: str, kind: str, now: datetime) -> Deci
     kind_limit = limit('push_chat_per_kind') if chat else limit('push_per_kind')
     if counts[0] > kind_limit:
         rule = 'chat_per_kind' if chat else 'per_kind'
+        if not chat:
+            store.decr_many([items[1][0]])  # a refused push takes nothing from the person's total
         return Decision(False, rule, _refusal_events(
             store, channel='push', kind=kind, rule=rule, recipient=person, now=now, trip=True))
     if not chat and counts[1] > limit('push_per_person_all'):

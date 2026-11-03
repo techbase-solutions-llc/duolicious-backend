@@ -366,7 +366,20 @@ def send_to_user_safe(
 
     # guard.spawn carries the dry-run tripwire into the thread.
     from smtp import guard
-    guard.spawn(_send_to_user_blocking, person_id=person_id, payload=payload, kind=kind)
+    guard.spawn(_send_to_user_blocking, person_id=person_id, payload=payload,
+                kind=_guard_kind(kind, tag, event_kind))
+
+
+def _guard_kind(kind: Optional[str], tag: Optional[str], event_kind: Optional[str]) -> Optional[str]:
+    """The send guard's kind for a push. The caller's own kind wins, then the
+    tag (hashed in _send_to_user_blocking). With neither, the event names it,
+    so untagged pushes of different events never share one limit. Review of
+    2 Nov 2026: profile view, verification and reminder pushes carry no tag
+    and all counted as push:untagged, so 3 members over 6 profile view pushes
+    in an hour halted verification results for everyone."""
+    if kind or tag:
+        return kind
+    return f'event:{event_kind}' if event_kind else None
 
 
 def send_to_user_counted(
@@ -391,7 +404,7 @@ def send_to_user_counted(
     payload: Dict[str, Any] = {'title': title, 'body': body, 'url': url}
     if tag is not None:
         payload['tag'] = tag
-    return _send_to_user_blocking(person_id, payload, kind=kind)
+    return _send_to_user_blocking(person_id, payload, kind=_guard_kind(kind, tag, event_kind))
 
 
 def record_profile_view(viewer_id: int, viewed_uuid: str):

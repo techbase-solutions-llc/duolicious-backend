@@ -37,6 +37,7 @@ from typing import Any, Optional
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
 from service.leads import address_unsubscribed, lead_unsubscribed, news_refusal
+from smtp import guard
 from smtp.guard import MailGuardRefused, SendDuringDryRun
 
 # Backoff applied AFTER attempt n fails, indexed by n - 1. An attempt that
@@ -206,6 +207,14 @@ _Q_UNKNOWN_SUMMARY = """
 """
 
 
+def _refuse_in_a_dry_run(campaign: str, email: str) -> None:
+    """A trial run sends nothing, and a row it queued would be sent later by
+    the drain, which runs outside the trial run's guard.no_send(). So
+    queueing inside no_send() raises SendDuringDryRun and alerts the owner,
+    as a direct send does (review of the send safeguards, 2 Nov 2026)."""
+    guard.tripwire('email', campaign, guard.recipient_hash(email))
+
+
 def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
             subject: str, html: str, from_addr: Optional[str], unsub_scope: str,
             list_unsubscribe: Optional[str] = None, exempt: bool = False,
@@ -247,6 +256,7 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
     part, the display name on From and a Reply-To. Each is stored only when
     given, and the drain hands the mailer only what was stored, so every
     other message is sent exactly as before."""
+    _refuse_in_a_dry_run(campaign, email)
     if post_send is not None and post_send not in POST_SEND_HOOKS:
         raise ValueError(f'unknown post_send hook: {post_send}')
     payload = dict(subject=subject, html=html, from_addr=from_addr,
@@ -282,6 +292,7 @@ def enqueue_for_lead(tx, *, campaign: str, campaign_id: str, lead_id: int, email
     address. The drain checks all of this again (_refusal). A lead has no
     frequency cap, no send log and no post-send hook: all three are keyed
     on a member."""
+    _refuse_in_a_dry_run(campaign, email)
     if marketing and news_refusal(tx, lead_id, requested=requested):
         return None
     payload = dict(subject=subject, html=html, from_addr=from_addr,
@@ -301,6 +312,7 @@ def enqueue_for_organiser(tx, *, campaign: str, campaign_id: str, organiser_id: 
     unsubscribe, cap, send log or hook. Returns the new row id, or None
     when this exact (campaign, campaign_id, organiser_id) is already in the
     outbox."""
+    _refuse_in_a_dry_run(campaign, email)
     payload = dict(subject=subject, html=html, from_addr=from_addr, list_unsubscribe=None,
                    post_send=None, cap_days=0, requires_spotlight_opt_in=False)
     row = tx.execute(_Q_ENQUEUE_FOR_ORGANISER, dict(
@@ -322,6 +334,7 @@ def enqueue_for_recommendation(tx, *, campaign: str, campaign_id: str, recommend
     (service/leads/sources.py). Exempt, with no unsubscribe, since it is
     sent once ever. Returns the new row id, or None when this exact
     (campaign, campaign_id, recommendation_id) is already in the outbox."""
+    _refuse_in_a_dry_run(campaign, email)
     row = tx.execute(_Q_ENQUEUE_FOR_RECOMMENDATION, dict(
         c=campaign, cid=campaign_id, rid=recommendation_id, email=email,
         payload=_exempt_payload(subject, html, from_addr))).fetchone()
@@ -334,6 +347,7 @@ def enqueue_for_mentor_link(tx, *, campaign: str, campaign_id: str, mentor_link_
     """Queue a mentor's invitation (TEC-1845): a mentor has no account, only
     the link a single made. Exempt, no unsubscribe. Returns the new row id,
     or None when already queued."""
+    _refuse_in_a_dry_run(campaign, email)
     row = tx.execute(_Q_ENQUEUE_FOR_MENTOR_LINK, dict(
         c=campaign, cid=campaign_id, mid=mentor_link_id, email=email,
         payload=_exempt_payload(subject, html, from_addr))).fetchone()

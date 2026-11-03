@@ -561,3 +561,97 @@ def test_raise_on_failure_raises_send_failed_and_counts_once(monkeypatch):
 def test_a_success_is_counted_sent(sent):
     _send('ok@ahavah-test.invalid', kind='receipt', subject='Your receipt')
     assert _tally('receipt', 'sent') == 1 and _tally('receipt', 'failed') == 0
+
+
+# ---------------------------------------------------------------------------
+# review of 2 Nov 2026
+# ---------------------------------------------------------------------------
+
+def test_untagged_pushes_of_different_events_never_share_a_limit(monkeypatch):
+    """Profile view, verification and reminder pushes carry no tag, and all
+    counted as push:untagged: 3 members over 6 profile view pushes in an
+    hour halted verification results for everyone. Without a kind or a tag,
+    the event names the push."""
+    import service.notifications as n
+    monkeypatch.setattr(n, 'PUSH_ENABLED', True)
+    monkeypatch.setattr(n, '_allowed_for_event', lambda person_id, event_kind: True)
+
+    def _blocking(person_id, payload, kind=None):
+        try:
+            guard.check_push(person_id, kind or guard.push_kind(payload))
+            return 1
+        except guard.MailGuardRefused:
+            return 0
+
+    monkeypatch.setattr(n, '_send_to_user_blocking', _blocking)
+    for person in (1, 2, 3):
+        for _ in range(7):
+            n.send_to_user_counted(person, 'Someone viewed your profile', 'b', event_kind='profile_view')
+    assert [e['kind'] for e in _events_of('halt')] == ['event:profile_view']
+    assert n.send_to_user_counted(4, 'You are verified', 'b', event_kind='verification') == 1
+
+
+def test_a_push_names_its_kind_by_caller_then_tag_then_event(monkeypatch):
+    import service.notifications as n
+    monkeypatch.setattr(n, 'PUSH_ENABLED', True)
+    monkeypatch.setattr(n, '_allowed_for_event', lambda person_id, event_kind: True)
+    seen = []
+    monkeypatch.setattr(n, '_send_to_user_blocking',
+                        lambda person_id, payload, kind=None: seen.append(kind) or 1)
+    n.send_to_user_counted(7, 't', 'b', event_kind='verification')
+    n.send_to_user_counted(7, 't', 'b', tag='match:12', event_kind='match')
+    n.send_to_user_counted(7, 't', 'b', event_kind='questions', kind='own')
+    assert seen == ['event:verification', None, 'own']
+
+
+@pytest.mark.parametrize('fn, extra', [
+    ('enqueue', dict(person_id=1, unsub_scope='news')),
+    ('enqueue_for_lead', dict(lead_id=1)),
+    ('enqueue_for_organiser', dict(organiser_id=1)),
+    ('enqueue_for_recommendation', dict(recommendation_id=1)),
+    ('enqueue_for_mentor_link', dict(mentor_link_id=1)),
+])
+def test_a_dry_run_cannot_queue_mail_for_the_drain_to_send_later(fn, extra):
+    """The drain runs outside the trial run's no_send(), so a row queued in
+    a dry run would be sent a minute later. Queueing raises and alerts."""
+    from service.campaigns import outbox
+
+    class _Tx:
+        def execute(self, *a, **k):
+            raise AssertionError('a dry run wrote to the outbox')
+
+    with guard.no_send():
+        with pytest.raises(guard.SendDuringDryRun):
+            getattr(outbox, fn)(_Tx(), campaign='c', campaign_id='1', email='q@ahavah-test.invalid',
+                                subject='s', html='h', from_addr=None, **extra)
+    ev = _events_of('dry_run_send')
+    assert len(ev) == 1 and ev[0]['alert'] is True and ev[0]['kind'] == 'c'
+
+
+def test_a_loop_refused_for_one_person_never_tips_everyone_into_a_global_halt(sent, monkeypatch):
+    """A loop to one person is refused from its 4th copy. Its refused copies
+    used to count towards the global ceilings, so after the trial week a
+    tight loop to one person halted every member's mail."""
+    monkeypatch.delenv('AHAVAH_SEND_GUARD_GLOBAL_SHADOW_UNTIL', raising=False)
+    monkeypatch.setenv('AHAVAH_SEND_GUARD_LIMIT_EMAIL_GLOBAL_HOUR', '20')
+    for _ in range(50):
+        _send('stuck@ahavah-test.invalid')
+    _send('someone-else@ahavah-test.invalid', kind='welcome', subject='Welcome to Ahavah')
+    assert len(sent) == 4
+    assert _events_of('halt') == []
+
+
+def test_refused_copies_of_one_kind_leave_that_person_their_other_mail(sent):
+    for _ in range(20):
+        _send('loop-two@ahavah-test.invalid')
+    _send('loop-two@ahavah-test.invalid', kind='receipt', subject='Your receipt')
+    assert len(sent) == 4
+
+
+def test_a_refused_push_leaves_that_person_their_other_pushes():
+    for _ in range(30):
+        try:
+            guard.check_push(44, 'reminder')
+        except guard.MailGuardRefused:
+            pass
+    guard.check_push(44, 'event:verification')   # raises if the 24 refused reminders were counted
