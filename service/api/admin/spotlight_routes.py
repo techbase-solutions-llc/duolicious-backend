@@ -1266,6 +1266,15 @@ _REQUEST_KEY_MAX = 64
 # and its own utm_campaign.
 _CALENDAR_ROUTE_KINDS = ('brand', 'tool')
 BRAND_CAPTION_MAX = CAPTION_MAX
+# Meta's limits for a carousel, and migration 0089's check on slide_count.
+CAROUSEL_MIN = 2
+CAROUSEL_MAX = 10
+
+
+def _stored_slide_count(tx, request_key: str) -> Optional[int]:
+    row = tx.execute("SELECT slide_count FROM publishing_queue WHERE request_key = %(rk)s LIMIT 1",
+                     dict(rk=request_key)).fetchone()
+    return row['slide_count'] if row else None
 
 
 @post('/admin/growth/brand', limiter=growth_limit)
@@ -1273,9 +1282,15 @@ def post_growth_brand():
     """Queue one of Ahavah's own posts (TEC-945): artwork from the Claude
     Design sets, never a member's card, never anyone's face or name.
 
-    Body: {slug, caption, scheduled_for, platforms?, kind?, target_path?}.
+    Body: {slug, caption, scheduled_for, platforms?, kind?, target_path?, slides?}.
     kind is 'brand' (the default) or 'tool'; target_path is the page the
-    post's link lands on, '/' by default. Creates the rows in
+    post's link lands on, '/' by default. slides makes the post a carousel
+    of that many pictures (an int, 2 to 10), stored as every row's
+    `slide_count`; absent is a single image. The answer carries
+    `slide_count` as stored, on the `already` path too, so the admin can
+    refuse to upload slides to a row that does not expect them (an admin
+    deployed before this API would otherwise attach slide 1 as a single
+    image). Creates the rows in
     `awaiting_render`; the artwork then arrives per platform through the
     existing `/admin/growth/queue/<request_key>/image` route, exactly as a
     roundup's does, and that route moves the rows to `review`. Nothing here
@@ -1325,6 +1340,11 @@ def post_growth_brand():
             or len(set(platforms)) != len(platforms)
             or any(p not in PLATFORMS for p in platforms)):
         return dict(error='bad_platforms'), 400
+    # `type(...) is int`: a JSON true is a Python bool, which isinstance
+    # would let through as 1.
+    slides = body.get('slides')
+    if slides is not None and (type(slides) is not int or not CAROUSEL_MIN <= slides <= CAROUSEL_MAX):
+        return dict(error='bad_slides'), 400
     when = _parse_dt(body.get('scheduled_for'))
     if when is None:
         return dict(error='scheduled_for_required'), 400
@@ -1341,18 +1361,22 @@ def post_growth_brand():
         with api_tx() as tx:
             if tx.execute("SELECT 1 FROM publishing_queue WHERE request_key = %(rk)s LIMIT 1",
                           dict(rk=request_key)).fetchone():
-                return dict(request_key=request_key, already=True)
+                return dict(request_key=request_key, already=True,
+                            slide_count=_stored_slide_count(tx, request_key))
             rk = create_candidate(tx, kind=kind, subject_person_id=None, caption=caption.strip(),
                                   created_by=_actor(s), platforms=platforms, request_key=request_key,
                                   target_path=target_path)
             tx.execute(
-                "UPDATE publishing_queue SET scheduled_for = %(w)s WHERE request_key = %(rk)s",
-                dict(w=when, rk=rk))
+                """UPDATE publishing_queue SET scheduled_for = %(w)s, slide_count = %(n)s
+                    WHERE request_key = %(rk)s""",
+                dict(w=when, n=slides, rk=rk))
             _audit(tx, s, f'growth.queue.{kind}', request_key=rk, platforms=platforms,
-                   scheduled_for=when.isoformat())
+                   scheduled_for=when.isoformat(), slide_count=slides)
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
-        return dict(request_key=request_key, already=True)
-    return dict(request_key=rk)
+        with api_tx('read committed') as tx:
+            stored = _stored_slide_count(tx, request_key)
+        return dict(request_key=request_key, already=True, slide_count=stored)
+    return dict(request_key=rk, slide_count=slides)
 
 
 def _approval_slot(kind: str, requested: Optional[datetime],
