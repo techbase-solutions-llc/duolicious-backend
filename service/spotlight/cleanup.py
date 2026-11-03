@@ -173,6 +173,15 @@ _Q_CLEAR_REVISION_KEY = """
     UPDATE spotlight_revision SET image_key = NULL, image_url = NULL WHERE image_key = %(k)s
 """
 
+# A carousel's slides (TEC-1845) name objects too: a slide whose object is
+# confirmed gone is cleared beside the queue row and the revision, in the same
+# transaction, so the three never disagree.
+_Q_CLEAR_SLIDE_KEY = """
+    UPDATE publishing_queue_slide
+       SET image_key = NULL, image_url = NULL, image_sha256 = NULL, updated_at = NOW()
+     WHERE image_key = %(k)s
+"""
+
 _Q_OUTSTANDING = "SELECT count(*) AS n FROM cleanup_job WHERE state = 'pending'"
 
 _Q_ABANDONED = "SELECT count(*) AS n FROM cleanup_job WHERE state = 'abandoned'"
@@ -381,6 +390,7 @@ def run_cleanup_batch(tx_factory, delete: Callable[[list], list] = delete_images
                 if ok and outcome == 'done':
                     tx.execute(_Q_CLEAR_KEY, dict(k=key))
                     tx.execute(_Q_CLEAR_REVISION_KEY, dict(k=key))
+                    tx.execute(_Q_CLEAR_SLIDE_KEY, dict(k=key))
                 if outcome == 'done':
                     done += 1
                 elif outcome == 'abandoned':

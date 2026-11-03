@@ -1717,10 +1717,20 @@ def post_growth_removal_done(removal_id: int):
     s = _gate()
     with api_tx() as tx:
         row = tx.execute(
-            """SELECT q.image_key FROM spotlight_removal_task t
+            """SELECT q.id, q.image_key FROM spotlight_removal_task t
                  JOIN publishing_queue q ON q.id = t.queue_id
                 WHERE t.id = %(i)s""",
             dict(i=removal_id)).fetchone()
+        # A carousel's slides (TEC-1845) go with the post: every slide key,
+        # in order, beside the row's own (slide 1, queued once).
+        keys = [row['image_key']] if row and row['image_key'] else []
+        if row:
+            for sl in tx.execute(
+                    """SELECT image_key FROM publishing_queue_slide
+                        WHERE queue_id = %(q)s AND image_key IS NOT NULL ORDER BY position""",
+                    dict(q=row['id'])).fetchall():
+                if sl['image_key'] not in keys:
+                    keys.append(sl['image_key'])
         updated = tx.execute(
             "UPDATE spotlight_removal_task SET done_at = NOW() WHERE id = %(i)s AND done_at IS NULL",
             dict(i=removal_id)).rowcount
@@ -1730,8 +1740,9 @@ def post_growth_removal_done(removal_id: int):
         # row until the cleanup batch has storage's confirmation that the
         # object is really gone. Clearing it first is what used to leave
         # artwork in the bucket that nothing in the database named any more.
-        if updated and row and row['image_key']:
-            enqueue_asset_delete(tx, row['image_key'])
+        if updated:
+            for key in keys:
+                enqueue_asset_delete(tx, key)
         _audit(tx, s, 'growth.removal.done', removal_id=removal_id)
     return dict(ok=True, updated=updated)
 
@@ -1933,10 +1944,16 @@ def post_growth_queue_caption(s: t.SessionInfo, qid: str):
         abort(400)
     with api_tx() as tx:
         row = tx.execute(
-            "SELECT request_key FROM publishing_queue WHERE id = %(id)s",
+            "SELECT request_key, slide_count FROM publishing_queue WHERE id = %(id)s",
             dict(id=queue_id)).fetchone()
         if not row:
             abort(409)
+        # A caption edit makes a new revision and clears the row's artwork,
+        # which would leave a carousel's slides behind (TEC-1845). The way to
+        # change a calendar post is already to cancel it and give the entry a
+        # new id (post_growth_brand's docstring).
+        if row['slide_count'] is not None:
+            return dict(error='carousel_caption'), 409
         # edit_caption (Task 2) is the Phase B logic moved into
         # service.spotlight.revisions: it preserves the request's one /s/
         # campaign link and creates a new revision rather than editing the

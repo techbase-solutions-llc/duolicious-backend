@@ -483,3 +483,127 @@ def test_a_carousel_with_a_slide_missing_fails_dispatch(client, stored, damage):
             assert dispatch_check(tx, claimed['id'], claimed['lease_token']) == (False, 'slides_incomplete')
     finally:
         _cancel(rk)
+
+
+# ---------------------------------------------------------------------------
+# A6. The lifecycle of slide objects
+# ---------------------------------------------------------------------------
+
+def _published_long_ago(rk: str) -> None:
+    with api_tx() as tx:
+        tx.execute("""UPDATE publishing_queue SET status = 'published', delivery_state = 'published',
+                             updated_at = NOW() - interval '120 days'
+                       WHERE request_key = %(rk)s""", dict(rk=rk))
+
+
+def test_a_slide_key_counts_as_referenced(client, stored):
+    from service.spotlight.cleanup import is_referenced
+    rk = _carousel(client, slides=3)
+    try:
+        assert _upload(client, rk, slide=3).status_code == 200
+        (s3,) = _slides(_row(rk)['id'])
+        with api_tx('read committed') as tx:
+            assert is_referenced(tx, s3['image_key'])
+            assert not is_referenced(tx, s3['image_key'] + '.gone')
+    finally:
+        _cancel(rk)
+
+
+def test_the_cleanup_batch_leaves_a_slide_that_came_back_alone(client, stored):
+    """A key queued while nothing named it, then named by a slide before
+    the batch ran: the slide is a new owner, so the object stays."""
+    from service.spotlight import cleanup
+    rk = _carousel(client, slides=3)
+    try:
+        assert _upload(client, rk, slide=2).status_code == 200
+        (s2,) = _slides(_row(rk)['id'])
+        with api_tx() as tx:
+            tx.execute(
+                """INSERT INTO cleanup_job (kind, target, evidence)
+                   VALUES ('asset_delete', %(k)s, '{"owners": []}'::jsonb)""", dict(k=s2['image_key']))
+        deleted: list = []
+        cleanup.run_cleanup_batch(api_tx, delete=lambda keys: deleted.extend(keys) or list(keys),
+                                  target_prefix=f'spotlight/{rk}/')
+        assert deleted == []
+        assert _slides(_row(rk)['id'])[0]['image_key'] == s2['image_key']
+    finally:
+        _cancel(rk)
+
+
+def test_the_cleanup_batch_clears_a_confirmed_slide_key(client, stored):
+    from service.spotlight import cleanup
+    from service.spotlight.cleanup import enqueue_asset_delete
+    rk, row, slides = _rendered_carousel(client, slides=3)
+    try:
+        _published_long_ago(rk)
+        with api_tx() as tx:
+            for s in slides:
+                enqueue_asset_delete(tx, s['image_key'])
+        out = cleanup.run_cleanup_batch(api_tx, delete=lambda keys: list(keys),
+                                        target_prefix=f'spotlight/{rk}/')
+        assert out['done'] == 3
+        assert all(s['image_key'] is None and s['image_url'] is None and s['image_sha256'] is None
+                   for s in _slides(row['id']))
+        assert _row(rk)['image_key'] is None
+    finally:
+        _cancel(rk)
+
+
+def test_the_retention_sweep_queues_every_slide_of_an_old_published_carousel(client, stored):
+    from service.cron.spotlightretention import retention_sweep
+    rk, row, slides = _rendered_carousel(client, slides=4)
+    try:
+        _published_long_ago(rk)
+        with api_tx() as tx:
+            # Slide 3's earlier job ran out of attempts: a human has to look,
+            # and the sweep must not file a fresh one every day.
+            tx.execute("""INSERT INTO cleanup_job (kind, target, state, attempts)
+                          VALUES ('asset_delete', %(k)s, 'abandoned', 10)""",
+                       dict(k=slides[2]['image_key']))
+            retention_sweep(tx)
+        assert [_pending_delete(s['image_key']) for s in slides] == [True, True, False, True]
+    finally:
+        _cancel(rk)
+
+
+def test_the_retention_sweep_leaves_a_recent_carousel_alone(client, stored):
+    from service.cron.spotlightretention import retention_sweep
+    rk, row, slides = _rendered_carousel(client, slides=2)
+    try:
+        with api_tx() as tx:
+            tx.execute("UPDATE publishing_queue SET status = 'published' WHERE request_key = %(rk)s",
+                       dict(rk=rk))
+            retention_sweep(tx)
+        assert [_pending_delete(s['image_key']) for s in slides] == [False, False]
+    finally:
+        _cancel(rk)
+
+
+def test_a_removal_marked_done_queues_every_slide(client, stored):
+    rk, row, slides = _rendered_carousel(client, slides=3)
+    try:
+        with api_tx() as tx:
+            tx.execute("""UPDATE publishing_queue SET status = 'published', delivery_state = 'published',
+                                 external_post_id = 'fb-1' WHERE id = %(id)s""", dict(id=row['id']))
+            task_id = tx.execute(
+                """INSERT INTO spotlight_removal_task (queue_id, platform, external_post_id, reason)
+                   VALUES (%(q)s, 'facebook', 'fb-1', 'delete_via_api') RETURNING id""",
+                dict(q=row['id'])).fetchone()['id']
+        r = client.post(f'/admin/growth/removals/{task_id}/done', json={}, headers=H)
+        assert r.status_code == 200, r.get_json()
+        assert [_pending_delete(s['image_key']) for s in slides] == [True, True, True]
+    finally:
+        _cancel(rk)
+
+
+def test_the_caption_route_refuses_a_carousel(client, stored, make_person):
+    A = _admin_headers(make_person)
+    rk, row, slides = _rendered_carousel(client, slides=2)
+    try:
+        r = client.post(f"/admin/growth/queue/{row['id']}/caption", json=dict(caption='New words'), headers=A)
+        assert r.status_code == 409 and r.get_json() == dict(error='carousel_caption')
+        after = _row(rk)
+        assert after['image_key'] == row['image_key'] and after['status'] == 'review'
+        assert _slides(row['id']) == slides
+    finally:
+        _cancel(rk)
