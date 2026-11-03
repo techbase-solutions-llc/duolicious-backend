@@ -1260,6 +1260,9 @@ import service.api.admin.economy_routes  # noqa: E402,F401
 import service.api.admin.map_routes  # noqa: E402,F401
 import service.api.admin.moderation_routes as _admin_mod_routes  # noqa: E402,F401
 import service.api.admin.system_routes  # noqa: E402,F401
+# The send guard's figures for the outside mail watchdog (send safeguards,
+# 2 Nov 2026). Its own read-only secret, AHAVAH_SEND_STATS_SECRET.
+import service.api.send_stats_routes  # noqa: E402,F401
 import service.api.admin.engagement_routes  # noqa: E402,F401
 import service.api.admin.audit_routes  # noqa: E402,F401
 import service.api.admin.growth_routes  # noqa: E402,F401

@@ -248,6 +248,9 @@ services:
       # Shared secret the spotlight scheduler sends as X-Growth-Cron.
       # Blank disables cron access entirely (fails closed).
       AHAVAH_GROWTH_CRON_SECRET: ${AHAVAH_GROWTH_CRON_SECRET:-}
+      # The read-only secret for GET /internal/send-stats (header X-Send-Stats),
+      # which the outside mail watchdog reads. Blank closes the route.
+      AHAVAH_SEND_STATS_SECRET: ${AHAVAH_SEND_STATS_SECRET:-}
       # The send guard (smtp/guard.py, send safeguards plan of 2 Nov 2026),
       # read by every container that sends. The global ceilings run in a trial
       # week until AHAVAH_SEND_GUARD_GLOBAL_SHADOW_UNTIL (a Barbados date; set
