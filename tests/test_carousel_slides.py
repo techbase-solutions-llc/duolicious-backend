@@ -16,6 +16,7 @@ import base64
 import hashlib
 import io
 import secrets
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -383,5 +384,102 @@ def test_a_storage_failure_on_slide_4_reverts_the_row(client, stored, monkeypatc
             after = tx.execute("SELECT status, scheduled_for FROM publishing_queue WHERE id = %(id)s",
                                dict(id=row['id'])).fetchone()
         assert after['status'] == 'review' and after['scheduled_for'] == slot
+    finally:
+        _cancel(rk)
+
+
+# ---------------------------------------------------------------------------
+# A5. Claim and dispatch
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def _publication_on():
+    from service.spotlight.queue import set_setting
+    with api_tx() as tx:
+        set_setting(tx, 'publication_enabled', 'true')
+        set_setting(tx, 'external_access_enabled', 'true')
+    try:
+        yield
+    finally:
+        with api_tx() as tx:
+            set_setting(tx, 'publication_enabled', 'false')
+            set_setting(tx, 'external_access_enabled', 'true')
+
+
+def _due_first(rk: str) -> None:
+    """Scheduled and older than anything else in the shared database, so a
+    claim of 1 takes this row and nothing another test left behind."""
+    with api_tx() as tx:
+        tx.execute("""UPDATE publishing_queue SET status = 'scheduled',
+                             scheduled_for = NOW() - interval '3650 days'
+                       WHERE request_key = %(rk)s""", dict(rk=rk))
+
+
+def test_claim_returns_every_slide_url_in_order(client, stored):
+    rk, row, slides = _rendered_carousel(client)
+    _due_first(rk)
+    try:
+        with _publication_on():
+            r = client.post('/admin/growth/queue/claim', json=dict(max=1), headers=H)
+        assert r.status_code == 200, r.get_json()
+        claimed = [c for c in r.get_json()['claimed'] if c['request_key'] == rk]
+        assert len(claimed) == 1
+        assert claimed[0]['image_urls'] == [s['image_url'] for s in slides]
+        assert claimed[0]['image_url'] == slides[0]['image_url']
+        assert claimed[0]['slide_count'] == 7
+    finally:
+        _cancel(rk)
+
+
+def test_a_claimed_single_image_row_has_no_image_urls(client, stored):
+    r = client.post('/admin/growth/brand', headers=H, json=dict(
+        slug=_slug(), caption='c', scheduled_for=_soon().isoformat(), platforms=['facebook']))
+    rk = r.get_json()['request_key']
+    try:
+        assert _upload(client, rk).status_code == 200
+        _due_first(rk)
+        with _publication_on():
+            r = client.post('/admin/growth/queue/claim', json=dict(max=1), headers=H)
+        claimed = [c for c in r.get_json()['claimed'] if c['request_key'] == rk]
+        assert len(claimed) == 1
+        assert 'image_urls' not in claimed[0]
+        assert claimed[0]['slide_count'] is None
+    finally:
+        _cancel(rk)
+
+
+def _claim_in_tx(tx, rk):
+    tx.execute("""UPDATE publishing_queue SET status = 'scheduled',
+                         scheduled_for = NOW() - interval '3650 days'
+                   WHERE request_key = %(rk)s""", dict(rk=rk))
+    return [r for r in tx.execute("SELECT * FROM claim_spotlight_posts(1)").fetchall()
+            if r['request_key'] == rk]
+
+
+def test_a_whole_carousel_passes_dispatch(client, stored):
+    from service.spotlight.dispatch import dispatch_check
+    rk, row, slides = _rendered_carousel(client, slides=3)
+    try:
+        with _publication_on(), api_tx() as tx:
+            (claimed,) = _claim_in_tx(tx, rk)
+            assert dispatch_check(tx, claimed['id'], claimed['lease_token']) == (True, '')
+    finally:
+        _cancel(rk)
+
+
+@pytest.mark.parametrize('damage', ['delete', 'no_url', 'no_key'])
+def test_a_carousel_with_a_slide_missing_fails_dispatch(client, stored, damage):
+    from service.spotlight.dispatch import dispatch_check
+    rk, row, slides = _rendered_carousel(client, slides=7)
+    try:
+        with _publication_on(), api_tx() as tx:
+            (claimed,) = _claim_in_tx(tx, rk)
+            sql = {
+                'delete': "DELETE FROM publishing_queue_slide WHERE queue_id = %(q)s AND position = 4",
+                'no_url': "UPDATE publishing_queue_slide SET image_url = NULL WHERE queue_id = %(q)s AND position = 4",
+                'no_key': "UPDATE publishing_queue_slide SET image_key = NULL WHERE queue_id = %(q)s AND position = 4",
+            }[damage]
+            tx.execute(sql, dict(q=claimed['id']))
+            assert dispatch_check(tx, claimed['id'], claimed['lease_token']) == (False, 'slides_incomplete')
     finally:
         _cancel(rk)

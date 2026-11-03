@@ -754,8 +754,25 @@ def post_growth_queue_claim():
             rows = []
         else:
             rows = tx.execute("SELECT * FROM claim_spotlight_posts(%(m)s)", dict(m=requested)).fetchall()
+        claimed = [_row(r) for r in rows]
+        # A carousel row (TEC-1845) is published from every slide's URL, in
+        # order, read in the claim's own transaction. A single-image row has
+        # no `image_urls` key at all. A slide missing here is left out, and
+        # dispatch_check refuses the row as `slides_incomplete` before any
+        # Graph call.
+        carousel_ids = [r['id'] for r in rows if r.get('slide_count') is not None]
+        if carousel_ids:
+            urls: dict = {}
+            for sl in tx.execute(
+                    """SELECT queue_id, image_url FROM publishing_queue_slide
+                        WHERE queue_id = ANY(%(ids)s) AND image_url IS NOT NULL
+                        ORDER BY queue_id, position""",
+                    dict(ids=carousel_ids)).fetchall():
+                urls.setdefault(sl['queue_id'], []).append(sl['image_url'])
+            for r, c in zip(rows, claimed):
+                if r.get('slide_count') is not None:
+                    c['image_urls'] = urls.get(r['id'], [])
         _audit(tx, s, 'growth.queue.claim', claimed=len(rows), reaped=reaped, paused=paused, halted=halted)
-    claimed = [_row(r) for r in rows]
     return jsonify({'claimed': claimed, 'reaped': reaped, 'paused': paused, 'halted': halted})
 
 
