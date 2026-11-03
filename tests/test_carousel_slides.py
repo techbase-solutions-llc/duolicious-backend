@@ -30,7 +30,7 @@ from service.spotlight.queue import create_candidate
 pytestmark = pytest.mark.usefixtures('carousel_schema')
 
 H = {'X-Growth-Cron': 'test-cron-secret'}
-MIGRATION = Path(__file__).resolve().parent.parent / 'migrations' / '0089_carousel_slides.sql'
+MIGRATION = Path(__file__).resolve().parent.parent / 'migrations' / '0090_carousel_slides.sql'
 
 
 def _slug() -> str:

@@ -1354,7 +1354,7 @@ _REQUEST_KEY_MAX = 64
 # and its own utm_campaign.
 _CALENDAR_ROUTE_KINDS = ('brand', 'tool')
 BRAND_CAPTION_MAX = CAPTION_MAX
-# Meta's limits for a carousel, and migration 0089's check on slide_count.
+# Meta's limits for a carousel, and migration 0090's check on slide_count.
 CAROUSEL_MIN = 2
 CAROUSEL_MAX = 10
 

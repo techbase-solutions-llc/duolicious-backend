@@ -824,7 +824,7 @@ def together_schema(growth_schema):
 # ---------------------------------------------------------------------------
 # Carousel slides (TEC-1845)
 # ---------------------------------------------------------------------------
-# Migration 0089 is idempotent, so applying it here is what the deploy does.
+# Migration 0090 is idempotent, so applying it here is what the deploy does.
 # A module that reads `publishing_queue.slide_count` or the slide table asks
 # for it with
 #     pytestmark = pytest.mark.usefixtures('carousel_schema')
@@ -835,7 +835,7 @@ def carousel_schema(growth_schema):
 
     from database import api_tx
 
-    path = Path(__file__).resolve().parent.parent / 'migrations' / '0089_carousel_slides.sql'
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0090_carousel_slides.sql'
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
 

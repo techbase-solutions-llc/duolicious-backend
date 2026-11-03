@@ -93,7 +93,7 @@ _Q_REFERENCES = """
       FROM spotlight_revision
      WHERE image_key = ANY(%(k)s::text[])
     UNION ALL
-    -- A carousel's slides (TEC-1845, migration 0089). Slide 1's key is also
+    -- A carousel's slides (TEC-1845, migration 0090). Slide 1's key is also
     -- on its queue row; every other slide is named only here.
     SELECT image_key AS target, 'slide:' || queue_id::text || ':' || position::text AS ref
       FROM publishing_queue_slide

@@ -1,4 +1,4 @@
--- 0089_carousel_slides.sql
+-- 0090_carousel_slides.sql
 -- Carousel posts on Facebook and Instagram (TEC-1845; ahavah-admin
 -- docs/plans/2026-11-02-carousel-posts.md). The first is the 7-slide
 -- Families carousel, Fri 13 Nov 2026.
