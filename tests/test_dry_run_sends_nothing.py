@@ -110,7 +110,7 @@ def reached(monkeypatch):
     monkeypatch.setattr(smtp.Smtp, '_try_send', lambda self, **kw: hits.append(f"email {kw.get('subject')}"))
     monkeypatch.setattr(notifications, '_send_one', lambda *a, **k: hits.append('push'))
     for name in ('enqueue', 'enqueue_for_lead', 'enqueue_for_organiser', 'enqueue_for_recommendation',
-                 'enqueue_for_mentor_link'):
+                 'enqueue_for_mentor_link', 'enqueue_for_onboardee'):
         if hasattr(outbox, name):
             monkeypatch.setattr(outbox, name, lambda *a, _n=name, **k: hits.append(f'outbox {_n}'))
     return hits

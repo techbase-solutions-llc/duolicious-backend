@@ -309,6 +309,13 @@ add('profile_views_weekly', 'emails/profile_views_weekly.py profile_views_html',
 add('one_photo_nudge', 'emails/one_photo_nudge.py one_photo_html', 'member',
     'HELD: cron returnmail Tuesday, AHAVAH_ONE_PHOTO_NUDGE_ENABLED (' + SWITCH_NOTE + ')',
     lambda: (one_photo_nudge.SUBJECT, one_photo_nudge.one_photo_html(S_LINK, unsub('campaigns'))), one_photo_nudge.FROM_ADDR)
+from emails import unfinished_signup  # noqa: E402
+add('unfinished_signup', 'emails/unfinished_signup.py unfinished_signup_html', 'lead',
+    'HELD: cron returnmail, any day but Friday and Saturday, AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED ('
+    + SWITCH_NOTE + ')',
+    lambda: (unfinished_signup.SUBJECT, unfinished_signup.unfinished_signup_html(unfinished_signup.TARGET,
+                                                                                 unsub('signup'))),
+    unfinished_signup.FROM_ADDR)
 add('friend_joined', 'emails/friend_joined.py friend_joined_html', 'member',
     'HELD: /finish-onboarding queue_for_inviter, AHAVAH_FRIEND_JOINED_ENABLED (' + SWITCH_NOTE + ')',
     lambda: (friend_joined.SUBJECT, friend_joined.friend_joined_html(S_LINK, unsub('campaigns'))), friend_joined.FROM_ADDR)

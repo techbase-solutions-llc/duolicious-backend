@@ -7,6 +7,10 @@ within the last 7 days. Only steps the server stores can be the furthest
 step; verify email, verify phone, marital status, children and looking for
 leave no server record during sign-up. Dates and a step only: no name and
 no address leave the server.
+
+`reminded_at` is when the unfinished sign-up reminder (TEC-2107,
+emails/unfinished_signup.py) was accepted for sending to the address, else
+null: its claim in lead_email_send, marked sent by the outbox drain.
 """
 from __future__ import annotations
 
@@ -15,7 +19,10 @@ from __future__ import annotations
 # nothing, which the design calls "The first step".
 STEPS = ('none', 'name', 'date_of_birth', 'gender', 'photos', 'country', 'assembly', 'relocation')
 
-_STEP = """
+# The lead_email_send campaign of the unfinished sign-up reminder (TEC-2107).
+REMINDER_CAMPAIGN = 'unfinished_signup'
+
+STEP_SQL = """
     CASE
       WHEN o.ahavah_extra ? 'relocation' THEN 'relocation'
       WHEN o.ahavah_extra ? 'assembly' THEN 'assembly'
@@ -30,13 +37,15 @@ _STEP = """
 
 Q_UNFINISHED = f"""
     WITH o AS (
-        SELECT o.created_at, o.updated_at, o.lead_source, {_STEP} AS furthest_step
+        SELECT o.created_at, o.updated_at, o.lead_source, {STEP_SQL} AS furthest_step,
+               (SELECT s.sent_at FROM lead_email_send s
+                 WHERE s.email = lower(o.email) AND s.campaign = '{REMINDER_CAMPAIGN}') AS reminded_at
           FROM onboardee o
          WHERE NOT EXISTS (SELECT 1 FROM person p WHERE lower(p.email) = lower(o.email))
            AND lower(o.email) <> ALL(%(ex)s)
            AND o.updated_at < NOW() - INTERVAL '1 hour'
     )
-    SELECT created_at AS started_at, updated_at AS last_saved_at, furthest_step
+    SELECT created_at AS started_at, updated_at AS last_saved_at, furthest_step, reminded_at
       FROM o
      WHERE lead_source IS NULL OR furthest_step <> 'none'
      ORDER BY created_at DESC

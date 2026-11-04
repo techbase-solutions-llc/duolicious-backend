@@ -23,7 +23,7 @@ from urllib.parse import quote
 from antiabuse.antispam.signupemail import normalize_email
 
 
-_SCOPES = ("waitlist", "beta", "notifications", "claim", "community", "campaigns", "news")
+_SCOPES = ("waitlist", "beta", "notifications", "claim", "community", "campaigns", "news", "signup")
 
 
 def _secret() -> bytes:
@@ -143,6 +143,26 @@ _Q_UNSUB = {
          WHERE normalized_email = %(ne)s
         RETURNING id
     """,
+    # The unfinished sign-up reminder (TEC-2107): an address that started
+    # sign-up and has no account, and usually no lead row either. The claim
+    # the reminder wrote (lead_email_send, migration 0092) is stamped, so
+    # leaving works with neither; any lead row of the address leaves the
+    # news mail too, since that is the other mail an address with no
+    # account can get.
+    "signup": """
+        WITH s AS (
+            UPDATE lead_email_send
+               SET unsubscribed_at = COALESCE(unsubscribed_at, NOW())
+             WHERE email = %(email)s AND campaign = 'unfinished_signup'
+            RETURNING 1
+        ), l AS (
+            UPDATE lead
+               SET unsubscribed_at = COALESCE(unsubscribed_at, NOW())
+             WHERE normalized_email = %(ne)s
+            RETURNING 1
+        )
+        SELECT 1 AS ok WHERE EXISTS (SELECT 1 FROM s) OR EXISTS (SELECT 1 FROM l)
+    """,
 }
 
 
@@ -154,7 +174,7 @@ def stamp_unsubscribed(tx, scope: str, email: str) -> bool:
     if scope not in _Q_UNSUB:
         return False
     params = dict(email=email.strip().lower())
-    if scope == 'news':
+    if scope in ('news', 'signup'):
         params['ne'] = normalize_email(params['email'])
     row = tx.execute(_Q_UNSUB[scope], params).fetchone()
     return row is not None

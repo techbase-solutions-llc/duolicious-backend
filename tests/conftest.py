@@ -679,12 +679,13 @@ def growth_schema():
 
 def _outbox_recipients(tx) -> str:
     """The recipient columns the shared test database's outbox has now:
-    0071 adds organiser_id and 0073 recommendation_id and mentor_link_id.
+    0071 adds organiser_id, 0073 recommendation_id and mentor_link_id, and
+    0092 onboardee_email.
     Re-running an older migration's check must keep the newer columns, or
     its ADD CONSTRAINT refuses a row another branch's test left behind
     (TEC-1845)."""
     cols = ['person_id', 'lead_id']
-    for c in ('organiser_id', 'recommendation_id', 'mentor_link_id'):
+    for c in ('organiser_id', 'recommendation_id', 'mentor_link_id', 'onboardee_email'):
         if tx.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'email_outbox' "
                       "AND column_name = %(c)s", dict(c=c)).fetchone():
             cols.append(c)
@@ -1516,5 +1517,28 @@ def report_rewards_schema(admin_fixes_schema, send_guard_schema):
     from database import api_tx
 
     path = Path(__file__).resolve().parent.parent / 'migrations' / '0091_report_rewards.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Unfinished sign-up reminder (4 Nov 2026, TEC-2107)
+# ---------------------------------------------------------------------------
+# Migration 0092: email_outbox.onboardee_email in the one-recipient check,
+# and lead_email_send.unsubscribed_at. After 0073 (matchmaker_schema), which
+# re-applies an older check without onboardee_email. Idempotent, as the
+# deploy needs. Autouse: the drain reads onboardee_email on every
+# acceptance, and the `signup` unsubscribe stamps unsubscribed_at.
+
+UNFINISHED_SIGNUP_MIGRATION = '0092_unfinished_signup.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def unfinished_signup_schema(matchmaker_schema, report_rewards_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / UNFINISHED_SIGNUP_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))

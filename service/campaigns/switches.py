@@ -172,6 +172,12 @@ SWITCHES = {
     # needs events_live. Each off until the owner has seen its proof.
     'your_ahavah_email_line': 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED',
     'events_host_refusal_email': 'AHAVAH_EVENTS_HOST_REFUSAL_EMAIL_ENABLED',
+    # The one reminder to someone who confirmed an address, started sign-up
+    # and stopped before an account was made (TEC-2107;
+    # emails/unfinished_signup.py, the returnmail cron). Off until the owner
+    # has seen its proof (scripts/send_proofs.py). The api reads it too, to
+    # show on Admin > Users > Unfinished whether the reminder is on.
+    'unfinished_signup_reminder': 'AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})
