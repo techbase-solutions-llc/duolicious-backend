@@ -1,6 +1,7 @@
 """SQL for GET /admin/users (list) and GET /admin/users/:uuid (detail)."""
 
 from service.admin.queries.community import waiting_likes_sql
+from service.admin.queries.overview import VIEW_ONLY_ACTIONS
 
 # Likes nobody has answered, per member (TEC-1897), for the Users list's
 # "Has likes waiting" filter. Binds %(ex)s.
@@ -180,19 +181,27 @@ Q_USER_REFERRAL_STATS = """
      WHERE inviter_email = (SELECT email FROM person WHERE uuid = %(uuid)s::uuid)
 """
 
-Q_USER_AUDIT_LOG = """
+# The panel's "Recent admin actions on this user" leaves out actions that
+# only look (overview.VIEW_ONLY_ACTIONS), so opening a member's timeline
+# (TEC-2092) never pushes a real action out of its 50 rows. The Audit Log
+# tab still lists them. Opening a report's messages stays: it read this
+# member's private words, and the panel must say so (SEC-2).
+_PANEL_HIDDEN = ', '.join(f"'{a}'" for a in VIEW_ONLY_ACTIONS if a != 'view_report_messages')
+
+Q_USER_AUDIT_LOG = f"""
     SELECT
         actor_email,
         action,
         metadata,
         created_at
       FROM admin_audit_log
-     WHERE target_uuid = %(uuid)s::uuid
-        OR target_email = (SELECT email FROM person WHERE uuid = %(uuid)s::uuid)
-        -- An opening of a report's messages names the reported member as
-        -- its target, but it read the reporter's messages too (SEC-2).
-        OR (action = 'view_report_messages'
-            AND metadata->>'reporter_uuid' = %(uuid)s::text)
+     WHERE (target_uuid = %(uuid)s::uuid
+            OR target_email = (SELECT email FROM person WHERE uuid = %(uuid)s::uuid)
+            -- An opening of a report's messages names the reported member as
+            -- its target, but it read the reporter's messages too (SEC-2).
+            OR (action = 'view_report_messages'
+                AND metadata->>'reporter_uuid' = %(uuid)s::text))
+       AND action NOT IN ({_PANEL_HIDDEN})
      ORDER BY created_at DESC
      LIMIT 50
 """

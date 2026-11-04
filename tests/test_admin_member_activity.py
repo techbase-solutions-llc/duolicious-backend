@@ -55,6 +55,9 @@ def cleanup():
     with api_tx() as tx:
         tx.execute('DELETE FROM entitlement_event WHERE event_id = ANY(%(e)s)', dict(e=events))
         tx.execute('DELETE FROM organiser WHERE id = ANY(%(o)s)', dict(o=organisers))
+        # Feedback outlives its member (person_id is SET NULL), and a left
+        # row would sit in the admin's waiting list for other tests.
+        tx.execute('DELETE FROM feedback WHERE message = %(s)s', dict(s=_SECRET))
 
 
 @pytest.fixture
@@ -340,6 +343,24 @@ def test_opening_the_timeline_is_audited_and_stays_out_of_recent_activity(
     r = client.get('/admin/overview', headers=admin_headers)
     for feed in ('recent_activity', 'recent_activity_all'):
         assert not [e for e in r.get_json()[feed] if e['object'] == 'view_member_activity'], feed
+
+
+def test_the_member_panel_leaves_out_timeline_openings(client, admin_headers, make_person):
+    """Opening a timeline is audited but never takes a place in the panel's
+    "Recent admin actions on this user"; the Audit Log tab still lists it."""
+    me = make_person(name='Panel', gender='Woman')
+    with api_tx() as tx:
+        tx.execute(
+            """INSERT INTO admin_audit_log (actor_email, actor_uuid, action, target_uuid, metadata)
+               VALUES ('a@example.com', gen_random_uuid(), 'token_adjust', %(u)s::uuid, '{}'::jsonb)""",
+            dict(u=me['uuid']))
+    for _ in range(3):
+        _get(client, admin_headers, me['uuid'])
+    panel = client.get(f"/admin/users/{me['uuid']}", headers=admin_headers).get_json()['audit']
+    assert [r['action'] for r in panel] == ['token_adjust']
+    rows = client.get('/admin/audit-log?action=view_member_activity&days=0',
+                      headers=admin_headers).get_json()['rows']
+    assert len([r for r in rows if r['target_uuid'] == me['uuid']]) == 3
 
 
 # ---------------------------------------------------------------------------
