@@ -11,7 +11,7 @@ from scripts import send_proofs as sp
 EXPECTED_EMAILS = {
     'likes_waiting', 'match_reminder', 'message_reminder', 'profile_views', 'one_photo',
     'e2_personal', 'referral_member', 'friend_joined', 'e1_spotlight', 'e4_card_ready',
-    'e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings',
+    'e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings', 'unfinished_signup',
 }
 
 _TABLES = ('campaign_link', 'email_outbox', 'email_send_log', 'push_send_log',
@@ -131,3 +131,17 @@ def test_the_gatherings_proofs_carry_no_live_link():
     for name in ('e2_gatherings', 'e2_gatherings_online', 'welcome_gatherings'):
         html = by_name[name]['html']
         assert '/s/' not in html and sp.PROOF_LINK_DISABLED in html
+
+
+def test_only_sends_one_proof_to_the_owner_and_no_push(capture):
+    """The unfinished sign-up reminder (TEC-2107): its proof alone, to the
+    owner only, with nothing recorded and no push."""
+    smtp, pushes, subs_asked = capture
+    before = _counts()
+    sp.main(['--only', 'unfinished_signup', '--send'])
+    assert [s['to_addr'] for s in smtp.sent] == ['harrigan.tennyson@gmail.com']
+    assert smtp.sent[0]['subject'] == '[PROOF] Your Ahavah sign-up is waiting'
+    assert pushes == [] and subs_asked == []
+    assert _counts() == before
+    with pytest.raises(SystemExit):
+        sp.main(['--only', 'no_such_proof'])
