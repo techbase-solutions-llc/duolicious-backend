@@ -8,8 +8,8 @@ from __future__ import annotations
 
 
 _Q_INSERT = """
-  INSERT INTO feedback (category, message, email, path, user_agent)
-  VALUES (%(category)s, %(message)s, %(email)s, %(path)s, %(user_agent)s)
+  INSERT INTO feedback (category, message, email, path, user_agent, person_id)
+  VALUES (%(category)s, %(message)s, %(email)s, %(path)s, %(user_agent)s, %(person_id)s)
   RETURNING id
 """
 
@@ -19,13 +19,17 @@ _Q_COUNT_TODAY = """
 """
 
 
-def insert(tx, *, category, message, email=None, path=None, user_agent=None) -> int:
+def insert(tx, *, category, message, email=None, path=None, user_agent=None,
+           person_id=None) -> int:
+    """`person_id` is the signed-in member who sent it, or None when the
+    sender is anonymous (report rewards plan, 3 Nov 2026)."""
     row = tx.execute(_Q_INSERT, dict(
         category=category,
         message=message,
         email=email,
         path=path,
         user_agent=user_agent,
+        person_id=person_id,
     )).fetchone()
     return int(row["id"])
 
