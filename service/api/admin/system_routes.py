@@ -4,7 +4,7 @@ from __future__ import annotations
 import duotypes as t
 
 from service.api.decorators import aget, apost
-from service.admin import require_admin
+from service.admin import record_audit, require_admin
 from service.admin.queries import (
     Q_SYSTEM_HEALTH, Q_OTP_24H, Q_OUTBOX_HEALTH, Q_FEEDBACK_RECENT,
     Q_VERIFICATION_JOBS, Q_OTP_DAILY, Q_OTP_REFUSALS_30D)
@@ -90,5 +90,10 @@ def post_mail_guard_clear(s: t.SessionInfo):
         abort(400)
     if everything == bool(kind) or (kind is not None and not isinstance(kind, str)):
         abort(400)
-    cleared = sendguard.clear_halt(channel, None if everything else kind, by=f'admin:{s.person_id}')
+    # Audited in the clearing transaction, and only when there was a halt to
+    # clear: a click on nothing changes nothing (TEC-2091).
+    cleared = sendguard.clear_halt(
+        channel, None if everything else kind, by=f'admin:{s.person_id}',
+        audit=lambda tx: record_audit(tx, s, 'mail_guard.clear', metadata=dict(
+            channel=channel, kind=None if everything else kind, all=everything)))
     return {'cleared': cleared}

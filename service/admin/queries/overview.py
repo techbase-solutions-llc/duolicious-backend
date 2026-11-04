@@ -173,6 +173,16 @@ Q_OVERVIEW_PREMIUM_30D = f"""
      ORDER BY days.d
 """
 
+# Audit actions that only look at something. They stay in the audit log
+# (the map shows where every member lives, and a report's messages are
+# members' private words), but they leave the Overview feed, which is for
+# what changed: on 4 Nov 2026, 61 of the log's 155 rows were map views, and
+# they pushed real events out of a 20-line feed (TEC-2091). An admin GET
+# route that writes an audit row must name its action here;
+# tests/test_admin_audit_coverage.py holds that.
+VIEW_ONLY_ACTIONS = ('admin_map_view', 'view_report_messages')
+_VIEW_ONLY_SQL = ', '.join(f"'{a}'" for a in VIEW_ONLY_ACTIONS)
+
 _RECENT_BRANCHES = f"""
     SELECT * FROM (
         -- A real member joining. Until 2026-09-24 the feed's only two
@@ -210,6 +220,7 @@ _RECENT_BRANCHES = f"""
          -- 'cli' (health review, finding 20). They belong on the Audit tab,
          -- not in a feed of what people did.
          WHERE actor_email NOT IN ('cron', 'cli')
+           AND action NOT IN ({_VIEW_ONLY_SQL})
          ORDER BY created_at DESC LIMIT 10
     ) sub_admin
 """
@@ -223,6 +234,10 @@ Q_OVERVIEW_RECENT_ACTIVITY = f"""{_RECENT_BRANCHES}    ORDER BY created_at DESC 
 # its five kinds and an admin that knows these two reads this instead. A
 # report names the reported member and carries their uuid as `object`; a
 # Premium row names the member who paid. Never the reason or the reporter.
+#
+# Feedback (TEC-2091) is the category only, with the row's id as `object`:
+# never the message, the email or the member. The 27 Oct report sat unseen
+# for a week because it was in neither this feed nor the audit log.
 Q_OVERVIEW_RECENT_ACTIVITY_ALL = f"""{_RECENT_BRANCHES}    UNION ALL SELECT * FROM (
         SELECT 'report' AS kind, reported.name AS subject, reported.uuid::text AS object,
                r.reported_at AT TIME ZONE 'UTC' AS created_at
@@ -240,5 +255,11 @@ Q_OVERVIEW_RECENT_ACTIVITY_ALL = f"""{_RECENT_BRANCHES}    UNION ALL SELECT * FR
            AND {_MEMBER_P}
          ORDER BY e.received_at DESC LIMIT 10
     ) sub_premium
+    UNION ALL SELECT * FROM (
+        SELECT 'feedback' AS kind, category AS subject, id::text AS object,
+               created_at
+          FROM feedback
+         ORDER BY created_at DESC LIMIT 10
+    ) sub_feedback
     ORDER BY created_at DESC LIMIT 20
 """

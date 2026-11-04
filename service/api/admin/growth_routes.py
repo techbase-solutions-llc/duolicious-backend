@@ -250,7 +250,15 @@ def post_admin_growth_email_preview(s: t.SessionInfo, campaign: str):
     row = preview_row(to) if preview_row else dict(person_id=0, email=to, name='Preview')
     subject, html = mod.build_for(row)
     from smtp import make_aws_smtp
-    make_aws_smtp().send(subject=subject, body=html, to_addr=to, from_addr=mod.FROM_ADDR)
+    # A preview changes no row, but it sends mail in Ahavah's name to any
+    # address the admin types, so it is audited (TEC-2091). The send runs
+    # inside the audit's transaction, so the row and the send go together.
+    # A send that fails or that the send guard refuses returns rather than
+    # raising, so the row records the attempt, not a delivery.
+    with api_tx() as tx:
+        record_audit(tx, s, 'growth.email.preview', target_email=to,
+                     metadata=dict(campaign=campaign))
+        make_aws_smtp().send(subject=subject, body=html, to_addr=to, from_addr=mod.FROM_ADDR)
     return dict(ok=True)
 
 @apost('/admin/growth/emails/<campaign>/send')
