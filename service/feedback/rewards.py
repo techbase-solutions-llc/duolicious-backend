@@ -256,16 +256,35 @@ FEEDBACK_STATUSES = ('new', 'fixed', 'not_a_fault')
 
 # The same report fields the System tab's health read already returns
 # (Q_FEEDBACK_RECENT: id, category, message, email, path, created_at), plus
-# the handling. has_member is the rule mark_fixed resolves the member by.
+# the handling. The member is resolved by the rule mark_fixed uses
+# (resolve_member): the report's person_id, else the one account whose email
+# matches the report's, ignoring case. has_member says whether there is one;
+# member_rewards_30d counts that member's rewarded reports in the cap window,
+# by the same rule as rewarded_in_window, so the admin can tell before
+# submitting that a reward would be capped. 0 with no member.
 Q_FEEDBACK_LIST = """
     SELECT f.id, f.category, f.message, f.email, f.path, f.created_at,
            f.status, f.handled_at, f.reward_tokens, f.reward_days, f.notice_line,
            floor(extract(epoch FROM NOW() - f.created_at) / 3600)::int AS age_hours,
-           (f.person_id IS NOT NULL
-            OR (f.email IS NOT NULL
-                AND (SELECT count(*) FROM person p
-                      WHERE lower(p.email) = lower(f.email)) = 1)) AS has_member
+           (m.id IS NOT NULL) AS has_member,
+           CASE WHEN m.id IS NULL THEN 0 ELSE (
+             SELECT count(*)::int
+               FROM feedback r
+              WHERE r.person_id = m.id
+                AND r.status = 'fixed'
+                AND (r.reward_tokens > 0 OR r.reward_days > 0)
+                AND r.handled_at > NOW() - make_interval(days => %(window_days)s)
+           ) END AS member_rewards_30d
       FROM feedback f
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+                 (SELECT p.id FROM person p WHERE p.id = f.person_id),
+                 (SELECT CASE WHEN count(*) = 1 THEN min(p.id) END
+                    FROM person p
+                   WHERE btrim(f.email, ' ' || chr(9) || chr(10) || chr(13)) <> ''
+                     AND lower(p.email) = lower(btrim(f.email, ' ' || chr(9) || chr(10) || chr(13))))
+               ) AS id
+      ) m ON TRUE
      WHERE %(status)s::text IS NULL OR f.status = %(status)s::text
      ORDER BY f.created_at DESC, f.id DESC
      LIMIT %(limit)s
@@ -277,7 +296,8 @@ Q_FEEDBACK_COUNTS = """
 
 
 def list_feedback(tx, *, status: Optional[str], limit: int = 50) -> dict:
-    rows = tx.execute(Q_FEEDBACK_LIST, dict(status=status, limit=limit)).fetchall()
+    rows = tx.execute(Q_FEEDBACK_LIST, dict(status=status, limit=limit,
+                                            window_days=REPORT_REWARD_WINDOW_DAYS)).fetchall()
     counts = {s: 0 for s in FEEDBACK_STATUSES}
     for r in tx.execute(Q_FEEDBACK_COUNTS).fetchall():
         counts[r['status']] = r['n']

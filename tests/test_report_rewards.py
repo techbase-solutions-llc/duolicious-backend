@@ -345,6 +345,45 @@ def test_the_admin_list_filters_by_status_and_says_who_can_be_thanked(client, ad
     assert client.get('/admin/system/feedback?status=bogus', headers=admin_headers).status_code == 400
 
 
+def test_the_admin_list_counts_the_members_rewards_in_the_cap_window(client, admin_headers, make_person,
+                                                                    feedback_rows):
+    """member_rewards_30d tells the admin form before submit that a reward
+    would be capped. The member is found the way mark_fixed finds them."""
+    p = make_person(name='Counted')
+    other = make_person(name='Uncounted')
+    # Every report is written before the transaction below locks the member.
+    old = feedback_rows(person_id=p['id'], message='Old rewarded report')
+    paid = [feedback_rows(person_id=p['id'], message=f'Rewarded report {i}') for i in range(3)]
+    unpaid = feedback_rows(person_id=p['id'], message='Thanked without a reward')
+    with api_tx('read committed') as tx:
+        rewards.mark_fixed(tx, old, notice_line='Fixed.', reward=True, handled_by='pytest')
+        tx.execute("UPDATE feedback SET handled_at = NOW() - interval '31 days' WHERE id = %(f)s",
+                   dict(f=old))
+        for fid in paid:
+            assert rewards.mark_fixed(tx, fid, notice_line='Fixed.', reward=True,
+                                      handled_by='pytest')['outcome'] == 'paid'
+        rewards.mark_fixed(tx, unpaid, notice_line='Fixed.', reward=False, handled_by='pytest')
+
+    by_session = feedback_rows(person_id=p['id'], message='Waiting, signed in')
+    by_email = feedback_rows(email='  ' + _email_of(p['id']).upper() + ' ', message='Waiting, by address')
+    fresh = feedback_rows(person_id=other['id'], message='Waiting, no rewards yet')
+    anon = feedback_rows(email=None, message='Waiting, anonymous')
+    stranger = feedback_rows(email='nobody-at-all@ahavah-test.invalid', message='Waiting, no account')
+
+    body = client.get('/admin/system/feedback?status=new', headers=admin_headers).get_json()
+    rows = {f['id']: f for f in body['feedback']}
+    assert rows[by_session]['member_rewards_30d'] == 3 and rows[by_session]['has_member'] is True
+    assert rows[by_email]['member_rewards_30d'] == 3 and rows[by_email]['has_member'] is True
+    assert rows[fresh]['member_rewards_30d'] == 0 and rows[fresh]['has_member'] is True
+    assert rows[anon]['member_rewards_30d'] == 0 and rows[anon]['has_member'] is False
+    assert rows[stranger]['member_rewards_30d'] == 0 and rows[stranger]['has_member'] is False
+
+    # The count agrees with what marking the report fixed would do.
+    r = client.post(ADMIN_FIXED.format(by_email), headers=admin_headers,
+                    json=dict(notice_line='We fixed it.', reward=True))
+    assert r.get_json()['outcome'] == 'capped' and r.get_json()['member'] == 'email'
+
+
 # --- 6. notices belong to their member --------------------------------------
 
 def test_notices_are_visible_and_dismissable_by_their_member_only(client, make_person, sign_in, feedback_rows):
