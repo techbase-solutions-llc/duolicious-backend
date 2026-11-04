@@ -1498,3 +1498,23 @@ def send_guard_schema():
     for name in SEND_GUARD_MIGRATIONS:
         with api_tx() as tx:
             tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Report rewards (3 Nov 2026, TEC-2025)
+# ---------------------------------------------------------------------------
+# Migration 0091: feedback status and member, member_notice, and the
+# report_reward ledger reason. After 0072, which this session fixture also
+# re-applies and whose reason list lacks report_reward. Idempotent, as the
+# deploy needs. Autouse: POST /feedback writes person_id and the sendguard
+# tick reads feedback status, whichever test asks.
+
+@pytest.fixture(scope='session', autouse=True)
+def report_rewards_schema(admin_fixes_schema, send_guard_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / '0091_report_rewards.sql'
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
