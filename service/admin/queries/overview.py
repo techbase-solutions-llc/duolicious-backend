@@ -180,7 +180,8 @@ Q_OVERVIEW_PREMIUM_30D = f"""
 # they pushed real events out of a 20-line feed (TEC-2091). An admin GET
 # route that writes an audit row must name its action here;
 # tests/test_admin_audit_coverage.py holds that.
-VIEW_ONLY_ACTIONS = ('admin_map_view', 'view_report_messages')
+# Opening a member's activity timeline (TEC-2092) is one of them.
+VIEW_ONLY_ACTIONS = ('admin_map_view', 'view_report_messages', 'view_member_activity')
 _VIEW_ONLY_SQL = ', '.join(f"'{a}'" for a in VIEW_ONLY_ACTIONS)
 
 _RECENT_BRANCHES = f"""

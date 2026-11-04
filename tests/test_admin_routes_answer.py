@@ -39,6 +39,7 @@ _NOT_SESSION_ROUTES = {
 def _args(admin_uuid: str) -> dict[str, dict]:
     return {
         '/admin/users/<uuid>': dict(uuid=admin_uuid),
+        '/admin/users/<uuid>/activity': dict(uuid=admin_uuid),
         # An unknown run answers a row of zero counts, not a 404.
         '/admin/growth/emails/<campaign>/status/<campaign_id>':
             dict(campaign='e2', campaign_id=f'no-such-run-{uuid.uuid4().hex[:8]}'),
