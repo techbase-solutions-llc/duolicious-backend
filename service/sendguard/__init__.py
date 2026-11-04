@@ -15,7 +15,13 @@ module, run once a minute by service/cron/sendguard, does the rest:
      push to member AHAVAH_ALERT_PUSH_PERSON_ID. An alert email that fails
      and a push that reaches no device are recorded as `alert_failed`,
      which the stats route reports and the watchdog alerts on;
-  5. writes `sg:heartbeat`, last, and only when every step above completed.
+  5. once a Barbados day, from FEEDBACK_ALERT_FROM_HOUR, adds a
+     `feedback_unanswered` event to that alert when any member report is
+     still `new` after 24 hours (report rewards plan, 3 Nov 2026): report
+     number, category and age only, never the message or an address. The
+     event row is the day's marker, so it goes out once a day while any
+     remain;
+  6. writes `sg:heartbeat`, last, and only when every step above completed.
      A tick that fails part way leaves the heartbeat stale, and the
      watchdog sees it.
 
@@ -206,8 +212,49 @@ def set_halt(channel: str, kind: Optional[str], *, reason: str, by: str) -> bool
 
 
 # ---------------------------------------------------------------------------
+# member reports nobody has answered
+# ---------------------------------------------------------------------------
+
+FEEDBACK_ALERT_EVENT = 'feedback_unanswered'
+# Barbados hour from which the day's reminder may go, so it does not arrive
+# at midnight.
+FEEDBACK_ALERT_FROM_HOUR = 9
+
+_Q_BARBADOS_HOUR = "SELECT extract(hour FROM NOW() AT TIME ZONE 'America/Barbados')::int AS h"
+
+_Q_FEEDBACK_ALERTED_TODAY = """
+    SELECT 1 FROM send_guard_event
+     WHERE event = %(event)s
+       AND at > NOW() - interval '2 days'
+       AND (at AT TIME ZONE 'America/Barbados')::date = (NOW() AT TIME ZONE 'America/Barbados')::date
+     LIMIT 1
+"""
+
+
+def unanswered_feedback_events(tx, *, from_hour: Optional[int] = None) -> list[dict]:
+    """The day's reminder about reports still `new` after 24 hours, as one
+    alertable event, or nothing: before from_hour, when today's has already
+    been recorded, or when every report has been handled."""
+    from service.feedback.rewards import stale_new
+    hour = FEEDBACK_ALERT_FROM_HOUR if from_hour is None else from_hour
+    if tx.execute(_Q_BARBADOS_HOUR).fetchone()['h'] < hour:
+        return []
+    if tx.execute(_Q_FEEDBACK_ALERTED_TODAY, dict(event=FEEDBACK_ALERT_EVENT)).fetchone():
+        return []
+    reports = stale_new(tx)
+    if not reports:
+        return []
+    return [dict(at=datetime.now(timezone.utc).isoformat(), channel='guard', event=FEEDBACK_ALERT_EVENT,
+                 alert=True, detail=dict(reports=[dict(id=int(r['id']), category=str(r['category']),
+                                                       age_hours=int(r['age_hours'])) for r in reports]))]
+
+
+# ---------------------------------------------------------------------------
 # the owner's alert
 # ---------------------------------------------------------------------------
+
+FEEDBACK_ALERT_LISTED = 20
+
 
 def describe(ev: dict) -> str:
     """One line per event, for the owner. Sentence case, British spelling,
@@ -215,6 +262,15 @@ def describe(ev: dict) -> str:
     name, channel = ev.get('event'), ev.get('channel') or 'email'
     kind, rule = ev.get('kind') or 'unknown', ev.get('rule') or ''
     detail = ev.get('detail') or {}
+    if name == FEEDBACK_ALERT_EVENT:
+        reports = detail.get('reports') or []
+        n = len(reports)
+        listed = '; '.join(f'report {r.get("id")} ({r.get("category")}, {r.get("age_hours")} hours)'
+                           for r in reports[:FEEDBACK_ALERT_LISTED])
+        if n > FEEDBACK_ALERT_LISTED:
+            listed += f'; and {n - FEEDBACK_ALERT_LISTED} more'
+        return (f'{n} member report{"s have" if n != 1 else " has"} had no answer for more than 24 hours: '
+                f'{listed}. Mark each one fixed or not a fault on the System tab.')
     if name == 'refused':
         return (f'The first {channel} of kind {kind} was refused today ({rule}). '
                 'Later refusals of it today are counted but not emailed.')
@@ -246,6 +302,8 @@ def describe(ev: dict) -> str:
 def _alert_text(events: list[dict], *, last: bool) -> tuple[str, str]:
     n = len(events)
     subject = f'Ahavah mail guard: {n} alert{"s" if n != 1 else ""}'
+    if all(e.get('event') == FEEDBACK_ALERT_EVENT for e in events):
+        subject = 'Ahavah: member reports with no answer'
     lines = [describe(e) for e in events]
     footer = ['', 'The stats route and the watchdog see every event. Runbook: docs/runbooks/mail-guard.md.']
     if last:
@@ -359,6 +417,7 @@ def tick() -> dict:
     try:
         with api_tx() as tx:
             events += _shadow_ended(r)
+            events += unanswered_feedback_events(tx)
             insert_events(tx, events)
             _flush_tallies(tx, r, now)
             _sync_halts(tx, r)

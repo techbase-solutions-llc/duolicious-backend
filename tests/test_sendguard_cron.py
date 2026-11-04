@@ -28,6 +28,15 @@ def _empty_tables():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_report_reminder(monkeypatch):
+    """The tick also reminds the owner of member reports still unanswered
+    after 24 hours, which depends on the feedback rows in the test database
+    and the Barbados hour. These tests count alerts, so the reminder is off
+    here; tests/test_report_rewards.py covers it."""
+    monkeypatch.setattr(sendguard, 'unanswered_feedback_events', lambda tx, **kw: [])
+
+
 @pytest.fixture
 def mail(monkeypatch):
     out: list[dict] = []
