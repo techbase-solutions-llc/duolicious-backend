@@ -304,6 +304,22 @@ def test_the_admin_route_clears_a_halt_and_records_the_admin(client, admin_heade
     with api_tx('read committed') as tx:
         row = tx.execute('SELECT * FROM send_guard_halt').fetchone()
     assert row['cleared_by'].startswith('admin:')
+    # Audited in the clearing transaction (TEC-2091).
+    with api_tx('read committed') as tx:
+        audit = tx.execute(
+            "SELECT metadata FROM admin_audit_log WHERE action = 'mail_guard.clear' "
+            "ORDER BY created_at DESC LIMIT 1").fetchone()
+    assert audit and audit['metadata'] == {'channel': 'email', 'kind': 'profile_resting', 'all': False}
+
+
+def test_the_admin_route_audits_nothing_when_there_was_no_halt(client, admin_headers, mail, pushes):
+    with api_tx('read committed') as tx:
+        before = tx.execute("SELECT count(*) AS n FROM admin_audit_log WHERE action = 'mail_guard.clear'").fetchone()['n']
+    r = client.post('/admin/system/mail-guard/clear', json={'all': True}, headers=admin_headers)
+    assert r.get_json() == {'cleared': False}
+    with api_tx('read committed') as tx:
+        after = tx.execute("SELECT count(*) AS n FROM admin_audit_log WHERE action = 'mail_guard.clear'").fetchone()['n']
+    assert after == before
 
 
 def test_the_admin_route_needs_an_admin_and_one_target(client, admin_headers, make_person, sign_in):

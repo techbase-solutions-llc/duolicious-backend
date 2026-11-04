@@ -34,7 +34,7 @@ import json
 import os
 import traceback
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from database import api_tx
 from smtp import guard
@@ -183,10 +183,15 @@ _Q_CLEAR = """
 """
 
 
-def clear_halt(channel: str, kind: Optional[str], *, by: str) -> bool:
+def clear_halt(channel: str, kind: Optional[str], *, by: str,
+               audit: Optional[Callable] = None) -> bool:
     """Clear a halt in Postgres first, then Redis, and record who. True when
     there was a halt to clear. Postgres goes first so the cron never puts
-    back a halt that is being cleared."""
+    back a halt that is being cleared.
+
+    `audit(tx)` runs inside the clearing transaction when a halt was
+    cleared, so the admin route's audit row commits with the clear or not at
+    all (TEC-2091)."""
     if channel not in ('email', 'push'):
         raise ValueError('channel must be email or push')
     scope = 'all' if kind is None else 'kind'
@@ -198,6 +203,8 @@ def clear_halt(channel: str, kind: Optional[str], *, by: str) -> bool:
             insert_events(tx, [dict(at=datetime.now(timezone.utc).isoformat(), channel=channel,
                                     event='cleared', kind=kind, rule=scope,
                                     detail=dict(by=by))])
+            if audit is not None:
+                audit(tx)
     return cleared
 
 

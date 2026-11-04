@@ -125,6 +125,24 @@ def test_preview_rejects_a_malformed_recipient(client, admin, monkeypatch):
     assert smtp.calls == []
 
 
+def test_a_preview_is_audited_with_its_recipient(client, admin, monkeypatch):
+    """A preview mails any address the admin types, so it writes an audit
+    row naming the address and the campaign (TEC-2091)."""
+    smtp = _CapturingSmtp()
+    monkeypatch.setattr('smtp.make_aws_smtp', lambda: smtp)
+    # e1 mints a link against a real member; the audit does not need one.
+    monkeypatch.setattr(e1, 'build_for', lambda row: ('Preview', '<p>Preview</p>'))
+    to = f'preview-{uuid.uuid4().hex[:8]}@example.com'
+    r = client.post('/admin/growth/emails/e1/preview', headers=admin['headers'], json=dict(to=to))
+    assert r.status_code == 200
+    assert len(smtp.calls) == 1
+    with api_tx('read committed') as tx:
+        row = tx.execute(
+            "SELECT metadata FROM admin_audit_log WHERE action = 'growth.email.preview' "
+            "AND target_email = %(to)s", dict(to=to)).fetchone()
+    assert row and row['metadata'] == {'campaign': 'e1'}
+
+
 # ---------------------------------------------------------------------------
 # Send endpoint: result dict + exactly one audit row (C1 -- the audit call
 # used to raise TypeError on duplicate `campaign_id`/`dry_run` keys, so a dry
