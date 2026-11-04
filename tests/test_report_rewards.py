@@ -17,6 +17,7 @@ Rules locked in here:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg
 import pytest
@@ -28,6 +29,16 @@ from service.feedback import insert as insert_feedback
 from service.feedback import rewards
 
 ADMIN_FIXED = '/admin/system/feedback/{}/fixed'
+MIGRATION = Path(__file__).resolve().parent.parent / 'migrations' / '0091_report_rewards.sql'
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _report_rewards_schema():
+    """Apply 0091 again for this module: earlier modules (the token adjust
+    tests) re-apply 0072, whose reason list lacks report_reward."""
+    with api_tx() as tx:
+        tx.execute(MIGRATION.read_text(encoding='utf-8'))
+
 ADMIN_NOT_A_FAULT = '/admin/system/feedback/{}/not-a-fault'
 
 
@@ -387,11 +398,9 @@ def test_the_ledger_accepts_report_reward_and_still_refuses_an_unknown_reason(ma
 
 
 def test_the_migration_runs_twice():
-    from pathlib import Path
-    path = Path(__file__).resolve().parent.parent / 'migrations' / '0091_report_rewards.sql'
     for _ in range(2):
         with api_tx() as tx:
-            tx.execute(path.read_text(encoding='utf-8'))
+            tx.execute(MIGRATION.read_text(encoding='utf-8'))
 
 
 # --- 7. the owner's daily reminder --------------------------------------------
