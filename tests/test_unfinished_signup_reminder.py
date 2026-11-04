@@ -18,6 +18,7 @@ import pytest
 
 from database import api_tx
 from emails import unfinished_signup as us
+from service.admin.queries.signups import claim_key
 from service.campaigns import outbox
 from service.unsubscribe import make_token
 
@@ -63,9 +64,12 @@ def made():
     yield _make
     with api_tx() as tx:
         tx.execute("DELETE FROM email_outbox WHERE onboardee_email = ANY(%(e)s)", dict(e=emails))
-        tx.execute("DELETE FROM lead_email_send WHERE email = ANY(%(e)s)", dict(e=emails))
+        tx.execute("DELETE FROM lead_email_send WHERE email = ANY(%(k)s)",
+                   dict(k=[claim_key(e) for e in emails]))
         tx.execute("DELETE FROM onboardee WHERE lower(email) = ANY(%(e)s)", dict(e=emails))
         tx.execute("DELETE FROM lead WHERE lower(email) = ANY(%(e)s)", dict(e=emails))
+        tx.execute("DELETE FROM waitlist_signup WHERE lower(email) = ANY(%(e)s)", dict(e=emails))
+        tx.execute("DELETE FROM beta_signup WHERE lower(email) = ANY(%(e)s)", dict(e=emails))
 
 
 def _run(now: datetime = NOW) -> int:
@@ -85,8 +89,8 @@ def _rows(emails) -> list[dict]:
 
 def _claim(email) -> dict | None:
     with api_tx('read committed') as tx:
-        row = tx.execute("SELECT * FROM lead_email_send WHERE email = %(e)s AND campaign = 'unfinished_signup'",
-                         dict(e=email.lower())).fetchone()
+        row = tx.execute("SELECT * FROM lead_email_send WHERE email = %(k)s AND campaign = 'unfinished_signup'",
+                         dict(k=claim_key(email))).fetchone()
     return dict(row) if row else None
 
 
@@ -116,11 +120,13 @@ def _drain(emails) -> _Smtp:
 # the switch and the window
 # ---------------------------------------------------------------------------
 
-def test_the_switch_is_off_by_default_and_then_nothing_is_queued(made, monkeypatch):
+def test_the_switch_is_off_by_default_and_then_nothing_is_queued(made, monkeypatch, capsys):
     monkeypatch.delenv(SWITCH_ENV, raising=False)
     e = made()
+    capsys.readouterr()
     assert _run() == 0
     assert _rows([e]) == [] and _claim(e) is None
+    assert capsys.readouterr().out.splitlines() == ['unfinished_signup: switch off']
 
 
 def test_the_returnmail_cron_runs_it():
@@ -192,6 +198,40 @@ def test_an_address_that_left_the_news_mail_is_left_out(made, on):
         tx.execute("""INSERT INTO lead (email, normalized_email, source, unsubscribed_at)
                       VALUES (%(e)s, %(e)s, 'tool:checklist', NOW())""", dict(e=e))
     assert _run() == 0 and _rows([e]) == [] and _claim(e) is None
+
+
+@pytest.mark.parametrize('table', ['waitlist_signup', 'beta_signup'])
+def test_an_address_that_left_the_waitlist_or_beta_mail_is_left_out(made, on, table):
+    e = made()
+    with api_tx() as tx:
+        tx.execute(f"INSERT INTO {table} (email, unsubscribed_at) VALUES (%(e)s, NOW())", dict(e=e))
+    assert _run() == 0 and _rows([e]) == [] and _claim(e) is None
+
+
+@pytest.mark.parametrize('table', ['waitlist_signup', 'beta_signup'])
+def test_the_drain_refuses_it_once_the_waitlist_or_beta_mail_is_left(made, on, table):
+    e = made()
+    _run()
+    with api_tx() as tx:
+        tx.execute(f"INSERT INTO {table} (email, unsubscribed_at) VALUES (%(e)s, NOW())", dict(e=e))
+    assert _drain([e]).sent == []
+    assert _rows([e])[0]['last_error'] == 'unsubscribed'
+
+
+def test_the_claim_holds_a_keyed_hash_never_the_address(made, on):
+    e = made()
+    _run()
+    with api_tx('read committed') as tx:
+        assert tx.execute("SELECT 1 FROM lead_email_send WHERE email = %(e)s", dict(e=e)).fetchone() is None
+    key = _claim(e)['email']
+    assert key == claim_key(e.upper()) and len(key) == 64 and '@' not in key
+    # Once ever still holds after the outbox row has gone and the address
+    # saves again.
+    with api_tx() as tx:
+        tx.execute("DELETE FROM email_outbox WHERE onboardee_email = %(e)s", dict(e=e))
+        tx.execute("UPDATE onboardee SET updated_at = %(at)s WHERE email = %(e)s",
+                   dict(at=NOW + timedelta(days=2) - timedelta(hours=30), e=e))
+    assert _run(NOW + timedelta(days=2)) == 0 and _rows([e]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -342,3 +382,73 @@ def test_the_logs_name_nobody(made, on, capsys):
         assert n not in out
     for e in emails:
         assert e not in out and e.split('@')[0] not in out
+
+
+# ---------------------------------------------------------------------------
+# retention
+# ---------------------------------------------------------------------------
+
+def test_settled_rows_go_after_30_days_and_the_claim_stays(made, on):
+    """lead_retention deletes an unfinished sign-up's outbox row (it holds
+    the address) once accepted, skipped or failed and 30 days old. A row in
+    acceptance_unknown, reserved or queued, and a recent one, stay."""
+    states = ['accepted', 'skipped', 'failed', 'acceptance_unknown', 'reserved', 'queued']
+    old = {state: made(hours=30 + i) for i, state in enumerate(states)}
+    recent = made(hours=40)
+    assert _run() == len(states) + 1
+    with api_tx() as tx:
+        for state, e in old.items():
+            tx.execute("""UPDATE email_outbox SET state = %(s)s, created_at = NOW() - interval '31 days'
+                           WHERE onboardee_email = %(e)s""", dict(s=state, e=e))
+        tx.execute("UPDATE email_outbox SET state = 'accepted' WHERE onboardee_email = %(e)s", dict(e=recent))
+    with api_tx() as tx:
+        n = outbox.purge_settled_onboardee_rows(tx)
+    assert n >= 3
+    left = {r['onboardee_email'] for r in _rows(made.emails)}
+    assert left == {old['acceptance_unknown'], old['reserved'], old['queued'], recent}
+    assert all(_claim(e) is not None for e in old.values())
+
+
+def test_the_lead_retention_cron_runs_the_sweep(made, on, capsys):
+    from service.cron.leadretention import _purge_once
+    e = made()
+    _run()
+    with api_tx() as tx:
+        tx.execute("""UPDATE email_outbox SET state = 'skipped', created_at = NOW() - interval '31 days'
+                       WHERE onboardee_email = %(e)s""", dict(e=e))
+    _purge_once()
+    assert _rows([e]) == []
+    assert 'sign-up reminder outbox row(s) deleted 30 days after they settled' in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# the admin list's reminder state
+# ---------------------------------------------------------------------------
+
+def _state(e, now=NOW):
+    with api_tx('read committed') as tx:
+        row = tx.execute("SELECT lower(email) AS email, updated_at AS last_saved_at FROM onboardee "
+                         "WHERE email = %(e)s", dict(e=e)).fetchone()
+        return us.reminder_states(tx, [dict(row)], now)[0]
+
+
+def test_reminder_states(made, on, monkeypatch):
+    young, due, old = made(hours=5), made(hours=30), made(hours=15 * 24)
+    refused = made(email=f'uf-{uuid4().hex[:10]}@example.com')
+    assert _state(young) == (None, None) and _state(due) == ('due', None)
+    assert _state(old) == ('not_sent', None) and _state(refused) == ('not_sent', None)
+    _run()
+    assert _state(due) == ('due', None), 'queued, not yet sent'
+    _drain([due])
+    state, sent_at = _state(due)
+    assert state == 'sent' and sent_at is not None
+    monkeypatch.setenv(SWITCH_ENV, '0')
+    assert _state(due) == (None, sent_at)
+
+
+def test_a_claim_whose_email_was_skipped_is_not_sent(made, on, make_person):
+    e = made()
+    _run()
+    make_person(name='JoinedSince', email=e)
+    _drain([e])
+    assert _state(e) == ('not_sent', None)

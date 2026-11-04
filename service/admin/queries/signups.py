@@ -8,11 +8,13 @@ step; verify email, verify phone, marital status, children and looking for
 leave no server record during sign-up. Dates and a step only: no name and
 no address leave the server.
 
-`reminded_at` is when the unfinished sign-up reminder (TEC-2107,
-emails/unfinished_signup.py) was accepted for sending to the address, else
-null: its claim in lead_email_send, marked sent by the outbox drain.
+Q_UNFINISHED reads each address so the route can look up the unfinished
+sign-up reminder (TEC-2107, emails/unfinished_signup.py reminder_states);
+the route drops it before answering.
 """
 from __future__ import annotations
+
+from typing import Optional
 
 # In the web's order (ahavah-web src/lib/wizard-flow.ts), limited to the
 # steps the server records. 'none' is someone who signed in and saved
@@ -21,6 +23,18 @@ STEPS = ('none', 'name', 'date_of_birth', 'gender', 'photos', 'country', 'assemb
 
 # The lead_email_send campaign of the unfinished sign-up reminder (TEC-2107).
 REMINDER_CAMPAIGN = 'unfinished_signup'
+
+
+def claim_key(email: Optional[str]) -> Optional[str]:
+    """The reminder's claim key in lead_email_send.email: a keyed hash
+    (service.matchmaker.address_key, HMAC-SHA256 with the unsubscribe
+    secret) of the lower-cased address, never the address. The onboardee
+    row goes after a week; the claim stays so the address is never
+    reminded twice, and it cannot be read back as an address."""
+    if not email or not email.strip():
+        return None
+    from service.matchmaker import address_key
+    return address_key(email.strip().lower())
 
 STEP_SQL = """
     CASE
@@ -38,14 +52,13 @@ STEP_SQL = """
 Q_UNFINISHED = f"""
     WITH o AS (
         SELECT o.created_at, o.updated_at, o.lead_source, {STEP_SQL} AS furthest_step,
-               (SELECT s.sent_at FROM lead_email_send s
-                 WHERE s.email = lower(o.email) AND s.campaign = '{REMINDER_CAMPAIGN}') AS reminded_at
+               lower(o.email) AS email
           FROM onboardee o
          WHERE NOT EXISTS (SELECT 1 FROM person p WHERE lower(p.email) = lower(o.email))
            AND lower(o.email) <> ALL(%(ex)s)
            AND o.updated_at < NOW() - INTERVAL '1 hour'
     )
-    SELECT created_at AS started_at, updated_at AS last_saved_at, furthest_step, reminded_at
+    SELECT created_at AS started_at, updated_at AS last_saved_at, furthest_step, email
       FROM o
      WHERE lead_source IS NULL OR furthest_step <> 'none'
      ORDER BY created_at DESC

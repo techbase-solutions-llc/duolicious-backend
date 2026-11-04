@@ -171,10 +171,23 @@ _Q_ACCEPT = """
 """
 
 # An unfinished sign-up's claim (lead_email_send, written with the outbox
-# row) is marked sent in the acceptance's own transaction.
+# row, keyed on the address's keyed hash) is marked sent in the
+# acceptance's own transaction.
 _Q_ONBOARDEE_SENT = """
     UPDATE lead_email_send SET sent_at = NOW(), message_id = %(mid)s
-     WHERE email = %(e)s AND campaign = %(c)s AND sent_at IS NULL
+     WHERE email = %(k)s AND campaign = %(c)s AND sent_at IS NULL
+"""
+
+# An unfinished sign-up's outbox row holds the address in plain. Once it is
+# settled (accepted, skipped or failed) and 30 days old it goes; the claim,
+# a keyed hash, stays so the address is never reminded twice. A row in
+# acceptance_unknown or reserved waits for a human or the reaper.
+ONBOARDEE_ROW_DAYS = 30
+_Q_PURGE_ONBOARDEE_ROWS = """
+    DELETE FROM email_outbox
+     WHERE onboardee_email IS NOT NULL
+       AND state IN ('accepted', 'skipped', 'failed')
+       AND created_at < NOW() - make_interval(days => %(days)s)
 """
 
 _Q_SKIP = """
@@ -423,8 +436,9 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
     # unfinished sign-up's claim is marked sent (TEC-2107).
     if row['person_id'] is None:
         if row.get('onboardee_email') is not None:
+            from service.admin.queries.signups import claim_key
             tx.execute(_Q_ONBOARDEE_SENT, dict(
-                e=row['onboardee_email'], c=row['campaign'],
+                k=claim_key(row['onboardee_email']), c=row['campaign'],
                 mid=str(provider_message_id) if provider_message_id else None))
         return
     log_send(tx, row['person_id'], row['campaign'], row['campaign_id'],
@@ -600,16 +614,44 @@ def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
 _Q_PERSON_BY_ADDRESS = """
     SELECT 1 FROM person WHERE lower(email) = lower(%(e)s) LIMIT 1
 """
-_Q_SIGNUP_LEFT = """
-    SELECT 1 FROM lead_email_send WHERE email = lower(%(e)s) AND unsubscribed_at IS NOT NULL LIMIT 1
+# Every unsubscribe an address with no account can have made: the
+# reminder's own (its claim, by keyed hash), the waitlist's and the beta's.
+# A lead row's news unsubscribe is read by address_unsubscribed. The
+# `campaigns` scope is a column on person, so it cannot apply to an address
+# with no account.
+_Q_ADDRESS_LEFT = """
+    SELECT 1 FROM lead_email_send
+     WHERE email = %(k)s AND campaign = %(c)s AND unsubscribed_at IS NOT NULL
+    UNION ALL
+    SELECT 1 FROM waitlist_signup WHERE email = lower(%(e)s) AND unsubscribed_at IS NOT NULL
+    UNION ALL
+    SELECT 1 FROM beta_signup WHERE email = lower(%(e)s) AND unsubscribed_at IS NOT NULL
+    LIMIT 1
 """
+
+
+def onboardee_unsubscribed(tx, email: str) -> bool:
+    """True when an address with no account has left any mail it could
+    have left (TEC-2107): the news mail of any lead row, the sign-up
+    reminder, the waitlist or the beta mail."""
+    from service.admin.queries.signups import REMINDER_CAMPAIGN, claim_key
+    if address_unsubscribed(tx, _normalized(email)):
+        return True
+    return tx.execute(_Q_ADDRESS_LEFT, dict(
+        k=claim_key(email), c=REMINDER_CAMPAIGN, e=email)).fetchone() is not None
+
+
+def purge_settled_onboardee_rows(tx) -> int:
+    """Delete settled unfinished sign-up rows ONBOARDEE_ROW_DAYS old.
+    Returns how many. Run daily by the lead_retention cron."""
+    return tx.execute(_Q_PURGE_ONBOARDEE_ROWS, dict(days=ONBOARDEE_ROW_DAYS)).rowcount
 
 
 def _onboardee_refusal(tx, row: dict, payload: dict) -> Optional[str]:
     """The send-time re-checks for an unfinished sign-up (TEC-2107): its
     switch, the suppression list, an account made since it was queued
-    (by the address as typed or normalised), and an unsubscribe of the
-    address, from the news mail of any lead row or from this mail."""
+    (by the address as typed or normalised), and any unsubscribe of the
+    address (onboardee_unsubscribed)."""
     from service.campaigns.switches import enabled
     switch = payload.get('switch')
     if switch and not enabled(switch):
@@ -619,8 +661,7 @@ def _onboardee_refusal(tx, row: dict, payload: dict) -> Optional[str]:
     if (tx.execute(_Q_PERSON_BY_ADDRESS, dict(e=row['email'])).fetchone() is not None
             or _is_member_address(tx, row['email'])):
         return 'member_now'
-    if (address_unsubscribed(tx, _normalized(row['email']))
-            or tx.execute(_Q_SIGNUP_LEFT, dict(e=row['email'])).fetchone() is not None):
+    if onboardee_unsubscribed(tx, row['email']):
         return 'unsubscribed'
     return None
 

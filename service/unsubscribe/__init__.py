@@ -145,15 +145,16 @@ _Q_UNSUB = {
     """,
     # The unfinished sign-up reminder (TEC-2107): an address that started
     # sign-up and has no account, and usually no lead row either. The claim
-    # the reminder wrote (lead_email_send, migration 0092) is stamped, so
-    # leaving works with neither; any lead row of the address leaves the
-    # news mail too, since that is the other mail an address with no
-    # account can get.
+    # the reminder wrote (lead_email_send, migration 0092, keyed on the
+    # address's keyed hash, service.admin.queries.signups.claim_key) is
+    # stamped, so leaving works with neither; any lead row of the address
+    # leaves the news mail too, since that is the other mail an address
+    # with no account can get.
     "signup": """
         WITH s AS (
             UPDATE lead_email_send
                SET unsubscribed_at = COALESCE(unsubscribed_at, NOW())
-             WHERE email = %(email)s AND campaign = 'unfinished_signup'
+             WHERE email = %(key)s AND campaign = 'unfinished_signup'
             RETURNING 1
         ), l AS (
             UPDATE lead
@@ -176,5 +177,8 @@ def stamp_unsubscribed(tx, scope: str, email: str) -> bool:
     params = dict(email=email.strip().lower())
     if scope in ('news', 'signup'):
         params['ne'] = normalize_email(params['email'])
+    if scope == 'signup':
+        from service.admin.queries.signups import claim_key
+        params['key'] = claim_key(params['email'])
     row = tx.execute(_Q_UNSUB[scope], params).fetchone()
     return row is not None
