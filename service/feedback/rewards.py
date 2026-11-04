@@ -60,13 +60,17 @@ def clean_notice_line(raw: Optional[str]) -> str:
         raise BadNoticeLine('notice_line is required')
     if len(line) > NOTICE_LINE_MAX:
         raise BadNoticeLine(f'notice_line is longer than {NOTICE_LINE_MAX} characters')
-    if line[-1] not in '.?!':
+    # House copy has no exclamation marks: a closing one becomes a full stop.
+    line = line.rstrip('!').rstrip()
+    if not line:
+        raise BadNoticeLine('notice_line is required')
+    if line[-1] not in '.?':
         line += '.'
     return line
 
 
 def reward_sentence(tokens: int, days: int) -> str:
-    return f'You have {tokens} tokens and {days} more days of Premium.'
+    return f'You have {tokens} more tokens and {days} more days of Premium.'
 
 
 def notice_body(line: str, *, tokens: int, days: int) -> str:

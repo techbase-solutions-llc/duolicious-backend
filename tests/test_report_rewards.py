@@ -164,7 +164,7 @@ def test_fixed_pays_tokens_and_premium_and_writes_the_notice(client, admin_heade
 
     [n] = _notices(p['id'])
     assert n['kind'] == 'report_thanks' and n['title'] == 'Thanks for your report'
-    assert n['body'] == 'We fixed the duplicate messages. You have 5 tokens and 30 more days of Premium.'
+    assert n['body'] == 'We fixed the duplicate messages. You have 5 more tokens and 30 more days of Premium.'
     assert (n['tokens'], n['premium_days'], n['feedback_id']) == (5, 30, fid)
     for text in (n['title'], n['body']):
         assert '—' not in text and '!' not in text
@@ -464,3 +464,11 @@ def test_the_reminder_lists_at_most_20_reports_and_counts_the_rest():
     assert 'report 20 (idea' in line and 'report 21 (idea' not in line and 'and 3 more' in line
     one = sendguard.describe(dict(event=sendguard.FEEDBACK_ALERT_EVENT, detail=dict(reports=reports[:1])))
     assert one.startswith('1 member report has had no answer')
+
+
+def test_a_closing_exclamation_mark_becomes_a_full_stop():
+    assert rewards.clean_notice_line('We fixed it!') == 'We fixed it.'
+    assert rewards.clean_notice_line('We fixed it!!') == 'We fixed it.'
+    assert rewards.clean_notice_line('Did that help?') == 'Did that help?'
+    with pytest.raises(rewards.BadNoticeLine):
+        rewards.clean_notice_line('!')
