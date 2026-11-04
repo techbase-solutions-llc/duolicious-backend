@@ -151,12 +151,18 @@ def _lock_new(tx, feedback_id: int) -> dict:
     return row
 
 
+# The characters trimmed from a report's email before matching it to an
+# account. The admin list (Q_FEEDBACK_LIST) trims the same four in SQL, so
+# both resolve a report to the same member.
+EMAIL_TRIM = ' ' + chr(9) + chr(10) + chr(13)  # space, tab, line feed, carriage return
+
+
 def resolve_member(tx, *, person_id: Optional[int], email: Optional[str]) -> Optional[Member]:
     if person_id is not None:
         row = tx.execute(_Q_PERSON_BY_ID, dict(id=person_id)).fetchone()
         if row is not None:
             return Member(id=int(row['id']), uuid=row['uuid'], via='session')
-    address = (email or '').strip()
+    address = (email or '').strip(EMAIL_TRIM)
     if not address:
         return None
     rows = tx.execute(_Q_PERSON_BY_EMAIL, dict(email=address)).fetchall()
@@ -256,13 +262,20 @@ FEEDBACK_STATUSES = ('new', 'fixed', 'not_a_fault')
 
 # The same report fields the System tab's health read already returns
 # (Q_FEEDBACK_RECENT: id, category, message, email, path, created_at), plus
-# the handling. The member is resolved by the rule mark_fixed uses
-# (resolve_member): the report's person_id, else the one account whose email
-# matches the report's, ignoring case. has_member says whether there is one;
-# member_rewards_30d counts that member's rewarded reports in the cap window,
-# by the same rule as rewarded_in_window, so the admin can tell before
-# submitting that a reward would be capped. 0 with no member.
-Q_FEEDBACK_LIST = """
+# the handling.
+#
+# The page of 50 is taken first, and only its rows are resolved to a member,
+# so the person lookups run 50 times at most however many reports match.
+# Waiting reports (status=new) come oldest first, so the longest waits are
+# never the ones cut off; handled and all come newest first.
+#
+# The member is resolved by the rule mark_fixed uses (resolve_member): the
+# report's person_id, else the one account whose email matches the report's,
+# ignoring case, after trimming EMAIL_TRIM. has_member says whether there is
+# one; member_rewards_30d counts that member's rewarded reports in the cap
+# window, by the same rule as rewarded_in_window, so the admin can tell
+# before submitting that a reward would be capped. 0 with no member.
+_Q_FEEDBACK_LIST = """
     SELECT f.id, f.category, f.message, f.email, f.path, f.created_at,
            f.status, f.handled_at, f.reward_tokens, f.reward_days, f.notice_line,
            floor(extract(epoch FROM NOW() - f.created_at) / 3600)::int AS age_hours,
@@ -275,7 +288,14 @@ Q_FEEDBACK_LIST = """
                 AND (r.reward_tokens > 0 OR r.reward_days > 0)
                 AND r.handled_at > NOW() - make_interval(days => %(window_days)s)
            ) END AS member_rewards_30d
-      FROM feedback f
+      FROM (
+        SELECT id, category, message, email, path, created_at, status, handled_at,
+               reward_tokens, reward_days, notice_line, person_id
+          FROM feedback
+         WHERE %(status)s::text IS NULL OR status = %(status)s::text
+         ORDER BY {order}
+         LIMIT %(limit)s
+      ) f
       LEFT JOIN LATERAL (
         SELECT COALESCE(
                  (SELECT p.id FROM person p WHERE p.id = f.person_id),
@@ -285,10 +305,10 @@ Q_FEEDBACK_LIST = """
                      AND lower(p.email) = lower(btrim(f.email, ' ' || chr(9) || chr(10) || chr(13))))
                ) AS id
       ) m ON TRUE
-     WHERE %(status)s::text IS NULL OR f.status = %(status)s::text
-     ORDER BY f.created_at DESC, f.id DESC
-     LIMIT %(limit)s
+     ORDER BY {order}
 """
+Q_FEEDBACK_LIST_OLDEST = _Q_FEEDBACK_LIST.format(order='created_at ASC, id ASC')
+Q_FEEDBACK_LIST_NEWEST = _Q_FEEDBACK_LIST.format(order='created_at DESC, id DESC')
 
 Q_FEEDBACK_COUNTS = """
     SELECT status, count(*)::int AS n FROM feedback GROUP BY status
@@ -296,8 +316,9 @@ Q_FEEDBACK_COUNTS = """
 
 
 def list_feedback(tx, *, status: Optional[str], limit: int = 50) -> dict:
-    rows = tx.execute(Q_FEEDBACK_LIST, dict(status=status, limit=limit,
-                                            window_days=REPORT_REWARD_WINDOW_DAYS)).fetchall()
+    query = Q_FEEDBACK_LIST_OLDEST if status == 'new' else Q_FEEDBACK_LIST_NEWEST
+    rows = tx.execute(query, dict(status=status, limit=limit,
+                                  window_days=REPORT_REWARD_WINDOW_DAYS)).fetchall()
     counts = {s: 0 for s in FEEDBACK_STATUSES}
     for r in tx.execute(Q_FEEDBACK_COUNTS).fetchall():
         counts[r['status']] = r['n']

@@ -337,12 +337,43 @@ def test_the_admin_list_filters_by_status_and_says_who_can_be_thanked(client, ad
                                  'age_hours', 'has_member', 'reward_tokens', 'reward_days', 'handled_at'}
     assert set(body['counts']) == {'new', 'fixed', 'not_a_fault'}
     created = [f['created_at'] for f in body['feedback']]
-    assert created == sorted(created, reverse=True)
+    # Waiting comes oldest first, so the longest waits are never cut off.
+    assert created == sorted(created)
 
     rows = {f['id'] for f in client.get('/admin/system/feedback?status=not_a_fault',
                                         headers=admin_headers).get_json()['feedback']}
     assert closed in rows and linked not in rows
     assert client.get('/admin/system/feedback?status=bogus', headers=admin_headers).status_code == 400
+
+
+def test_waiting_is_oldest_first_and_the_page_keeps_the_longest_waits(client, admin_headers, feedback_rows):
+    """With more waiting than fit on a page, the page holds the oldest, so the
+    most overdue reports are never the ones dropped. Handled and all stay
+    newest first."""
+    oldest = feedback_rows(message='Waiting longest', hours_old=24 * 400)
+    middle = feedback_rows(message='Waiting a while', hours_old=24 * 399)
+    newest = feedback_rows(message='Waiting since now')
+    with api_tx('read committed') as tx:
+        page = rewards.list_feedback(tx, status='new', limit=2)['feedback']
+    assert [f['id'] for f in page] == [oldest, middle]
+
+    body = client.get('/admin/system/feedback?status=new', headers=admin_headers).get_json()
+    created = [f['created_at'] for f in body['feedback']]
+    assert created == sorted(created)
+    ids = [f['id'] for f in body['feedback']]
+    assert ids.index(oldest) < ids.index(middle) < ids.index(newest)
+
+    closed = feedback_rows(message='Closed, older', hours_old=24 * 398)
+    later = feedback_rows(message='Closed, newer', hours_old=1)
+    for fid in (closed, later):
+        client.post(ADMIN_NOT_A_FAULT.format(fid), headers=admin_headers)
+    rows = client.get('/admin/system/feedback?status=not_a_fault', headers=admin_headers).get_json()['feedback']
+    ids = [f['id'] for f in rows]
+    assert ids.index(later) < ids.index(closed)
+    for query in ('?status=not_a_fault', ''):
+        rows = client.get('/admin/system/feedback' + query, headers=admin_headers).get_json()['feedback']
+        created = [f['created_at'] for f in rows]
+        assert created == sorted(created, reverse=True)
 
 
 def test_the_admin_list_counts_the_members_rewards_in_the_cap_window(client, admin_headers, make_person,
