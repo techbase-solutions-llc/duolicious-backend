@@ -229,6 +229,85 @@ _RECENT_BRANCHES = f"""
 Q_OVERVIEW_RECENT_ACTIVITY = f"""{_RECENT_BRANCHES}    ORDER BY created_at DESC LIMIT 20
 """
 
+# Member events (TEC-2092): what members did, each with the member's uuid
+# as `object` so the row opens their panel. Not likes, passes, views or
+# single messages: too many for a 20-line feed (plan of 4 Nov 2026).
+#
+#   match               both first names ("Sarah and David"); `object` is
+#                       the first named. A match since unmatched keeps its
+#                       time in unmatched_pair.matched_at, so both are read.
+#   verified            an ID check passed (person.id_verified_at), or a
+#                       photo check passed, which verification_job keeps for
+#                       three days only and without a creation time
+#                       (expires_at less the three days it is given).
+#   gathering_created   a gathering made by an organiser that is a member
+#                       (made in the app, 0080, or under their address).
+#   purchase            a LIVE token bundle checkout (Stripe mode
+#                       'payment'). Premium stays the `premium` kind.
+#   deletion_requested  a member asked to delete their account; the row is
+#                       deleted for good seven days later.
+#
+# A member's own deactivation keeps no time, so it cannot be placed here;
+# an admin's is already an `admin_action` line.
+_MEMBER_EVENTS = f"""
+    UNION ALL SELECT * FROM (
+        SELECT 'match' AS kind,
+               split_part(btrim(a.name), ' ', 1) || ' and ' || split_part(btrim(b.name), ' ', 1) AS subject,
+               a.uuid::text AS object, x.at AS created_at
+          FROM (SELECT * FROM (SELECT user_a_id, user_b_id, created_at AS at FROM ahavah_match
+                                ORDER BY created_at DESC LIMIT 20) m
+                UNION ALL
+                SELECT * FROM (SELECT user_a_id, user_b_id, matched_at FROM unmatched_pair
+                                WHERE matched_at IS NOT NULL
+                                ORDER BY matched_at DESC LIMIT 20) u) x
+          JOIN person a ON a.id = x.user_a_id
+          JOIN person b ON b.id = x.user_b_id
+         WHERE {member_sql('a')} AND {member_sql('b')}
+         ORDER BY x.at DESC LIMIT 10
+    ) sub_match
+    UNION ALL SELECT * FROM (
+        SELECT 'verified' AS kind, v.name AS subject, v.uuid::text AS object, v.at AS created_at
+          FROM (SELECT * FROM (SELECT p.name, p.uuid, p.id_verified_at AS at FROM person p
+                                WHERE p.id_verified_at IS NOT NULL AND {_MEMBER_P}
+                                ORDER BY p.id_verified_at DESC LIMIT 10) i
+                UNION ALL
+                SELECT * FROM (SELECT p.name, p.uuid,
+                                      (j.expires_at - INTERVAL '3 days') AT TIME ZONE 'UTC'
+                                 FROM verification_job j JOIN person p ON p.id = j.person_id
+                                WHERE j.status = 'success' AND {_MEMBER_P}
+                                ORDER BY j.expires_at DESC LIMIT 10) j) v
+         ORDER BY v.at DESC LIMIT 10
+    ) sub_verified
+    UNION ALL SELECT * FROM (
+        SELECT 'gathering_created' AS kind, p.name AS subject, p.uuid::text AS object,
+               e.created_at
+          FROM event e
+          JOIN organiser og ON og.id = e.organiser_id
+          JOIN person p ON p.id = COALESCE(
+               og.member_person_id,
+               (SELECT pe.id FROM person pe WHERE pe.normalized_email = og.normalized_email LIMIT 1))
+         WHERE {_MEMBER_P}
+         ORDER BY e.created_at DESC LIMIT 10
+    ) sub_gathering
+    UNION ALL SELECT * FROM (
+        SELECT 'purchase' AS kind, p.name AS subject, p.uuid::text AS object,
+               e.received_at AS created_at
+          FROM entitlement_event e
+          JOIN person p ON p.id::text = e.app_user_id
+         WHERE e.event_type = 'checkout.session.completed'
+           AND COALESCE(e.payload->'data'->'object'->>'mode', e.payload->>'mode') = 'payment'
+           AND {live_stripe_event('e')}
+           AND {_MEMBER_P}
+         ORDER BY e.received_at DESC LIMIT 10
+    ) sub_purchase
+    UNION ALL SELECT * FROM (
+        SELECT 'deletion_requested' AS kind, p.name AS subject, p.uuid::text AS object,
+               p.deletion_requested_at AS created_at
+          FROM person p
+         WHERE p.deletion_requested_at IS NOT NULL AND {_MEMBER_P}
+         ORDER BY p.deletion_requested_at DESC LIMIT 10
+    ) sub_deletion"""
+
 # The same feed with reports and live Premium checkouts (TEC-1845 admin
 # audit), sent as `recent_activity_all`. Both admins look each kind up in a
 # fixed table and fail on one they do not know, so `recent_activity` keeps
@@ -239,6 +318,8 @@ Q_OVERVIEW_RECENT_ACTIVITY = f"""{_RECENT_BRANCHES}    ORDER BY created_at DESC 
 # Feedback (TEC-2091) is the category only, with the row's id as `object`:
 # never the message, the email or the member. The 27 Oct report sat unseen
 # for a week because it was in neither this feed nor the audit log.
+#
+# Member events (TEC-2092, _MEMBER_EVENTS above) are in this feed only.
 Q_OVERVIEW_RECENT_ACTIVITY_ALL = f"""{_RECENT_BRANCHES}    UNION ALL SELECT * FROM (
         SELECT 'report' AS kind, reported.name AS subject, reported.uuid::text AS object,
                r.reported_at AT TIME ZONE 'UTC' AS created_at
@@ -261,6 +342,6 @@ Q_OVERVIEW_RECENT_ACTIVITY_ALL = f"""{_RECENT_BRANCHES}    UNION ALL SELECT * FR
                created_at
           FROM feedback
          ORDER BY created_at DESC LIMIT 10
-    ) sub_feedback
+    ) sub_feedback{_MEMBER_EVENTS}
     ORDER BY created_at DESC LIMIT 20
 """

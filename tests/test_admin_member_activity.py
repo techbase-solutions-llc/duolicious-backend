@@ -5,6 +5,8 @@ type and paged, with a 7 and 30 day summary. The other member is named for
 likes, passes, views and reports. Message text is never read: a test reads
 every SQL string the route can run, and another plants words in the archive
 and checks they never come back.
+
+Recent activity gains member events in `recent_activity_all` only.
 """
 from __future__ import annotations
 
@@ -273,7 +275,8 @@ _FORBIDDEN = (
 
 def _every_activity_sql() -> list[str]:
     from service.admin.queries import activity
-    sqls = [activity.timeline_sql(), activity.Q_MEMBER_ACTIVITY_SUMMARY]
+    from service.admin.queries.overview import _MEMBER_EVENTS
+    sqls = [activity.timeline_sql(), activity.Q_MEMBER_ACTIVITY_SUMMARY, _MEMBER_EVENTS]
     sqls += [activity.timeline_sql((t,)) for t in activity.TYPES]
     return sqls
 
@@ -337,3 +340,52 @@ def test_opening_the_timeline_is_audited_and_stays_out_of_recent_activity(
     r = client.get('/admin/overview', headers=admin_headers)
     for feed in ('recent_activity', 'recent_activity_all'):
         assert not [e for e in r.get_json()[feed] if e['object'] == 'view_member_activity'], feed
+
+
+# ---------------------------------------------------------------------------
+# Recent activity: member events
+# ---------------------------------------------------------------------------
+
+def test_member_events_join_the_full_feed_only(client, admin_headers, make_person, cleanup,
+                                               published):
+    tag = uuid4().hex[:6]
+    sarah = make_person(name=f'Sarah{tag} Feed', gender='Woman')
+    david = make_person(name=f'David{tag} Feed')
+    soon = datetime.now(timezone.utc) + timedelta(minutes=1)
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO ahavah_match (user_a_id, user_b_id, created_at)
+                      VALUES (LEAST(%(a)s, %(b)s), GREATEST(%(a)s, %(b)s), %(t)s)""",
+                   dict(a=sarah['id'], b=david['id'], t=soon))
+        tx.execute("UPDATE person SET id_verified_at = %(t)s WHERE id = %(i)s",
+                   dict(t=soon, i=sarah['id']))
+        tx.execute("UPDATE person SET deletion_requested_at = %(t)s WHERE id = %(i)s",
+                   dict(t=soon, i=david['id']))
+        eid = f'evt_test_{uuid4().hex}'
+        cleanup['events'].append(eid)
+        tx.execute("""INSERT INTO entitlement_event (event_id, event_type, app_user_id, payload, received_at)
+                      VALUES (%(e)s, 'checkout.session.completed', %(p)s::text,
+                              '{"livemode": true, "data": {"object": {"mode": "payment"}}}'::jsonb, %(t)s)""",
+                   dict(e=eid, p=david['id'], t=soon))
+        oid = tx.execute(
+            """INSERT INTO organiser (name, kind, email, normalized_email, verified_at, approved_at,
+                                      member_person_id)
+               VALUES ('Feed Fellowship', 'fellowship_leader', %(e)s, %(e)s, NOW(), NOW(), %(p)s)
+               RETURNING id""",
+            dict(e=f'org-{tag}@example.com', p=sarah['id'])).fetchone()['id']
+        cleanup['organisers'].append(oid)
+    published(dict(id=oid), created_at=soon)
+
+    data = client.get('/admin/overview', headers=admin_headers).get_json()
+    mine = {(e['kind'], e['object']): e for e in data['recent_activity_all']
+            if e['object'] in (sarah['uuid'], david['uuid'])}
+    first_named = sarah if sarah['id'] < david['id'] else david
+    match = mine[('match', first_named['uuid'])]
+    assert set(match['subject'].split(' and ')) == {f'Sarah{tag}', f'David{tag}'}
+    assert ('verified', sarah['uuid']) in mine
+    assert ('gathering_created', sarah['uuid']) in mine
+    assert ('purchase', david['uuid']) in mine
+    assert ('deletion_requested', david['uuid']) in mine
+    assert set(mine[('verified', sarah['uuid'])]) == {'kind', 'subject', 'object', 'created_at'}
+    # The short feed keeps its five kinds.
+    assert {e['kind'] for e in data['recent_activity']} <= {
+        'signup_member', 'signup', 'signup_waitlist', 'referral_credited', 'admin_action'}
