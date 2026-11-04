@@ -99,33 +99,44 @@ def test_staff_addresses_and_finished_members_are_not_listed(client, admin_beare
     assert _rows(client, admin_bearer)['count'] == before
 
 
-def test_the_reminder_date_and_switch_are_listed_and_name_nobody(client, admin_bearer, onboardee, monkeypatch):
-    """TEC-2107: each row carries reminded_at (when the reminder was accepted
-    for sending, else null) and the response says whether the reminder is
-    on. Still no address and no name."""
+def test_the_reminder_state_and_switch_are_listed_and_name_nobody(client, admin_bearer, onboardee, monkeypatch):
+    """TEC-2107: each row carries reminder_state ('sent' with reminded_at,
+    'due', 'not_sent', or null while the switch is off) and the response
+    says whether the reminder is on. Still no address and no name."""
+    from service.admin.queries.signups import claim_key
     monkeypatch.delenv('AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED', raising=False)
+    before_off = _rows(client, admin_bearer)
+    assert before_off['reminder_on'] is False
+    assert all(r['reminder_state'] is None for r in before_off['rows'])
+    monkeypatch.setenv('AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED', '1')
     before = _rows(client, admin_bearer)
-    assert before['reminder_on'] is False
-    reminded = onboardee(idle_hours=30, name='Reminded')
-    onboardee(idle_hours=30, name='NotYet')
+    reminded = onboardee(idle_hours=30, name='Reminded', email=f'unfinished-{uuid4().hex[:10]}@ahavah-test.invalid')
+    onboardee(idle_hours=30, name='NotYet', email=f'unfinished-{uuid4().hex[:10]}@ahavah-test.invalid')
+    onboardee(idle_hours=30, name='Suppressed')   # example.com is on the suppression list
     with api_tx() as tx:
         tx.execute("""INSERT INTO lead_email_send (email, campaign, message_id, claimed_at, sent_at)
-                      VALUES (%(e)s, 'unfinished_signup', 'mid-admin', NOW() - interval '2 hours',
-                              NOW() - interval '2 hours')""", dict(e=reminded.lower()))
+                      VALUES (%(k)s, 'unfinished_signup', 'mid-admin', NOW() - interval '2 hours',
+                              NOW() - interval '2 hours')""", dict(k=claim_key(reminded)))
     try:
-        monkeypatch.setenv('AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED', '1')
         body = _rows(client, admin_bearer)
         assert body['reminder_on'] is True
-        assert body['count'] - before['count'] == 2
-        assert all('reminded_at' in r for r in body['rows'])
-        sent = sum(1 for r in body['rows'] if r['reminded_at'])
-        assert sent - sum(1 for r in before['rows'] if r['reminded_at']) == 1
-        assert all(r['reminded_at'] is None or r['reminded_at'].endswith('+00:00') for r in body['rows'])
+        assert body['count'] - before['count'] == 3
+        states = Counter(r['reminder_state'] for r in body['rows'])
+        assert states - Counter(r['reminder_state'] for r in before['rows']) == \
+            Counter({'sent': 1, 'due': 1, 'not_sent': 1})
+        for r in body['rows']:
+            assert r['reminder_state'] in ('sent', 'due', 'not_sent', None)
+            assert (r['reminded_at'] is not None) == (r['reminder_state'] == 'sent')
+            assert r['reminded_at'] is None or r['reminded_at'].endswith('+00:00')
         text = str(body)
-        assert reminded not in text and 'example.com' not in text
+        assert reminded not in text and 'example.com' not in text and 'ahavah-test.invalid' not in text
         assert 'Reminded' not in text and 'NotYet' not in text and 'mid-admin' not in text
         assert set(body) == {'count', 'rows', 'reminder_on'}
-        assert set(body['rows'][0]) == {'started_at', 'last_saved_at', 'furthest_step', 'reminded_at'}
+        assert set(body['rows'][0]) == {'started_at', 'last_saved_at', 'furthest_step', 'reminder_state',
+                                        'reminded_at'}
+        monkeypatch.setenv('AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED', '0')
+        off = _rows(client, admin_bearer)
+        assert off['reminder_on'] is False and all(r['reminder_state'] is None for r in off['rows'])
     finally:
         with api_tx() as tx:
-            tx.execute("DELETE FROM lead_email_send WHERE email = %(e)s", dict(e=reminded.lower()))
+            tx.execute("DELETE FROM lead_email_send WHERE email = %(k)s", dict(k=claim_key(reminded)))
