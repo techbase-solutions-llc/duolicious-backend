@@ -25,12 +25,14 @@ def get_admin_community_waiting(s: t.SessionInfo):
 
 @aget('/admin/community/unfinished')
 def get_admin_community_unfinished(s: t.SessionInfo):
-    """People who started sign-up and stopped (frames U.1 to U.4)."""
+    """People who started sign-up and stopped (frames U.1 to U.4), each with
+    when the reminder went (TEC-2107), and whether the reminder is on."""
     require_admin(s)
     from service.admin.queries.signups import Q_UNFINISHED
+    from service.campaigns.switches import enabled
     with api_tx('read committed') as tx:
         rows = [iso_row(r) for r in tx.execute(Q_UNFINISHED, dict(ex=_excluded())).fetchall()]
-    return dict(count=len(rows), rows=rows)
+    return dict(count=len(rows), rows=rows, reminder_on=enabled('unfinished_signup_reminder'))
 
 
 @aget('/admin/community/funnel')
