@@ -121,6 +121,17 @@ _Q_ENQUEUE_FOR_MENTOR_LINK = """
     RETURNING id
 """
 
+# An unfinished sign-up (TEC-2107, migration 0092): someone who confirmed an
+# address and started sign-up but has no account. Neither a member nor a
+# lead; the lower-cased address is the key, with its own partial unique
+# index as the idempotency point.
+_Q_ENQUEUE_FOR_ONBOARDEE = """
+    INSERT INTO email_outbox (campaign, campaign_id, onboardee_email, email, payload, exempt, unsub_scope)
+    VALUES (%(c)s, %(cid)s, %(oe)s, %(email)s, %(payload)s, FALSE, 'signup')
+    ON CONFLICT (campaign, campaign_id, onboardee_email) WHERE onboardee_email IS NOT NULL DO NOTHING
+    RETURNING id
+"""
+
 # The inner SELECT takes the row locks with SKIP LOCKED, so a second drain
 # running at the same moment simply does not see the rows this one is about
 # to reserve -- it never blocks on them, and never reserves them twice.
@@ -156,7 +167,27 @@ _Q_ACCEPT = """
     UPDATE email_outbox
        SET state = 'accepted', sent_at = NOW(), provider_message_id = %(mid)s, last_error = NULL
      WHERE id = %(id)s
-    RETURNING person_id, campaign, campaign_id, payload
+    RETURNING person_id, onboardee_email, campaign, campaign_id, payload
+"""
+
+# An unfinished sign-up's claim (lead_email_send, written with the outbox
+# row, keyed on the address's keyed hash) is marked sent in the
+# acceptance's own transaction.
+_Q_ONBOARDEE_SENT = """
+    UPDATE lead_email_send SET sent_at = NOW(), message_id = %(mid)s
+     WHERE email = %(k)s AND campaign = %(c)s AND sent_at IS NULL
+"""
+
+# An unfinished sign-up's outbox row holds the address in plain. Once it is
+# settled (accepted, skipped or failed) and 30 days old it goes; the claim,
+# a keyed hash, stays so the address is never reminded twice. A row in
+# acceptance_unknown or reserved waits for a human or the reaper.
+ONBOARDEE_ROW_DAYS = 30
+_Q_PURGE_ONBOARDEE_ROWS = """
+    DELETE FROM email_outbox
+     WHERE onboardee_email IS NOT NULL
+       AND state IN ('accepted', 'skipped', 'failed')
+       AND created_at < NOW() - make_interval(days => %(days)s)
 """
 
 _Q_SKIP = """
@@ -354,6 +385,27 @@ def enqueue_for_mentor_link(tx, *, campaign: str, campaign_id: str, mentor_link_
     return row['id'] if row else None
 
 
+def enqueue_for_onboardee(tx, *, campaign: str, campaign_id: str, email: str,
+                          subject: str, html: str, from_addr: Optional[str],
+                          list_unsubscribe: Optional[str] = None,
+                          switch: Optional[str] = None) -> Optional[int]:
+    """Queue one message for an unfinished sign-up (TEC-2107): an address
+    with an `onboardee` row and no account. Not exempt, so the send guard
+    treats it as a list send. Its unsubscribe scope is `signup`, which
+    works with no account and no lead row. `switch` is a name in
+    service/campaigns/switches.py SWITCHES, read again at the send. Returns
+    the new row id, or None when this exact (campaign, campaign_id,
+    address) is already in the outbox."""
+    _refuse_in_a_dry_run(campaign, email)
+    payload = dict(subject=subject, html=html, from_addr=from_addr,
+                   list_unsubscribe=list_unsubscribe, post_send=None, cap_days=0,
+                   requires_spotlight_opt_in=False, switch=switch)
+    row = tx.execute(_Q_ENQUEUE_FOR_ONBOARDEE, dict(
+        c=campaign, cid=campaign_id, oe=email.strip().lower(), email=email,
+        payload=json.dumps(payload))).fetchone()
+    return row['id'] if row else None
+
+
 def reserve(tx, limit: int = BATCH) -> list[dict]:
     """Claim up to `limit` due rows for this drain and return them in full.
 
@@ -380,8 +432,14 @@ def mark_accepted(tx, id: int, provider_message_id: Optional[str]) -> None:
     if not row:
         return
     # Lead mail (TEC-1845) has no member: the send log and the hooks are
-    # keyed on person_id. The accepted outbox row is its record.
+    # keyed on person_id. The accepted outbox row is its record. An
+    # unfinished sign-up's claim is marked sent (TEC-2107).
     if row['person_id'] is None:
+        if row.get('onboardee_email') is not None:
+            from service.admin.queries.signups import claim_key
+            tx.execute(_Q_ONBOARDEE_SENT, dict(
+                k=claim_key(row['onboardee_email']), c=row['campaign'],
+                mid=str(provider_message_id) if provider_message_id else None))
         return
     log_send(tx, row['person_id'], row['campaign'], row['campaign_id'],
              str(provider_message_id) if provider_message_id else None)
@@ -553,6 +611,61 @@ def _send_html(tx, row: dict, html: Optional[str]) -> Optional[str]:
     return html
 
 
+_Q_PERSON_BY_ADDRESS = """
+    SELECT 1 FROM person WHERE lower(email) = lower(%(e)s) LIMIT 1
+"""
+# Every unsubscribe an address with no account can have made: the
+# reminder's own (its claim, by keyed hash), the waitlist's and the beta's.
+# A lead row's news unsubscribe is read by address_unsubscribed. The
+# `campaigns` scope is a column on person, so it cannot apply to an address
+# with no account.
+_Q_ADDRESS_LEFT = """
+    SELECT 1 FROM lead_email_send
+     WHERE email = %(k)s AND campaign = %(c)s AND unsubscribed_at IS NOT NULL
+    UNION ALL
+    SELECT 1 FROM waitlist_signup WHERE email = lower(%(e)s) AND unsubscribed_at IS NOT NULL
+    UNION ALL
+    SELECT 1 FROM beta_signup WHERE email = lower(%(e)s) AND unsubscribed_at IS NOT NULL
+    LIMIT 1
+"""
+
+
+def onboardee_unsubscribed(tx, email: str) -> bool:
+    """True when an address with no account has left any mail it could
+    have left (TEC-2107): the news mail of any lead row, the sign-up
+    reminder, the waitlist or the beta mail."""
+    from service.admin.queries.signups import REMINDER_CAMPAIGN, claim_key
+    if address_unsubscribed(tx, _normalized(email)):
+        return True
+    return tx.execute(_Q_ADDRESS_LEFT, dict(
+        k=claim_key(email), c=REMINDER_CAMPAIGN, e=email)).fetchone() is not None
+
+
+def purge_settled_onboardee_rows(tx) -> int:
+    """Delete settled unfinished sign-up rows ONBOARDEE_ROW_DAYS old.
+    Returns how many. Run daily by the lead_retention cron."""
+    return tx.execute(_Q_PURGE_ONBOARDEE_ROWS, dict(days=ONBOARDEE_ROW_DAYS)).rowcount
+
+
+def _onboardee_refusal(tx, row: dict, payload: dict) -> Optional[str]:
+    """The send-time re-checks for an unfinished sign-up (TEC-2107): its
+    switch, the suppression list, an account made since it was queued
+    (by the address as typed or normalised), and any unsubscribe of the
+    address (onboardee_unsubscribed)."""
+    from service.campaigns.switches import enabled
+    switch = payload.get('switch')
+    if switch and not enabled(switch):
+        return 'switched_off'
+    if is_suppressed_send(row['email']):
+        return 'suppressed'
+    if (tx.execute(_Q_PERSON_BY_ADDRESS, dict(e=row['email'])).fetchone() is not None
+            or _is_member_address(tx, row['email'])):
+        return 'member_now'
+    if onboardee_unsubscribed(tx, row['email']):
+        return 'unsubscribed'
+    return None
+
+
 def _refusal(tx, row: dict) -> Optional[str]:
     """The send-time re-checks, in the order they cost. None means send.
 
@@ -605,6 +718,9 @@ def _refusal(tx, row: dict) -> Optional[str]:
         live_link = tx.execute('SELECT 1 FROM mentor_link WHERE id = %(i)s AND revoked_at IS NULL',
                                dict(i=row['mentor_link_id'])).fetchone()
         return None if live_link else 'withdrawn'
+    # An unfinished sign-up (TEC-2107) is neither a member nor a lead.
+    if row.get('onboardee_email') is not None:
+        return _onboardee_refusal(tx, row, payload)
     # An organiser (TEC-1845) is neither a member nor a lead: only the
     # suppression list applies.
     if row.get('organiser_id') is not None:

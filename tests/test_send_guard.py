@@ -610,6 +610,7 @@ def test_a_push_names_its_kind_by_caller_then_tag_then_event(monkeypatch):
     ('enqueue_for_organiser', dict(organiser_id=1)),
     ('enqueue_for_recommendation', dict(recommendation_id=1)),
     ('enqueue_for_mentor_link', dict(mentor_link_id=1)),
+    ('enqueue_for_onboardee', dict()),
 ])
 def test_a_dry_run_cannot_queue_mail_for_the_drain_to_send_later(fn, extra):
     """The drain runs outside the trial run's no_send(), so a row queued in

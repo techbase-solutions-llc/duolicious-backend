@@ -41,7 +41,7 @@ _NOTIFICATION_SENDERS = frozenset({
     'enqueue_event_email', '_send_one', '_send_event_email_blocking', '_send_transactional_blocking'})
 _OUTBOX_SENDERS = frozenset({
     'enqueue', 'enqueue_for_lead', 'enqueue_for_organiser', 'enqueue_for_recommendation',
-    'enqueue_for_mentor_link', 'drain'})
+    'enqueue_for_mentor_link', 'enqueue_for_onboardee', 'drain'})
 
 
 def registry() -> dict:

@@ -5,6 +5,8 @@ reaches members before a proof reaches the owner).
 
     python -m scripts.send_proofs            # DRY RUN: lists what it would send
     python -m scripts.send_proofs --send     # send the proofs
+    python -m scripts.send_proofs --only unfinished_signup --send
+                                             # send one email's proof, no pushes
 
 Run inside the api container (it needs the mailer settings and, for the
 pushes, the VAPID keys).
@@ -56,7 +58,7 @@ def _inert(name: str, html: str) -> str:
 def _emails() -> list[dict]:
     from emails import (friend_joined, likes_waiting_weekly, member_welcome, one_photo_nudge,
                         profile_views_weekly, referral_intro, reminders,
-                        send_community_weekly, send_spotlight_resend)
+                        send_community_weekly, send_spotlight_resend, unfinished_signup)
     from emails.spotlight_card_ready import FROM_ADDR as E4_FROM, SUBJECT as E4_SUBJECT, card_ready_html
     from service.config import WEB_BASE_URL
     from service.unsubscribe import make_url
@@ -85,6 +87,8 @@ def _emails() -> list[dict]:
          send_community_weekly.preview_gatherings_online, send_community_weekly.FROM_ADDR),
         ('welcome_gatherings', 'Member welcome with the gatherings mention (events item 20)',
          member_welcome.preview_welcome_gatherings, member_welcome.FROM_ADDR),
+        ('unfinished_signup', 'Unfinished sign-up reminder (TEC-2107)',
+         unfinished_signup.preview, unfinished_signup.FROM_ADDR),
     ]
     waiting = missing_titles()
     out = []
@@ -152,8 +156,15 @@ def _push_one(sub: dict, payload: dict) -> Optional[int]:
 def main(argv: Optional[list[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--send', action='store_true', help='send the proofs (default: dry run)')
+    ap.add_argument('--only', metavar='NAME',
+                    help='only the proof email of this name (e.g. unfinished_signup), and no pushes')
     a = ap.parse_args(argv)
     emails, pushes = plan()
+    if a.only:
+        emails = [e for e in emails if e['name'] == a.only]
+        pushes = []
+        if not emails:
+            raise SystemExit(f'no proof email is named {a.only}')
     mode = 'SEND' if a.send else 'DRY RUN'
     waiting = missing_titles()
     if waiting:
@@ -172,6 +183,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         mid = smtp.send(subject=e['subject'], body=e['html'], to_addr=PROOF_TO,
                         from_addr=e['from_addr'])
         print(f"sent {e['name']} ({mid or 'no id'})")
+    if not pushes:
+        return
     subs = _subscriptions(PUSH_PERSON_ID)
     if not subs:
         print(f"account {PUSH_PERSON_ID} has no push subscription; no push sent")

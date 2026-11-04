@@ -8,6 +8,9 @@ every deploy and sends nothing until the owner has confirmed a proof and the
 switch is turned on. Each job queues into the durable outbox; the emailoutbox
 cron does the sending.
 
+It also queues the unfinished sign-up reminder (emails/unfinished_signup.py),
+which goes to an address with no account, behind its own switch.
+
 It also runs the quick-question pushes (service/questions/pushes.py) and the
 gathering reminder and digest (service/events/jobs.py), each behind its own
 switch.
@@ -23,7 +26,8 @@ import traceback
 from datetime import datetime, timezone
 
 from database import api_tx
-from emails import likes_waiting_weekly, one_photo_nudge, profile_views_weekly, questions_launch, reminders
+from emails import (likes_waiting_weekly, one_photo_nudge, profile_views_weekly, questions_launch, reminders,
+                    unfinished_signup)
 from service.questions import pushes as question_pushes
 from service.campaigns import held
 from service.campaigns.runner import audit_send
@@ -74,6 +78,10 @@ JOBS = [
     ('push_gathering_reminder', activity_pushes.queue_gathering_reminders),
     ('push_new_guests', activity_pushes.queue_new_guests),
     ('push_match_played', activity_pushes.queue_match_played),
+    # The one reminder to someone who started sign-up and stopped before an
+    # account was made (TEC-2107): once per address ever, at most 20 a
+    # Barbados day, behind its own switch.
+    ('unfinished_signup', unfinished_signup.queue_due),
 ]
 
 print(f'Hello from cron module: {__name__}')

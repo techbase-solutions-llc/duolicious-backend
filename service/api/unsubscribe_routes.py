@@ -84,10 +84,15 @@ def _pending_html(token: str) -> str:
     """)
 
 
+# A scope name read as words on the page; the rest read as they are.
+_SCOPE_LABELS = {'signup': 'sign-up reminder'}
+
+
 def _success_html(scope: str) -> str:
+    label = _SCOPE_LABELS.get(scope, scope)
     return _page("Unsubscribed", f"""
     <h1>Unsubscribed</h1>
-    <p>You have been removed from Ahavah's <strong>{scope}</strong> mail.
+    <p>You have been removed from Ahavah's <strong>{label}</strong> mail.
     We will not send you any more. Final transactional messages (like a
     deletion confirmation) may still arrive.</p>
     <p>Changed your mind? Just re-join from <a href="https://ahavah.app">ahavah.app</a>.</p>

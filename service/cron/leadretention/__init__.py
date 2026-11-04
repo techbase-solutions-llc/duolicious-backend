@@ -9,7 +9,9 @@ it. Mail queued for a deleted lead goes with it (email_outbox.lead_id
 cascades). The feature plans add their own tables' sweeps here (tool
 sessions, RSVPs, alerts), on the same clock; gatherings' RSVPs, organiser
 links and invite requests are swept here too (service/events/retention.py). Unmatched conversations are
-held 30 days for a report, then deleted here (TEC-1845). Daily.
+held 30 days for a report, then deleted here (TEC-1845). The unfinished
+sign-up reminder's outbox rows, which hold an address with no account, go
+30 days after they settle (TEC-2107). Daily.
 """
 from __future__ import annotations
 
@@ -49,6 +51,12 @@ def _purge_once() -> None:
         # The light sign-in's address sessions (TEC-1845, migration 0085).
         from service import your_ahavah
         n_address = your_ahavah.purge(tx)
+        # The unfinished sign-up reminder (TEC-2107).
+        from service.campaigns.outbox import ONBOARDEE_ROW_DAYS, purge_settled_onboardee_rows
+        n_signup = purge_settled_onboardee_rows(tx)
+    if n_signup:
+        print(f'lead_retention: {n_signup} sign-up reminder outbox row(s) deleted '
+              f'{ONBOARDEE_ROW_DAYS} days after they settled')
     if n_address:
         print(f'lead_retention: {n_address} lapsed address session(s) deleted')
     if n:

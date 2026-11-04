@@ -62,12 +62,14 @@ SENDING_CRONS = {
         'channel': 'email', 'dedupe': 'email_send_log and email_outbox referral-<week>',
         'switch': 'referral_member', 'note': 'also DUO_CRON_REFERRAL_INTRO_ENABLED, on by default'},
     'service.cron.returnmail': {
-        'channel': 'email+push', 'dedupe': 'email_outbox keys and push_send_log',
+        'channel': 'email+push',
+        'dedupe': 'email_outbox keys, push_send_log and lead_email_send (email, campaign)',
         'switch': ('likes_waiting', 'match_reminder', 'message_reminder', 'profile_views', 'one_photo',
                 'matchmaker_alert_email', 'matchmaker_visitor_alert_email', 'question_push',
                 'match_question_push', 'questions_launch_push', 'questions_launch_email',
                 'events_reminder_email', 'events_digest_email', 'events_join_invite_email',
-                'push_gathering_reminder', 'push_new_guests', 'push_match_played'),
+                'push_gathering_reminder', 'push_new_guests', 'push_match_played',
+                'unfinished_signup_reminder'),
         'note': 'every job behind its own switch'},
     'service.cron.sendguard': {
         'channel': 'email+push', 'dedupe': 'sg:events trimmed only after Postgres has them; 20 alerts a day',
