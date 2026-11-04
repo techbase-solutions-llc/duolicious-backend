@@ -72,8 +72,11 @@ TYPES = ('interactions', 'messages', 'reports', 'money', 'account', 'community')
 # Bound parameters: pid (person.id), puuid (person.uuid as text), lo/hi
 # (timestamptz) and lo_n/hi_n (the same as naive UTC), lim (rows per
 # branch), lo_id/hi_id (the archive's id range for lo and the end of `to`)
-# and lo_end/hi_end, the from/to range without the paging cursor.
-_PER = "ORDER BY at DESC LIMIT %(lim)s"
+# and hi_end, the end of the from/to range without the paging cursor.
+#
+# A branch holds no ORDER BY of its own: timeline_sql wraps each one in the
+# outer query's full order (_ORDER), so the `lim` rows a branch gives up are
+# the same rows on every page however many share one instant.
 
 
 def _between(col: str, naive: bool = False) -> str:
@@ -89,57 +92,48 @@ _BRANCHES: dict[str, list[str]] = {
                    NULL::text AS other_ref, NULL::int AS n,
                    CASE WHEN l.is_super THEN 'super' END AS detail
               FROM liked l
-             WHERE l.liker_id = %(pid)s AND {_between('l.created_at')}
-             {_PER}""",
+             WHERE l.liker_id = %(pid)s AND {_between('l.created_at')}""",
         f"""SELECT 'like_received', l.created_at, l.liker_id, NULL, NULL,
                    CASE WHEN l.is_super THEN 'super' END
               FROM liked l
-             WHERE l.liked_id = %(pid)s AND {_between('l.created_at')}
-             ORDER BY 2 DESC LIMIT %(lim)s""",
+             WHERE l.liked_id = %(pid)s AND {_between('l.created_at')}""",
         f"""SELECT 'pass', s.created_at {_UTC}, s.object_person_id, NULL, NULL, NULL
               FROM skipped s
              WHERE s.subject_person_id = %(pid)s AND NOT s.reported
-               AND {_between('s.created_at', naive=True)}
-             ORDER BY s.created_at DESC LIMIT %(lim)s""",
+               AND {_between('s.created_at', naive=True)}""",
         f"""SELECT 'match', m.created_at,
                    CASE WHEN m.user_a_id = %(pid)s THEN m.user_b_id ELSE m.user_a_id END,
                    NULL, NULL, NULL
               FROM ahavah_match m
              WHERE (m.user_a_id = %(pid)s OR m.user_b_id = %(pid)s)
-               AND {_between('m.created_at')}
-             ORDER BY 2 DESC LIMIT %(lim)s""",
+               AND {_between('m.created_at')}""",
         # A match since ended: ahavah_match lost the row at the unmatch.
         f"""SELECT 'match', u.matched_at,
                    CASE WHEN u.user_a_id = %(pid)s THEN u.user_b_id ELSE u.user_a_id END,
                    NULL, NULL, NULL
               FROM unmatched_pair u
              WHERE (u.user_a_id = %(pid)s OR u.user_b_id = %(pid)s)
-               AND u.matched_at IS NOT NULL AND {_between('u.matched_at')}
-             ORDER BY 2 DESC LIMIT %(lim)s""",
+               AND u.matched_at IS NOT NULL AND {_between('u.matched_at')}""",
         f"""SELECT CASE WHEN u.unmatched_by = %(pid)s THEN 'unmatched' ELSE 'unmatched_by' END,
                    u.unmatched_at,
                    CASE WHEN u.user_a_id = %(pid)s THEN u.user_b_id ELSE u.user_a_id END,
                    NULL, NULL, NULL
               FROM unmatched_pair u
              WHERE (u.user_a_id = %(pid)s OR u.user_b_id = %(pid)s)
-               AND {_between('u.unmatched_at')}
-             ORDER BY 2 DESC LIMIT %(lim)s""",
+               AND {_between('u.unmatched_at')}""",
         f"""SELECT 'view_given', v.updated_at {_UTC}, v.object_person_id, NULL, NULL,
                    CASE WHEN v.invisible THEN 'invisible' END
               FROM visited v
-             WHERE v.subject_person_id = %(pid)s AND {_between('v.updated_at', naive=True)}
-             ORDER BY v.updated_at DESC LIMIT %(lim)s""",
+             WHERE v.subject_person_id = %(pid)s AND {_between('v.updated_at', naive=True)}""",
         f"""SELECT 'view_received', v.updated_at {_UTC}, v.subject_person_id, NULL, NULL,
                    CASE WHEN v.invisible THEN 'invisible' END
               FROM visited v
-             WHERE v.object_person_id = %(pid)s AND {_between('v.updated_at', naive=True)}
-             ORDER BY v.updated_at DESC LIMIT %(lim)s""",
+             WHERE v.object_person_id = %(pid)s AND {_between('v.updated_at', naive=True)}""",
     ],
     'messages': [
         f"""SELECT 'first_message', d.created_at {_UTC}, d.object_person_id, NULL, NULL, NULL
               FROM messaged d
-             WHERE d.subject_person_id = %(pid)s AND {_between('d.created_at', naive=True)}
-             ORDER BY d.created_at DESC LIMIT %(lim)s""",
+             WHERE d.subject_person_id = %(pid)s AND {_between('d.created_at', naive=True)}""",
         # One line per conversation: how many messages (both ways) and the
         # last one's time. Counted over the from/to range, never the paging
         # cursor, so a conversation keeps its count on every page and shows
@@ -159,18 +153,15 @@ _BRANCHES: dict[str, list[str]] = {
                     WHERE um.person_id = %(pid)s AND um.id BETWEEN %(lo_id)s AND %(hi_id)s
                   ) a
             GROUP BY a.other_ref
-           HAVING to_timestamp((MAX(a.id) >> 8) / 1000000.0) <= %(hi)s
-            ORDER BY 2 DESC LIMIT %(lim)s""",
+           HAVING to_timestamp((MAX(a.id) >> 8) / 1000000.0) <= %(hi)s""",
     ],
     'reports': [
         f"""SELECT 'report_made', r.reported_at {_UTC}, r.reported_id, NULL, NULL, NULL
               FROM person_report r
-             WHERE r.reporter_id = %(pid)s AND {_between('r.reported_at', naive=True)}
-             ORDER BY r.reported_at DESC LIMIT %(lim)s""",
+             WHERE r.reporter_id = %(pid)s AND {_between('r.reported_at', naive=True)}""",
         f"""SELECT 'report_received', r.reported_at {_UTC}, r.reporter_id, NULL, NULL, NULL
               FROM person_report r
-             WHERE r.reported_id = %(pid)s AND {_between('r.reported_at', naive=True)}
-             ORDER BY r.reported_at DESC LIMIT %(lim)s""",
+             WHERE r.reported_id = %(pid)s AND {_between('r.reported_at', naive=True)}""",
     ],
     'money': [
         # Tokens in and out. A reveal names the liker it revealed.
@@ -180,8 +171,7 @@ _BRANCHES: dict[str, list[str]] = {
                    tl.delta,
                    CASE WHEN tl.reason = 'reveal_liker' THEN NULL ELSE tl.reason END
               FROM token_ledger tl
-             WHERE tl.person_id = %(puuid)s::uuid AND {_between('tl.created_at')}
-             ORDER BY tl.created_at DESC LIMIT %(lim)s""",
+             WHERE tl.person_id = %(puuid)s::uuid AND {_between('tl.created_at')}""",
         # Premium from Stripe: a subscription checkout starts it, a
         # subscription's deletion ends it. A test-mode event says so.
         # Token bundles are on the ledger above, so not here.
@@ -196,8 +186,7 @@ _BRANCHES: dict[str, list[str]] = {
                AND ((e.event_type = 'checkout.session.completed'
                      AND COALESCE(e.payload->'data'->'object'->>'mode', e.payload->>'mode') = 'subscription')
                     OR e.event_type = 'customer.subscription.deleted')
-               AND {_between('e.received_at')}
-             ORDER BY e.received_at DESC LIMIT %(lim)s""",
+               AND {_between('e.received_at')}""",
     ],
     'account': [
         f"""SELECT 'joined', p.sign_up_time {_UTC}, NULL::int, NULL, NULL, NULL
@@ -227,8 +216,7 @@ _BRANCHES: dict[str, list[str]] = {
                                  ELSE 'photo_pending' END
               FROM verification_job j
              WHERE j.person_id = %(pid)s
-               AND {_between("(j.expires_at - INTERVAL '3 days')", naive=True)}
-             ORDER BY j.expires_at DESC LIMIT %(lim)s""",
+               AND {_between("(j.expires_at - INTERVAL '3 days')", naive=True)}""",
         # One line per week online: the days that week, at the last time
         # seen. Counted over the from/to range only, like a conversation.
         """SELECT 'online_week', MAX(o.last_at), NULL::int, NULL,
@@ -237,8 +225,7 @@ _BRANCHES: dict[str, list[str]] = {
             WHERE o.person_id = %(pid)s
               AND o.last_at >= %(lo)s AND o.first_at <= %(hi_end)s
             GROUP BY date_trunc('week', o.day)
-           HAVING MAX(o.last_at) <= %(hi)s
-            ORDER BY 2 DESC LIMIT %(lim)s""",
+           HAVING MAX(o.last_at) <= %(hi)s""",
     ],
     'community': [
         # A gathering made by an organiser that is this member: one made in
@@ -248,50 +235,57 @@ _BRANCHES: dict[str, list[str]] = {
               JOIN organiser og ON og.id = e.organiser_id
              WHERE (og.member_person_id = %(pid)s
                     OR og.normalized_email = (SELECT normalized_email FROM person WHERE id = %(pid)s))
-               AND {_between('e.created_at')}
-             ORDER BY e.created_at DESC LIMIT %(lim)s""",
+               AND {_between('e.created_at')}""",
         f"""SELECT 'rsvp', r.created_at, NULL::int, NULL, NULL, e.title
               FROM event_rsvp r
               JOIN event e ON e.id = r.event_id
              WHERE (r.person_id = %(pid)s
                     OR r.normalized_email = (SELECT normalized_email FROM person WHERE id = %(pid)s))
                AND r.erased_at IS NULL
-               AND {_between('r.created_at')}
-             ORDER BY r.created_at DESC LIMIT %(lim)s""",
+               AND {_between('r.created_at')}""",
         f"""SELECT 'together_started', ts.created_at, NULL::int, NULL, NULL, ts.kind
               FROM tool_session ts
-             WHERE ts.owner_person_id = %(pid)s AND {_between('ts.created_at')}
-             ORDER BY ts.created_at DESC LIMIT %(lim)s""",
+             WHERE ts.owner_person_id = %(pid)s AND {_between('ts.created_at')}""",
         # The category only.
         f"""SELECT 'feedback', f.created_at, NULL::int, NULL, NULL, f.category
               FROM feedback f
-             WHERE f.person_id = %(pid)s AND {_between('f.created_at')}
-             ORDER BY f.created_at DESC LIMIT %(lim)s""",
+             WHERE f.person_id = %(pid)s AND {_between('f.created_at')}""",
     ],
 }
+
+
+_COLS = 'kind, at, other_id, other_ref, n, detail'
+_ORDER = ('at DESC, kind, other_id NULLS FIRST, other_ref NULLS FIRST, '
+          'detail NULLS FIRST, n NULLS FIRST')
+
+
+def _branch(sql: str) -> str:
+    """One branch, typed, cut at the cursor and ordered on the full key
+    before its LIMIT. Casting here settles a bare NULL's type, which a
+    subquery would otherwise read as text."""
+    return f"""(SELECT kind::text, at::timestamptz, other_id::int, other_ref::text,
+                   n::int, detail::text
+              FROM ({sql}) x ({_COLS})
+             WHERE at <= %(hi)s
+             ORDER BY {_ORDER}
+             LIMIT %(lim)s)"""
 
 
 def timeline_sql(types: tuple[str, ...] = TYPES) -> str:
     """The timeline for the filters in `types`, newest first.
 
-    Each branch takes at most `lim` rows; the union is ordered on a fixed
-    key, `skip` rows already shown at the cursor's exact time are passed
-    over, and `page` + 1 rows come back (the extra one says whether there is
-    more). The other member is resolved only for the rows returned."""
-    # A typed empty row first, so a branch's bare NULL takes the column's
-    # type whichever filters are chosen.
-    parts = ["(SELECT NULL::text, NULL::timestamptz, NULL::int, NULL::text, NULL::int,"
-             " NULL::text WHERE FALSE)"]
-    parts += [f"({b})" for t in types for b in _BRANCHES[t]]
-    union = '\n    UNION ALL\n    '.join(parts)
+    Each branch takes at most `lim` rows on the full key; the union is
+    ordered on the same key, `skip` rows already shown at the cursor's exact
+    time are passed over, and `page` + 1 rows come back (the extra one says
+    whether there is more). The other member is resolved only for the rows
+    returned."""
+    union = '\n    UNION ALL\n    '.join(_branch(b) for t in types for b in _BRANCHES[t])
     return f"""
     WITH line AS (
-        SELECT * FROM (
+        SELECT {_COLS} FROM (
     {union}
-        ) b (kind, at, other_id, other_ref, n, detail)
-         WHERE at <= %(hi)s
-         ORDER BY at DESC, kind, other_id NULLS FIRST, other_ref NULLS FIRST,
-                  detail NULLS FIRST, n NULLS FIRST
+        ) b ({_COLS})
+         ORDER BY {_ORDER}
         OFFSET %(skip)s LIMIT %(page)s
     )
     SELECT line.kind, line.at, line.n, line.detail,
@@ -303,8 +297,7 @@ def timeline_sql(types: tuple[str, ...] = TYPES) -> str:
       FROM line
       LEFT JOIN person oi ON oi.id = line.other_id
       LEFT JOIN person ou ON ou.uuid = uuid_or_null(line.other_ref)
-     ORDER BY line.at DESC, line.kind, line.other_id NULLS FIRST, line.other_ref NULLS FIRST,
-              line.detail NULLS FIRST, line.n NULLS FIRST
+     ORDER BY line.{_ORDER.replace(', ', ', line.')}
 """
 
 
@@ -361,7 +354,7 @@ Q_MEMBER_ACTIVITY_SUMMARY = f"""
          WHERE um.person_id = %(pid)s AND um.id >= %(id30)s
     ),
     {_pair('archive_members', f'''
-        SELECT a.* FROM archive a
+        SELECT a.other_ref, a.id, a.direction FROM archive a
           LEFT JOIN person o ON o.uuid = uuid_or_null(a.other_ref)
          WHERE o.id IS NULL OR {_OTHER_IS_MEMBER}''')},
     {_pair('conversations', '''

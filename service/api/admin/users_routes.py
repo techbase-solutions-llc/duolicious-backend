@@ -97,6 +97,10 @@ def get_admin_user_detail(s: t.SessionInfo, uuid: str):
 
 _ACTIVITY_PAGE = 50
 _ACTIVITY_PAGE_MAX = 100
+# The years a `from`, `to` or `before` may name. Ahavah began in 2026; the
+# bound keeps the day arithmetic and the chat archive's id (a bigint) from
+# overflowing on a date like 9999-12-31, which answered 500.
+_ACTIVITY_YEARS = (2000, 2100)
 
 
 def _activity_cursor(raw: str | None):
@@ -115,6 +119,8 @@ def _activity_cursor(raw: str | None):
         skip = int(skip_text) if skip_text else 0
     except ValueError:
         abort(400)
+    if not _ACTIVITY_YEARS[0] <= at.year <= _ACTIVITY_YEARS[1]:
+        abort(400)
     if at.tzinfo is None:
         at = at.replace(tzinfo=timezone.utc)
     return at, max(0, min(skip, 10_000))
@@ -132,6 +138,8 @@ def _activity_day(name: str):
     try:
         d = date.fromisoformat(raw)
     except ValueError:
+        abort(400)
+    if not _ACTIVITY_YEARS[0] <= d.year <= _ACTIVITY_YEARS[1]:
         abort(400)
     return datetime.combine(d, time.min, tzinfo=ZoneInfo('America/Barbados'))
 

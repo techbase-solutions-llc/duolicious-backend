@@ -229,6 +229,30 @@ def test_paging_walks_every_line_once_even_when_times_tie(client, admin_headers,
     assert len(set(seen)) == 7
 
 
+def test_paging_one_at_a_time_through_a_crowd_at_one_instant(client, admin_headers, make_person):
+    """More lines at one instant than a branch's LIMIT: each branch orders
+    on the full key, so limit=1 still walks every line exactly once."""
+    me = make_person(name='Crowded', gender='Woman')
+    others = [make_person(name=f'Crowd{i}') for i in range(6)]
+    at = datetime.now(timezone.utc) - timedelta(hours=2)
+    with api_tx() as tx:
+        for o in others:
+            tx.execute("INSERT INTO liked (liker_id, liked_id, created_at) VALUES (%(o)s, %(m)s, %(t)s)",
+                       dict(o=o['id'], m=me['id'], t=at))
+            tx.execute("INSERT INTO liked (liker_id, liked_id, created_at) VALUES (%(m)s, %(o)s, %(t)s)",
+                       dict(o=o['id'], m=me['id'], t=at))
+    seen, before = [], None
+    for _ in range(20):
+        args = dict(type='interactions', limit=1, **({'before': before} if before else {}))
+        data = _get(client, admin_headers, me['uuid'], **args)
+        seen += [(i['kind'], i['other']['uuid']) for i in data['items']]
+        before = data['next_before']
+        if before is None:
+            break
+    expected = {(k, o['uuid']) for o in others for k in ('like_sent', 'like_received')}
+    assert len(seen) == 12 and set(seen) == expected
+
+
 def test_from_and_to_bound_the_timeline(client, admin_headers, make_person):
     me = make_person(name='Dated', gender='Woman')
     o = make_person(name='Other')
@@ -245,7 +269,8 @@ def test_from_and_to_bound_the_timeline(client, admin_headers, make_person):
 
 def test_bad_input_is_refused(client, admin_headers, make_person):
     me = make_person(name='Bad')
-    for args in ({'type': 'gossip'}, {'before': 'yesterday'}, {'from': '10/01/2026'}):
+    for args in ({'type': 'gossip'}, {'before': 'yesterday'}, {'from': '10/01/2026'},
+                 {'to': '9999-12-31'}, {'from': '0001-01-01'}, {'before': '9999-12-31T23:59:59Z,0'}):
         r = client.get(f"/admin/users/{me['uuid']}/activity", headers=admin_headers, query_string=args)
         assert r.status_code == 400, args
     assert client.get('/admin/users/not-a-uuid/activity', headers=admin_headers).status_code == 404
@@ -275,35 +300,57 @@ _FORBIDDEN = (
     re.compile(r'\bbody\b'),
 )
 
+# The select list of every SELECT that reads the archive directly, so a
+# `SELECT *` or `mm.*` there is caught as well as a named column.
+_ARCHIVE_SELECT = re.compile(
+    r'\bselect\b((?:(?!\bselect\b).)*?)\bfrom\s+(?:mam_message|unmatched_message)\b', re.S)
+# Anywhere in the activity module: no star but COUNT(*). Archive rows pass
+# through its CTEs, so a star further out could carry a column through.
+_ANY_STAR = re.compile(r'(?<!count\()\*')
 
-def _every_activity_sql() -> list[str]:
+
+def _reads_words(sql: str, *, strict: bool) -> list[str]:
+    low = sql.lower()
+    found = [p.pattern for p in _FORBIDDEN if p.search(low)]
+    for m in _ARCHIVE_SELECT.finditer(low):
+        if '*' in m.group(1).replace('count(*)', ''):
+            found.append('a star select on the archive')
+    if strict and _ANY_STAR.search(low):
+        found.append('a star select')
+    return found
+
+
+def _every_activity_sql() -> list[tuple[str, bool]]:
     from service.admin.queries import activity
     from service.admin.queries.overview import _MEMBER_EVENTS
-    sqls = [activity.timeline_sql(), activity.Q_MEMBER_ACTIVITY_SUMMARY, _MEMBER_EVENTS]
-    sqls += [activity.timeline_sql((t,)) for t in activity.TYPES]
+    sqls = [(activity.timeline_sql(), True), (activity.Q_MEMBER_ACTIVITY_SUMMARY, True),
+            (_MEMBER_EVENTS, False)]
+    sqls += [(activity.timeline_sql((t,)), True) for t in activity.TYPES]
     return sqls
 
 
 def test_no_activity_sql_selects_message_text():
     sqls = _every_activity_sql()
     # The walk sees the archive at all.
-    assert 'mam_message' in sqls[0].lower() and 'unmatched_message' in sqls[1].lower()
-    for sql in sqls:
-        low = sql.lower()
-        for pattern in _FORBIDDEN:
-            assert not pattern.search(low), f'activity SQL reads {pattern.pattern}'
+    assert 'mam_message' in sqls[0][0].lower() and 'unmatched_message' in sqls[1][0].lower()
+    assert len(_ARCHIVE_SELECT.findall(sqls[0][0].lower())) == 2
+    for sql, strict in sqls:
+        assert _reads_words(sql, strict=strict) == []
 
 
 def test_the_guard_would_catch_a_body_column():
     """The patterns themselves: a select of the archive's text is caught,
-    and the archive's table name alone is not."""
-    def caught(sql):
-        return any(p.search(sql) for p in _FORBIDDEN)
+    star selects included, and the archive's table name alone is not."""
+    def caught(sql, strict=False):
+        return bool(_reads_words(sql, strict=strict))
     assert caught('select mm.message from mam_message mm')
     assert caught('select message from unmatched_message')
     assert caught('select um.search_body from unmatched_message um')
-    assert not caught("select mm.id from mam_message mm union all select id from unmatched_message")
-    assert not caught("select 'first_message' as kind")
+    assert caught('select * from mam_message where person_id = 1')
+    assert caught('select mm.id, mm.* from mam_message mm')
+    assert caught('with a as (select x.* from archive x) select 1', strict=True)
+    assert not caught('select mm.id from mam_message mm union all select id from unmatched_message')
+    assert not caught("select 'first_message' as kind, count(*) from mam_message", strict=True)
 
 
 def test_no_words_come_back(client, admin_headers, world):
