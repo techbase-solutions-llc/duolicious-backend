@@ -337,12 +337,82 @@ def test_the_admin_list_filters_by_status_and_says_who_can_be_thanked(client, ad
                                  'age_hours', 'has_member', 'reward_tokens', 'reward_days', 'handled_at'}
     assert set(body['counts']) == {'new', 'fixed', 'not_a_fault'}
     created = [f['created_at'] for f in body['feedback']]
-    assert created == sorted(created, reverse=True)
+    # Waiting comes oldest first, so the longest waits are never cut off.
+    assert created == sorted(created)
 
     rows = {f['id'] for f in client.get('/admin/system/feedback?status=not_a_fault',
                                         headers=admin_headers).get_json()['feedback']}
     assert closed in rows and linked not in rows
     assert client.get('/admin/system/feedback?status=bogus', headers=admin_headers).status_code == 400
+
+
+def test_waiting_is_oldest_first_and_the_page_keeps_the_longest_waits(client, admin_headers, feedback_rows):
+    """With more waiting than fit on a page, the page holds the oldest, so the
+    most overdue reports are never the ones dropped. Handled and all stay
+    newest first."""
+    oldest = feedback_rows(message='Waiting longest', hours_old=24 * 400)
+    middle = feedback_rows(message='Waiting a while', hours_old=24 * 399)
+    newest = feedback_rows(message='Waiting since now')
+    with api_tx('read committed') as tx:
+        page = rewards.list_feedback(tx, status='new', limit=2)['feedback']
+    assert [f['id'] for f in page] == [oldest, middle]
+
+    body = client.get('/admin/system/feedback?status=new', headers=admin_headers).get_json()
+    created = [f['created_at'] for f in body['feedback']]
+    assert created == sorted(created)
+    ids = [f['id'] for f in body['feedback']]
+    assert ids.index(oldest) < ids.index(middle) < ids.index(newest)
+
+    closed = feedback_rows(message='Closed, older', hours_old=24 * 398)
+    later = feedback_rows(message='Closed, newer', hours_old=1)
+    for fid in (closed, later):
+        client.post(ADMIN_NOT_A_FAULT.format(fid), headers=admin_headers)
+    rows = client.get('/admin/system/feedback?status=not_a_fault', headers=admin_headers).get_json()['feedback']
+    ids = [f['id'] for f in rows]
+    assert ids.index(later) < ids.index(closed)
+    for query in ('?status=not_a_fault', ''):
+        rows = client.get('/admin/system/feedback' + query, headers=admin_headers).get_json()['feedback']
+        created = [f['created_at'] for f in rows]
+        assert created == sorted(created, reverse=True)
+
+
+def test_the_admin_list_counts_the_members_rewards_in_the_cap_window(client, admin_headers, make_person,
+                                                                    feedback_rows):
+    """member_rewards_30d tells the admin form before submit that a reward
+    would be capped. The member is found the way mark_fixed finds them."""
+    p = make_person(name='Counted')
+    other = make_person(name='Uncounted')
+    # Every report is written before the transaction below locks the member.
+    old = feedback_rows(person_id=p['id'], message='Old rewarded report')
+    paid = [feedback_rows(person_id=p['id'], message=f'Rewarded report {i}') for i in range(3)]
+    unpaid = feedback_rows(person_id=p['id'], message='Thanked without a reward')
+    with api_tx('read committed') as tx:
+        rewards.mark_fixed(tx, old, notice_line='Fixed.', reward=True, handled_by='pytest')
+        tx.execute("UPDATE feedback SET handled_at = NOW() - interval '31 days' WHERE id = %(f)s",
+                   dict(f=old))
+        for fid in paid:
+            assert rewards.mark_fixed(tx, fid, notice_line='Fixed.', reward=True,
+                                      handled_by='pytest')['outcome'] == 'paid'
+        rewards.mark_fixed(tx, unpaid, notice_line='Fixed.', reward=False, handled_by='pytest')
+
+    by_session = feedback_rows(person_id=p['id'], message='Waiting, signed in')
+    by_email = feedback_rows(email='  ' + _email_of(p['id']).upper() + ' ', message='Waiting, by address')
+    fresh = feedback_rows(person_id=other['id'], message='Waiting, no rewards yet')
+    anon = feedback_rows(email=None, message='Waiting, anonymous')
+    stranger = feedback_rows(email='nobody-at-all@ahavah-test.invalid', message='Waiting, no account')
+
+    body = client.get('/admin/system/feedback?status=new', headers=admin_headers).get_json()
+    rows = {f['id']: f for f in body['feedback']}
+    assert rows[by_session]['member_rewards_30d'] == 3 and rows[by_session]['has_member'] is True
+    assert rows[by_email]['member_rewards_30d'] == 3 and rows[by_email]['has_member'] is True
+    assert rows[fresh]['member_rewards_30d'] == 0 and rows[fresh]['has_member'] is True
+    assert rows[anon]['member_rewards_30d'] == 0 and rows[anon]['has_member'] is False
+    assert rows[stranger]['member_rewards_30d'] == 0 and rows[stranger]['has_member'] is False
+
+    # The count agrees with what marking the report fixed would do.
+    r = client.post(ADMIN_FIXED.format(by_email), headers=admin_headers,
+                    json=dict(notice_line='We fixed it.', reward=True))
+    assert r.get_json()['outcome'] == 'capped' and r.get_json()['member'] == 'email'
 
 
 # --- 6. notices belong to their member --------------------------------------
