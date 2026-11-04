@@ -1228,6 +1228,10 @@ import service.api.translation_routes  # noqa: E402,F401
 # Public feedback (2026-05-26) — general feedback form, emailed to admin
 # (no DB). Sibling module.
 import service.api.feedback_routes  # noqa: E402,F401
+# Report rewards (3 Nov 2026, TEC-2025): the member's in-app notices and the
+# admin's Feedback panel. Sibling modules.
+import service.api.notices_routes  # noqa: E402,F401
+import service.api.admin.feedback_routes  # noqa: E402,F401
 # Beta-tester opt-in (2026-05-26) — onboarding completion screen. Sibling module.
 import service.api.beta_routes  # noqa: E402,F401
 # Beta referrals (2026-06-05) — GET /referrals/me for authed callers.

@@ -491,6 +491,15 @@ class PostFeedback(BaseModel):
         return EmailStr._validate(str(value).lower().strip())
 
 
+class PostFeedbackFixed(BaseModel):
+    """Admin POST /admin/system/feedback/<id>/fixed body (report rewards plan,
+    3 Nov 2026). `notice_line` is the one line the member reads; the service
+    trims it and holds it to 200 characters. `reward` False writes the notice
+    without paying."""
+    notice_line: str = Field(min_length=1, max_length=2000)
+    reward: bool
+
+
 class PostCheckOtp(BaseModel):
     otp: str = Field(pattern=r"^\d{6}$")
     # Optional acquisition tag. Only stamped onto NEW onboardees (never
