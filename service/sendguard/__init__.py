@@ -20,7 +20,11 @@ module, run once a minute by service/cron/sendguard, does the rest:
      still `new` after 24 hours (report rewards plan, 3 Nov 2026): report
      number, category and age only, never the message or an address. The
      event row is the day's marker, so it goes out once a day while any
-     remain;
+     remain. In the same way, a `support_unanswered` event when any copied
+     support message is still `open` after 24 hours (TEC-2115): message
+     number and age only, never the subject, the text or an address. That
+     read is skipped while the support inbox is switched off, and runs in
+     its own savepoint;
   6. writes `sg:heartbeat`, last, and only when every step above completed.
      A tick that fails part way leaves the heartbeat stale, and the
      watchdog sees it.
@@ -257,6 +261,53 @@ def unanswered_feedback_events(tx, *, from_hour: Optional[int] = None) -> list[d
 
 
 # ---------------------------------------------------------------------------
+# support messages nobody has answered (TEC-2115)
+# ---------------------------------------------------------------------------
+
+SUPPORT_ALERT_EVENT = 'support_unanswered'
+
+
+def unanswered_support_events(tx, *, from_hour: Optional[int] = None) -> list[dict]:
+    """The day's reminder about support messages still open after 24 hours,
+    as one alertable event, or nothing: before from_hour, when today's has
+    already been recorded, or when every message has been dealt with."""
+    from service.support_inbox.admin import stale_open
+    hour = FEEDBACK_ALERT_FROM_HOUR if from_hour is None else from_hour
+    if tx.execute(_Q_BARBADOS_HOUR).fetchone()['h'] < hour:
+        return []
+    if tx.execute(_Q_FEEDBACK_ALERTED_TODAY, dict(event=SUPPORT_ALERT_EVENT)).fetchone():
+        return []
+    messages = stale_open(tx)
+    if not messages:
+        return []
+    return [dict(at=datetime.now(timezone.utc).isoformat(), channel='guard', event=SUPPORT_ALERT_EVENT,
+                 alert=True, detail=dict(messages=[dict(id=int(m['id']), age_hours=int(m['age_hours']))
+                                                   for m in messages]))]
+
+
+_SUPPORT_SAVEPOINT = 'support_alert'
+
+
+def _support_events_isolated(tx) -> list[dict]:
+    """The support reminder for the tick: nothing at all, not even a read,
+    while the support inbox is switched off; and in its own savepoint, so a
+    failed read cannot break the halt sync and tallies in the same
+    transaction."""
+    from service.support_inbox import enabled
+    if not enabled():
+        return []
+    tx.execute(f'SAVEPOINT {_SUPPORT_SAVEPOINT}')
+    try:
+        out = unanswered_support_events(tx)
+    except Exception as e:  # noqa: BLE001 -- the rest of the tick goes on
+        tx.execute(f'ROLLBACK TO SAVEPOINT {_SUPPORT_SAVEPOINT}')
+        print(f'sendguard: support reminder skipped ({type(e).__name__})', flush=True)
+        return []
+    tx.execute(f'RELEASE SAVEPOINT {_SUPPORT_SAVEPOINT}')
+    return out
+
+
+# ---------------------------------------------------------------------------
 # the owner's alert
 # ---------------------------------------------------------------------------
 
@@ -278,6 +329,15 @@ def describe(ev: dict) -> str:
             listed += f'; and {n - FEEDBACK_ALERT_LISTED} more'
         return (f'{n} member report{"s have" if n != 1 else " has"} had no answer for more than 24 hours: '
                 f'{listed}. Mark each one fixed or not a fault on the System tab.')
+    if name == SUPPORT_ALERT_EVENT:
+        messages = detail.get('messages') or []
+        n = len(messages)
+        listed = '; '.join(f'message {m.get("id")} ({m.get("age_hours")} hours)'
+                           for m in messages[:FEEDBACK_ALERT_LISTED])
+        if n > FEEDBACK_ALERT_LISTED:
+            listed += f'; and {n - FEEDBACK_ALERT_LISTED} more'
+        return (f'{n} support message{"s have" if n != 1 else " has"} had no answer for more than 24 hours: '
+                f'{listed}. Reply in Gmail, then mark each one handled or not for us on the Support tab.')
     if name == 'refused':
         return (f'The first {channel} of kind {kind} was refused today ({rule}). '
                 'Later refusals of it today are counted but not emailed.')
@@ -309,8 +369,13 @@ def describe(ev: dict) -> str:
 def _alert_text(events: list[dict], *, last: bool) -> tuple[str, str]:
     n = len(events)
     subject = f'Ahavah mail guard: {n} alert{"s" if n != 1 else ""}'
-    if all(e.get('event') == FEEDBACK_ALERT_EVENT for e in events):
+    names = {e.get('event') for e in events}
+    if names == {FEEDBACK_ALERT_EVENT}:
         subject = 'Ahavah: member reports with no answer'
+    elif names == {SUPPORT_ALERT_EVENT}:
+        subject = 'Ahavah: support messages with no answer'
+    elif names == {FEEDBACK_ALERT_EVENT, SUPPORT_ALERT_EVENT}:
+        subject = 'Ahavah: member reports and support messages with no answer'
     lines = [describe(e) for e in events]
     footer = ['', 'The stats route and the watchdog see every event. Runbook: docs/runbooks/mail-guard.md.']
     if last:
@@ -425,6 +490,7 @@ def tick() -> dict:
         with api_tx() as tx:
             events += _shadow_ended(r)
             events += unanswered_feedback_events(tx)
+            events += _support_events_isolated(tx)
             insert_events(tx, events)
             _flush_tallies(tx, r, now)
             _sync_halts(tx, r)

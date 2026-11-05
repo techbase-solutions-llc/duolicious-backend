@@ -11,7 +11,8 @@ sessions, RSVPs, alerts), on the same clock; gatherings' RSVPs, organiser
 links and invite requests are swept here too (service/events/retention.py). Unmatched conversations are
 held 30 days for a report, then deleted here (TEC-1845). The unfinished
 sign-up reminder's outbox rows, which hold an address with no account, go
-30 days after they settle (TEC-2107). Daily.
+30 days after they settle (TEC-2107). The copies of support@ahavah.app go a
+year after they arrived (TEC-2115). Daily.
 """
 from __future__ import annotations
 
@@ -54,6 +55,12 @@ def _purge_once() -> None:
         # The unfinished sign-up reminder (TEC-2107).
         from service.campaigns.outbox import ONBOARDEE_ROW_DAYS, purge_settled_onboardee_rows
         n_signup = purge_settled_onboardee_rows(tx)
+        # The copies of support@ahavah.app (TEC-2115).
+        from service import support_inbox
+        n_support = support_inbox.purge_old(tx)
+    if n_support:
+        print(f'lead_retention: {n_support} support message(s) deleted '
+              f'{support_inbox.RETENTION_DAYS} days after they arrived')
     if n_signup:
         print(f'lead_retention: {n_signup} sign-up reminder outbox row(s) deleted '
               f'{ONBOARDEE_ROW_DAYS} days after they settled')
