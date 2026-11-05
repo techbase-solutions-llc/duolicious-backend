@@ -28,6 +28,8 @@ from service.referrals import (
     credit_pending_for_inviter,
     mint_person_code,
 )
+import logging
+import sys
 import time
 import traceback
 import re
@@ -1850,6 +1852,25 @@ def delete_profile_info(req: t.DeleteProfileInfo, s: t.SessionInfo):
         with api_tx() as tx:
             tx.executemany(Q_DELETE_PROFILE_INFO_AUDIO, audio_files_params)
 
+# Profile saves log one line each, field name only (TEC-2111). Nothing
+# configures logging for the API under gunicorn, so without a handler of
+# its own an INFO line would never reach the container log.
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    _log_handler = logging.StreamHandler(sys.stderr)
+    _log_handler.setFormatter(logging.Formatter('%(levelname)s %(name)s %(message)s'))
+    logger.addHandler(_log_handler)
+    logger.setLevel(logging.INFO)
+
+def _busy_row(field_name: str):
+    """The answer when a profile save still meets a concurrent write to the
+    same person row after its retries (TEC-2111). On 5 Nov 2026 one phone's
+    burst of saves left 42 of them failing as 500s. A 409 tells the client
+    the row was busy, not that the server is broken: the web client waits
+    Retry-After seconds and sends its latest value once."""
+    logger.warning('profile-info busy field=%s', field_name)
+    return dict(error='busy'), 409, {'Retry-After': '2'}
+
 def _patch_profile_info_about(person_id: int, new_about: str):
     select = """
     SELECT about AS old_about FROM person WHERE id = %(person_id)s
@@ -1904,7 +1925,8 @@ def _patch_profile_info_about(person_id: int, new_about: str):
     # presence and other profile writes touch the same row, so REPEATABLE
     # READ aborts one of them; on 14 Oct 2026 one member's bio edits failed
     # 31 times in 5 minutes. The whole transaction re-reads the old bio, so
-    # a replay is safe.
+    # a replay is safe. If the row is still busy after the third try, the
+    # save answers 409 like every other profile field (TEC-2111).
     for _attempt in range(3):
         try:
             with api_tx() as tx:
@@ -1926,7 +1948,7 @@ def _patch_profile_info_about(person_id: int, new_about: str):
             return
         except psycopg.errors.SerializationFailure:
             if _attempt == 2:
-                raise
+                return _busy_row('about')
             time.sleep(0.05 * (_attempt + 1))
 
 def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
@@ -1935,6 +1957,10 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
 
     [field_name] = req.__pydantic_fields_set__
     field_value = req.dict()[field_name]
+
+    # The field name only: never the value, which is member content
+    # (TEC-2111). The next save storm can then be split by field.
+    logger.info('profile-info patch field=%s', field_name)
 
     params = dict(
         person_id=s.person_id,
@@ -2587,7 +2613,9 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
     # and the profile back-sync fires unawaited, so a burst against one
     # row is routine (6 such 500s in one 300ms window on 2026-07-22).
     # Retrying the whole transaction is the standard remedy; the writes
-    # here are idempotent field assignments, so a replay is safe.
+    # here are idempotent field assignments, so a replay is safe. A save
+    # that still meets a busy row after the third try answers 409 with
+    # Retry-After, not 500 (TEC-2111).
     for _attempt in range(3):
         try:
             with api_tx() as tx:
@@ -2603,7 +2631,7 @@ def patch_profile_info(req: t.PatchProfileInfo, s: t.SessionInfo):
             break
         except psycopg.errors.SerializationFailure:
             if _attempt == 2:
-                raise
+                return _busy_row(field_name)
             time.sleep(0.05 * (_attempt + 1))
 
     if uuid and base64_file and crop_size:
