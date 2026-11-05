@@ -186,6 +186,10 @@ CORS(
     # which must be 'true' when the request's credentials mode is
     # 'include'", blocking every cross-origin call from the bypass host.
     supports_credentials=True,
+    # The web client reads Retry-After on a 409 (busy row) or 429 to know
+    # how long to wait before re-sending a save (TEC-2111). A cross-origin
+    # script cannot see that header unless it is exposed here.
+    expose_headers=['Retry-After'],
 )
 
 Q_GET_SESSION = """

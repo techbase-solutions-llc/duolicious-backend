@@ -217,3 +217,13 @@ def test_each_save_logs_its_field_name_and_never_the_value(
     assert secret not in caplog.text
     assert str(p['id']) not in message
     assert p['uuid'] not in message
+
+
+def test_the_browser_can_read_retry_after():
+    # The web app is on another origin; without this a script never sees
+    # Retry-After and always falls back to its own guess (TEC-2111).
+    from service.api.decorators import app
+    with app.test_client() as c:
+        r = c.get('/health', headers={'Origin': 'https://ahavah.app'})
+    exposed = r.headers.get('Access-Control-Expose-Headers', '')
+    assert 'retry-after' in exposed.lower()
