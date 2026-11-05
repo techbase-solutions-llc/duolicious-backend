@@ -32,10 +32,18 @@ OFFER_KINDS = ('welcome', 'member_of_week')
 # A card the member can still act on, or that is on its way out.
 OPEN_STATUSES = ('awaiting_member', 'awaiting_render', 'review', 'scheduled', 'processing')
 
+# TEC-2113: the "card is ready" email now goes when the card is first drawn,
+# not when it is created, so the member's days are counted from the moment
+# that email (`e4-drawn-<rk>`) was queued. A card with no such email (one
+# created before the change, or never yet sent) counts from its creation, as
+# before.
 _Q_EXPIRE = """
-    UPDATE publishing_queue SET status = 'cancelled', error = 'approval_expired', updated_at = NOW()
-     WHERE status = 'awaiting_member' AND created_at < NOW() - make_interval(days => %(d)s)
-    RETURNING request_key, subject_person_id, kind
+    UPDATE publishing_queue q SET status = 'cancelled', error = 'approval_expired', updated_at = NOW()
+     WHERE q.status = 'awaiting_member'
+       AND COALESCE((SELECT min(e.created_at) FROM email_outbox e
+                      WHERE e.campaign = 'e4' AND e.campaign_id = 'e4-drawn-' || q.request_key),
+                    q.created_at) < NOW() - make_interval(days => %(d)s)
+    RETURNING q.request_key, q.subject_person_id, q.kind
 """
 
 # One row per member: their card of the one kind asked for, read across all
@@ -72,8 +80,9 @@ _Q_LAPSED_COUNT = """
 
 
 def expire_lapsed(tx, days: int = 7) -> tuple[list[dict], int]:
-    """Cancel every card left awaiting the member longer than `days`, as
-    `queue.expire_member_approvals` did. Returns one entry per card
+    """Cancel every card left awaiting the member longer than `days`,
+    counted from its drawn-card email when there is one, else from its
+    creation (`_Q_EXPIRE`). Returns one entry per card
     (request_key, person_id, kind) and the number of rows cancelled, which
     is what the route has always reported as `cancelled`."""
     rows = tx.execute(_Q_EXPIRE, dict(d=days)).fetchall()

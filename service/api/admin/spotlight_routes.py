@@ -278,19 +278,35 @@ _Q_RENDERED_INVITE_SUBJECT = """
      LIMIT 1
 """
 
+# A card emailed under the old flow (`e4-<rk>`, queued at creation) that had
+# already been drawn by then: the member's link worked, so a later redraw (a
+# caption edit, or the member choosing another photo) is not news. An
+# earlier revision with an asset hash is what says it was drawn. A card
+# emailed early and drawn only now (the 5 Nov case) has no such revision and
+# still gets its one drawn email.
+_Q_EMAILED_WHEN_ALREADY_DRAWN = """
+    SELECT 1 FROM email_outbox e
+     WHERE e.campaign = 'e4' AND e.campaign_id = 'e4-' || %(rk)s
+       AND EXISTS (SELECT 1 FROM spotlight_revision r
+                    WHERE r.request_key = %(rk)s AND r.id <> %(rev)s AND r.asset_hash IS NOT NULL)
+     LIMIT 1
+"""
 
-def _enqueue_card_ready_on_render(tx, request_key: str) -> Optional[int]:
-    """Called in the transaction whose upload completed the render. Nothing
-    is queued while approvals or invites are off (the member could not act
-    on it); the invite-pending drain sends it once both are on. A failure
-    propagates, so the render rolls back with it and the card stays on the
-    tick's render list, rather than leaving a drawn card whose invite
-    failed."""
+
+def _enqueue_card_ready_on_render(tx, request_key: str, revision_id: int) -> Optional[int]:
+    """Called in the transaction whose upload completed the render of
+    `revision_id`. Nothing is queued while approvals or invites are off (the
+    member could not act on it); the invite-pending drain sends it once both
+    are on. A failure propagates, so the render rolls back with it and the
+    card stays on the tick's render list, rather than leaving a drawn card
+    whose invite failed."""
     cfg = settings(tx)
     if cfg.get('approvals_enabled') != 'true' or cfg.get('invites_enabled') != 'true':
         return None
     row = tx.execute(_Q_RENDERED_INVITE_SUBJECT, dict(rk=request_key)).fetchone()
     if not row:
+        return None
+    if tx.execute(_Q_EMAILED_WHEN_ALREADY_DRAWN, dict(rk=request_key, rev=revision_id)).fetchone():
         return None
     return _enqueue_card_ready(tx, row['subject_person_id'], request_key)
 
@@ -1134,7 +1150,7 @@ def post_growth_queue_image(request_key: str):
                         # TEC-2113: the card now exists, so the member may be
                         # told it is ready. Keyed per request, so a card drawn
                         # again after an edit sends nothing more.
-                        _enqueue_card_ready_on_render(tx, request_key)
+                        _enqueue_card_ready_on_render(tx, request_key, revision_id)
                     _audit(tx, s, 'growth.queue.image', request_key=request_key, platform=platform,
                            **({} if slide is None else dict(slide=slide)))
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):

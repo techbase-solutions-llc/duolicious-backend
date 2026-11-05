@@ -188,6 +188,62 @@ def test_a_card_emailed_before_it_was_drawn_still_gets_the_drawn_e4(client, make
     assert _e4_rows(p['id']) == [f'e4-{rk}', f'e4-drawn-{rk}']
 
 
+def test_a_card_drawn_and_emailed_under_the_old_flow_gets_no_e4_when_redrawn(client, make_person, switches,
+                                                                             storage):
+    """Drawn and emailed before this change, so the member's link already
+    worked: a new revision completing (a caption edit here; a different
+    photo from approve_card is the same path) sends nothing."""
+    from emails.spotlight_card_ready import enqueue_card_ready
+    from service.spotlight.revisions import attach_render
+    p = _make_eligible(make_person, name='OldFlowRedrawn')
+    switches(approvals_enabled='true', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    with api_tx() as tx:
+        assert enqueue_card_ready(tx, p['id'], rk) is not None    # the old key
+        attach_render(tx, current_revision(tx, rk)['id'], f'hash-{rk}', f'k-{rk}', f'https://cdn/k-{rk}.png')
+        edit_caption(tx, rk, 'A new caption', 't')
+    _draw(client, rk)
+    assert _e4_rows(p['id']) == [f'e4-{rk}']
+
+
+def _expire_and_status(rk):
+    from service.spotlight.offers import expire_lapsed
+    with api_tx() as tx:
+        expire_lapsed(tx)
+        return {r['status'] for r in tx.execute(
+            "SELECT status FROM publishing_queue WHERE request_key = %(rk)s", dict(rk=rk)).fetchall()}
+
+
+@pytest.mark.parametrize('emailed_days_ago, lapses', [(2, False), (8, True)])
+def test_a_drawn_card_lapses_seven_days_after_its_email(client, make_person, switches, storage,
+                                                        emailed_days_ago, lapses):
+    """The member's 7 days run from the drawn-card email, not from the card's
+    creation, which can be a day or more earlier."""
+    p = _make_eligible(make_person, name='LapseFromEmail')
+    switches(approvals_enabled='true', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    _draw(client, rk)
+    with api_tx() as tx:
+        tx.execute("UPDATE publishing_queue SET created_at = NOW() - interval '9 days' WHERE request_key = %(rk)s",
+                   dict(rk=rk))
+        tx.execute("""UPDATE email_outbox SET created_at = NOW() - make_interval(days => %(d)s)
+                       WHERE campaign = 'e4' AND campaign_id = %(cid)s""",
+                   dict(d=emailed_days_ago, cid=f'e4-drawn-{rk}'))
+    assert _expire_and_status(rk) == ({'cancelled'} if lapses else {'awaiting_member'})
+
+
+@pytest.mark.parametrize('created_days_ago, lapses', [(6, False), (8, True)])
+def test_a_card_with_no_drawn_email_lapses_seven_days_after_creation(client, make_person, switches,
+                                                                     created_days_ago, lapses):
+    p = _make_eligible(make_person, name='LapseFromCreation')
+    switches(approvals_enabled='false', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    with api_tx() as tx:
+        tx.execute("UPDATE publishing_queue SET created_at = NOW() - make_interval(days => %(d)s) "
+                   "WHERE request_key = %(rk)s", dict(d=created_days_ago, rk=rk))
+    assert _expire_and_status(rk) == ({'cancelled'} if lapses else {'awaiting_member'})
+
+
 def test_a_drawn_card_emailed_under_the_old_flow_is_not_drained(client, make_person, switches):
     """Owner's ruling: a member already emailed about a card that is already
     drawn (their link works) never gets a second "card is ready" email. The
