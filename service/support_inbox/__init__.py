@@ -25,6 +25,17 @@ How a pass reads the mailbox:
      again from the current history id. Storing is idempotent on the Gmail
      message id, so a message read twice is stored once.
 
+Mail received more than IMPORT_OPEN_DAYS (14) days before the first pass
+is stored as handled, by 'Imported': the switch going on does not fill the
+open list and the owner's alert with a year of old mail. The last 14 days
+come in open.
+
+A message that cannot be read (Gmail answers 404 for it, or it cannot be
+parsed or stored) is skipped so the pass and its cursor move on; its Gmail
+id is recorded in the inbox status (last_error), never its content. Any
+other Gmail error, or the database going away, fails the pass, which
+starts again from the same cursor next time.
+
 Skipped, never stored: mail sent by the mailbox itself, drafts, chats, spam
 and trash, automatic replies (Auto-Submitted, X-Autoreply, X-Autorespond,
 Precedence: auto_reply, and the mailer daemon), and anything older than the
@@ -62,9 +73,16 @@ RETENTION_DAYS = 365
 BACKFILL_PAGES_PER_PASS = 3
 
 # Mailbox searches the backfill runs: everything but what the mailbox sent
-# and its drafts and chats. Gmail leaves spam and trash out of a search
+# and its drafts and chats, within the year kept. Gmail leaves spam and trash out of a search
 # unless asked.
-BACKFILL_QUERY = '-in:sent -in:drafts -in:chats'
+BACKFILL_QUERY = 'newer_than:1y -in:sent -in:drafts -in:chats'
+
+# Mail older than this, counted back from the first pass, is imported as
+# handled by IMPORTED_BY.
+IMPORT_OPEN_DAYS = 14
+IMPORTED_BY = 'Imported'
+# The skipped ids recorded in last_error, at most.
+FAILED_IDS_LISTED = 10
 
 _SKIP_LABELS = frozenset({'SENT', 'DRAFT', 'CHAT', 'SPAM', 'TRASH'})
 _AUTOMATIC_SENDERS = frozenset({'mailer-daemon', 'postmaster'})
@@ -302,10 +320,11 @@ _Q_PERSON_BY_NORMALISED_EMAIL = """
 _Q_INSERT = """
     INSERT INTO support_message (
         gmail_message_id, gmail_thread_id, from_address, from_name, subject,
-        body_text, received_at, person_id)
+        body_text, received_at, person_id, status, handled_by, handled_at)
     VALUES (
         %(mid)s, %(tid)s, %(from_address)s, %(from_name)s, %(subject)s,
-        %(body)s, %(received_at)s, %(person_id)s)
+        %(body)s, %(received_at)s, %(person_id)s, %(status)s, %(handled_by)s,
+        CASE WHEN %(status)s = 'open' THEN NULL ELSE NOW() END)
     ON CONFLICT (gmail_message_id) DO NOTHING
     RETURNING id
 """
@@ -324,12 +343,18 @@ def member_id(tx, address: str) -> Optional[int]:
     return int(rows[0]['id']) if len(rows) == 1 else None
 
 
-def store(tx, p: Parsed) -> bool:
-    """True when the message is new."""
+def store(tx, p: Parsed, *, first_pass_at: Optional[datetime] = None) -> bool:
+    """True when the message is new. Mail received more than
+    IMPORT_OPEN_DAYS before the first pass is stored as handled by
+    IMPORTED_BY."""
+    imported = (first_pass_at is not None
+                and p.received_at < first_pass_at - timedelta(days=IMPORT_OPEN_DAYS))
     row = tx.execute(_Q_INSERT, dict(
         mid=p.message_id, tid=p.thread_id, from_address=p.from_address,
         from_name=p.from_name, subject=p.subject, body=p.body_text,
         received_at=p.received_at, person_id=member_id(tx, p.from_address),
+        status='handled' if imported else 'open',
+        handled_by=IMPORTED_BY if imported else None,
     )).fetchone()
     return row is not None
 
@@ -349,7 +374,7 @@ def _known(ids: list[str]) -> set[str]:
 _Q_STATE = """
     INSERT INTO support_inbox_state (mailbox) VALUES (%(m)s)
     ON CONFLICT (mailbox) DO UPDATE SET mailbox = EXCLUDED.mailbox
-    RETURNING history_id, backfill_done, backfill_token, last_error
+    RETURNING history_id, backfill_done, backfill_token, last_error, first_pass_at
 """
 
 _Q_SAVE_CURSOR = """
@@ -361,8 +386,19 @@ _Q_SAVE_CURSOR = """
 
 _Q_CHECKED_OK = """
     UPDATE support_inbox_state
-       SET last_checked_at = NOW(), last_ok_at = NOW(), last_error = NULL
+       SET last_checked_at = NOW(), last_ok_at = NOW(),
+           -- A note of skipped messages stays until a later skip replaces
+           -- it, so the admin sees it after the next clean pass; an error
+           -- from a failed pass clears once a pass succeeds.
+           last_error = COALESCE(%(e)s, CASE WHEN last_error LIKE %(note)s THEN last_error END)
      WHERE mailbox = %(m)s
+"""
+SKIPPED_NOTE = 'could not be read and were skipped'
+
+_Q_FIRST_PASS = """
+    UPDATE support_inbox_state SET first_pass_at = COALESCE(first_pass_at, %(at)s)
+     WHERE mailbox = %(m)s
+    RETURNING first_pass_at
 """
 
 _Q_CHECKED_FAILED = """
@@ -391,9 +427,15 @@ def _save_cursor(box: str, *, history_id: Optional[str], backfill_done: bool,
 # ---------------------------------------------------------------------------
 
 def _take(client: GmailClient, ids: list[str], box: str, now: datetime, counts: dict,
-          labels: Optional[dict] = None) -> None:
+          labels: Optional[dict] = None, first_pass_at: Optional[datetime] = None) -> None:
     """Fetch and store each id not already stored. `labels` (from the
-    history) lets mail the mailbox sent be skipped without fetching it."""
+    history) lets mail the mailbox sent be skipped without fetching it.
+
+    One message that cannot be read is skipped and its id added to
+    counts['failed_ids']: Gmail's 404 for it, or any error parsing or
+    storing it. Any other Gmail error, and the database connection failing,
+    still fail the pass."""
+    import psycopg
     from database import api_tx
     labels = labels or {}
     todo = []
@@ -407,25 +449,42 @@ def _take(client: GmailClient, ids: list[str], box: str, now: datetime, counts: 
         if mid in known:
             counts['already'] += 1
             continue
-        p = parse(client.get_message(mid))
-        if skip_reason(p, box, now) is not None:
-            counts['skipped'] += 1
+        try:
+            msg = client.get_message(mid)
+        except GmailError as e:
+            if e.status != 404:
+                raise
+            counts['failed_ids'].append(mid)
             continue
-        with api_tx() as tx:
-            if store(tx, p):
-                counts['stored'] += 1
-            else:
-                counts['already'] += 1
+        try:
+            p = parse(msg)
+            if skip_reason(p, box, now) is not None:
+                counts['skipped'] += 1
+                continue
+            with api_tx() as tx:
+                new = store(tx, p, first_pass_at=first_pass_at)
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            raise
+        except Exception:  # noqa: BLE001 -- this message only; recorded by id, never content
+            counts['failed_ids'].append(mid)
+            continue
+        counts['stored' if new else 'already'] += 1
 
 
 def poll(client: GmailClient, box: str, *, now: Optional[datetime] = None) -> dict:
     """One pass over the mailbox. Returns counts only."""
     now = now or datetime.now(timezone.utc)
-    counts = dict(stored=0, skipped=0, already=0, backfill_pages=0, restarted=0)
+    counts: dict = dict(stored=0, skipped=0, already=0, backfill_pages=0, restarted=0, failed_ids=[])
     state = _state(box)
     history_id = state['history_id']
     backfill_done = bool(state['backfill_done'])
     backfill_token = state['backfill_token']
+    first_pass_at = state['first_pass_at']
+
+    if first_pass_at is None:
+        from database import api_tx
+        with api_tx() as tx:
+            first_pass_at = tx.execute(_Q_FIRST_PASS, dict(m=box, at=now)).fetchone()['first_pass_at']
 
     if history_id is None:
         history_id = client.current_history_id()
@@ -448,14 +507,14 @@ def poll(client: GmailClient, box: str, *, now: Optional[datetime] = None) -> di
             _save_cursor(box, history_id=history_id, backfill_done=False, backfill_token=None)
         else:
             labels = {str(m['id']): m.get('labelIds') or [] for m in added}
-            _take(client, [str(m['id']) for m in added], box, now, counts, labels)
+            _take(client, [str(m['id']) for m in added], box, now, counts, labels, first_pass_at)
             history_id = latest or history_id
             _save_cursor(box, history_id=history_id, backfill_done=backfill_done,
                          backfill_token=backfill_token)
 
     while not backfill_done and counts['backfill_pages'] < BACKFILL_PAGES_PER_PASS:
         ids, next_token = client.list_message_ids(backfill_token)
-        _take(client, ids, box, now, counts)
+        _take(client, ids, box, now, counts, first_pass_at=first_pass_at)
         counts['backfill_pages'] += 1
         backfill_token = next_token
         backfill_done = next_token is None
@@ -524,11 +583,18 @@ def tick(make_client: Optional[Callable[[str, str], GmailClient]] = None,
         if _record_failure(box, error) != error:
             print(f'support_inbox: check failed ({error})', flush=True)
         return {'error': error}
+    failed = counts['failed_ids']
+    note = None
+    if failed:
+        listed = ', '.join(failed[:FAILED_IDS_LISTED])
+        more = f' and {len(failed) - FAILED_IDS_LISTED} more' if len(failed) > FAILED_IDS_LISTED else ''
+        note = f'{len(failed)} message(s) {SKIPPED_NOTE}: Gmail ids {listed}{more}'
     with api_tx() as tx:
-        tx.execute(_Q_CHECKED_OK, dict(m=box))
-    if counts['stored'] or counts['restarted']:
+        tx.execute(_Q_CHECKED_OK, dict(m=box, e=note, note=f'%{SKIPPED_NOTE}%'))
+    if counts['stored'] or counts['restarted'] or failed:
         print(f"support_inbox: {counts['stored']} new message(s) copied, "
               f"{counts['skipped']} skipped"
+              + (f', {len(failed)} could not be read' if failed else '')
               + (', history too old so the full read started again' if counts['restarted'] else ''),
               flush=True)
     return counts

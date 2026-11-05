@@ -13,7 +13,13 @@
 --                        history id it has read up to, the backfill's page
 --                        token while the first full read is under way, and
 --                        when it last checked. last_error holds an error
---                        class name only, never message content.
+--                        class name, or the Gmail ids of messages skipped
+--                        after an error, never message content.
+--                        first_pass_at is when copying began: mail
+--                        received more than 14 days before it is imported
+--                        as handled ('Imported'), so switching on does not
+--                        fill the open list and the owner's alert with old
+--                        mail.
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS support_message (
@@ -54,7 +60,10 @@ CREATE TABLE IF NOT EXISTS support_inbox_state (
   backfill_token   TEXT,
   last_checked_at  TIMESTAMPTZ,
   last_ok_at       TIMESTAMPTZ,
-  last_error       TEXT
+  last_error       TEXT,
+  first_pass_at    TIMESTAMPTZ
 );
+
+ALTER TABLE support_inbox_state ADD COLUMN IF NOT EXISTS first_pass_at TIMESTAMPTZ;
 
 COMMIT;

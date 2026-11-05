@@ -19,6 +19,12 @@ Rules locked in here:
   8. The owner's daily alert lists open messages older than 24 hours by
      number and age only, once a day.
   9. Copies are deleted a year after they arrived.
+ 10. One message that cannot be read is skipped, by id, and the pass moves
+     on; other Gmail errors still fail the pass.
+ 11. Mail more than 14 days older than the first pass comes in handled, by
+     'Imported'; the alert counts age from the later of arrival and copy.
+ 12. The send guard's tick does not read support messages while the switch
+     is off, and a failed read cannot break the rest of the tick.
 
 No test calls Google: every pass gets a fake client.
 """
@@ -81,6 +87,7 @@ class FakeGmail:
         self.expired = False
         self.fetched: list[str] = []
         self.fail: Exception | None = None
+        self.fail_ids: dict[str, Exception] = {}
 
     def current_history_id(self) -> str:
         if self.fail:
@@ -102,6 +109,8 @@ class FakeGmail:
 
     def get_message(self, message_id):
         self.fetched.append(message_id)
+        if message_id in self.fail_ids:
+            raise self.fail_ids[message_id]
         return self.messages[message_id]
 
     def deliver(self, msg: dict) -> None:
@@ -361,16 +370,21 @@ def support_rows():
     made: list[int] = []
 
     def _make(*, hours_old: int = 1, person_id=None, status='open', subject=SECRET_SUBJECT,
-              body=SECRET_BODY) -> int:
+              body=SECRET_BODY, copied_hours_old: int | None = None) -> int:
+        # Copied when it arrived, unless the test says otherwise.
+        copied = hours_old if copied_hours_old is None else copied_hours_old
         mid = f'route-{uuid4().hex}'
         with api_tx() as tx:
             rid = tx.execute(
                 """INSERT INTO support_message (gmail_message_id, gmail_thread_id, from_address, from_name,
-                                                subject, body_text, received_at, person_id, status)
+                                                subject, body_text, received_at, person_id, status,
+                                                created_at)
                    VALUES (%(m)s, %(t)s, 'sender@ahavah-test.invalid', 'Sender', %(s)s, %(b)s,
-                           NOW() - make_interval(hours => %(h)s), %(p)s, %(st)s)
+                           NOW() - make_interval(hours => %(h)s), %(p)s, %(st)s,
+                           NOW() - make_interval(hours => %(c)s))
                    RETURNING id""",
-                dict(m=mid, t=f'{mid}-t', s=subject, b=body, h=hours_old, p=person_id, st=status),
+                dict(m=mid, t=f'{mid}-t', s=subject, b=body, h=hours_old, p=person_id, st=status,
+                     c=copied),
             ).fetchone()['id']
         made.append(rid)
         return rid
@@ -504,6 +518,7 @@ def test_reopening_an_open_message_answers_409(client, admin_headers, support_ro
 def guard_mail(monkeypatch):
     with api_tx() as tx:
         tx.execute("DELETE FROM send_guard_event WHERE event = %(e)s", dict(e=sendguard.SUPPORT_ALERT_EVENT))
+    monkeypatch.setenv('AHAVAH_SUPPORT_INBOX_ENABLED', '1')
     monkeypatch.setenv('AHAVAH_ALERT_EMAILS', 'owner@ahavah-test.invalid')
     out: list[dict] = []
     monkeypatch.setattr(smtp_mod.Smtp, '_try_send', lambda self, **kw: out.append(kw) or 'mid')
@@ -593,3 +608,122 @@ def test_the_body_cap_is_enforced_by_the_database_too():
                                                        body_text, received_at)
                           VALUES (%(m)s, 't', 'a@ahavah-test.invalid', %(b)s, NOW())""",
                        dict(m=f'cap-{uuid4().hex}', b='x' * 20_001))
+
+
+# --- 10. one bad message --------------------------------------------------------------------
+
+def test_a_message_gmail_cannot_find_is_skipped_by_id_and_the_cursor_moves(inbox, capsys):
+    first, gone, good = inbox.ids(3)
+    client = FakeGmail([gmsg(first)])
+    inbox.run(client)
+    client.deliver(gmsg(gone))
+    client.deliver(gmsg(good))
+    client.fail_ids[gone] = support_inbox.GmailError(404)
+    out = inbox.run(client)
+    assert out['stored'] == 1 and out['failed_ids'] == [gone]
+    st = _state(inbox.mailbox)
+    assert st['history_id'] == client.history_id  # moved past both
+    assert st['last_error'] == f'1 message(s) could not be read and were skipped: Gmail ids {gone}'
+    assert [r['gmail_message_id'] for r in _rows([first, gone, good])] == [first, good]
+    printed = capsys.readouterr().out
+    assert '1 could not be read' in printed and gone not in printed and 'SECRET' not in printed
+
+    # The note stays through a clean pass, so the admin still sees it.
+    client.added.clear()
+    inbox.run(client)
+    assert _state(inbox.mailbox)['last_error'].startswith('1 message(s) could not be read')
+
+
+def test_a_message_that_cannot_be_parsed_or_stored_is_skipped(inbox, monkeypatch):
+    broken, unstorable, good = inbox.ids(3)
+    bad = gmsg(broken)
+    bad['internalDate'] = 'not a number'
+    client = FakeGmail([bad, gmsg(unstorable), gmsg(good)])
+    real_store = support_inbox.store
+
+    def store(tx, p, **kw):
+        if p.message_id == unstorable:
+            tx.execute('SELECT 1 FROM no_such_table')
+        return real_store(tx, p, **kw)
+
+    monkeypatch.setattr(support_inbox, 'store', store)
+    out = inbox.run(client)
+    assert out['stored'] == 1 and sorted(out['failed_ids']) == sorted([broken, unstorable])
+    assert out['backfill_done'] is True
+    assert [r['gmail_message_id'] for r in _rows([broken, unstorable, good])] == [good]
+    st = _state(inbox.mailbox)
+    assert '2 message(s) could not be read' in st['last_error'] and 'SECRET' not in st['last_error']
+
+
+def test_any_other_gmail_error_still_fails_the_pass_and_keeps_the_cursor(inbox):
+    first, later = inbox.ids(2)
+    client = FakeGmail([gmsg(first)])
+    inbox.run(client)
+    before = _state(inbox.mailbox)['history_id']
+    client.deliver(gmsg(later))
+    client.fail_ids[later] = support_inbox.GmailError(500)
+    assert inbox.run(client) == {'error': 'GmailError 500'}
+    assert _state(inbox.mailbox)['history_id'] == before
+    del client.fail_ids[later]
+    assert inbox.run(client)['stored'] == 1
+
+
+# --- 11. the first full read ----------------------------------------------------------------
+
+def test_mail_older_than_14_days_before_the_first_pass_comes_in_handled(inbox, monkeypatch):
+    monkeypatch.setattr(support_inbox, 'BACKFILL_PAGES_PER_PASS', 10)
+    now = datetime.now(timezone.utc)
+    old, recent, later = inbox.ids(3)
+    client = FakeGmail([gmsg(old, received=now - timedelta(days=20)),
+                        gmsg(recent, received=now - timedelta(days=10))])
+    inbox.run(client, now=now)
+    rows = {r['gmail_message_id']: r for r in _rows([old, recent])}
+    assert rows[old]['status'] == 'handled' and rows[old]['handled_by'] == 'Imported'
+    assert rows[old]['handled_at'] is not None
+    assert rows[recent]['status'] == 'open' and rows[recent]['handled_by'] is None
+    first_pass = _state(inbox.mailbox)['first_pass_at']
+
+    # Later passes keep the first pass's date; new mail comes in open.
+    client.deliver(gmsg(later))
+    inbox.run(client, now=now + timedelta(days=30))
+    assert _state(inbox.mailbox)['first_pass_at'] == first_pass
+    assert _rows([later])[0]['status'] == 'open'
+
+
+def test_an_imported_open_message_is_overdue_24_hours_after_it_was_copied(support_rows):
+    just_copied = support_rows(hours_old=10 * 24, copied_hours_old=1)
+    copied_a_day_ago = support_rows(hours_old=10 * 24, copied_hours_old=25)
+    with api_tx('read committed') as tx:
+        stale = {m['id']: m['age_hours'] for m in support_admin.stale_open(tx)}
+    assert just_copied not in stale and stale[copied_a_day_ago] == 25
+
+
+def test_the_list_shows_imported_messages_as_imported(client, admin_headers, inbox, monkeypatch):
+    [mid] = inbox.ids(1)
+    inbox.run(FakeGmail([gmsg(mid, received=datetime.now(timezone.utc) - timedelta(days=30))]))
+    body = client.get(f'{LIST}?status=handled', headers=admin_headers).get_json()
+    [m] = [m for m in body['messages'] if m['gmail_url'].endswith(f'#all/{mid}-t')]
+    assert m['status'] == 'handled' and m['handled_by'] == 'Imported'
+
+
+# --- 12. the send guard's tick ----------------------------------------------------------------
+
+def test_the_tick_reads_no_support_message_while_the_switch_is_off(guard_mail, monkeypatch):
+    monkeypatch.delenv('AHAVAH_SUPPORT_INBOX_ENABLED', raising=False)
+
+    def boom(*a, **kw):
+        raise AssertionError('read while off')
+
+    monkeypatch.setattr(sendguard, 'unanswered_support_events', boom)
+    monkeypatch.setattr('service.support_inbox.admin.stale_open', boom)
+    assert 'events' in sendguard.tick()
+
+
+def test_a_failed_support_read_does_not_break_the_tick(guard_mail, monkeypatch, capsys):
+    def poisoned(tx, **kw):
+        tx.execute('SELECT 1 FROM no_such_support_table')
+
+    monkeypatch.setattr('service.support_inbox.admin.stale_open', poisoned)
+    out = sendguard.tick()
+    assert 'events' in out
+    assert 'support reminder skipped (UndefinedTable)' in capsys.readouterr().out

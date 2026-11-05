@@ -163,13 +163,17 @@ def reopen(tx, message_id: int) -> dict:
 
 
 # Message number and age only: no subject, no text and no address, so the
-# owner's alert email carries nothing a member wrote.
+# owner's alert email carries nothing a member wrote. The age counts from
+# when the message arrived or when it was copied in, whichever is later: a
+# message imported open by the first full read is not overdue the moment it
+# lands, and a new one is copied within minutes of arriving.
 _Q_STALE_OPEN = """
-    SELECT id, floor(extract(epoch FROM NOW() - received_at) / 3600)::int AS age_hours
+    SELECT id,
+           floor(extract(epoch FROM NOW() - GREATEST(received_at, created_at)) / 3600)::int AS age_hours
       FROM support_message
      WHERE status = 'open'
-       AND received_at < NOW() - make_interval(hours => %(hours)s)
-     ORDER BY received_at, id
+       AND GREATEST(received_at, created_at) < NOW() - make_interval(hours => %(hours)s)
+     ORDER BY GREATEST(received_at, created_at), id
 """
 
 

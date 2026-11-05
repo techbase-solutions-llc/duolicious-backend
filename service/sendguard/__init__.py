@@ -22,7 +22,9 @@ module, run once a minute by service/cron/sendguard, does the rest:
      event row is the day's marker, so it goes out once a day while any
      remain. In the same way, a `support_unanswered` event when any copied
      support message is still `open` after 24 hours (TEC-2115): message
-     number and age only, never the subject, the text or an address;
+     number and age only, never the subject, the text or an address. That
+     read is skipped while the support inbox is switched off, and runs in
+     its own savepoint;
   6. writes `sg:heartbeat`, last, and only when every step above completed.
      A tick that fails part way leaves the heartbeat stale, and the
      watchdog sees it.
@@ -283,6 +285,28 @@ def unanswered_support_events(tx, *, from_hour: Optional[int] = None) -> list[di
                                                    for m in messages]))]
 
 
+_SUPPORT_SAVEPOINT = 'support_alert'
+
+
+def _support_events_isolated(tx) -> list[dict]:
+    """The support reminder for the tick: nothing at all, not even a read,
+    while the support inbox is switched off; and in its own savepoint, so a
+    failed read cannot break the halt sync and tallies in the same
+    transaction."""
+    from service.support_inbox import enabled
+    if not enabled():
+        return []
+    tx.execute(f'SAVEPOINT {_SUPPORT_SAVEPOINT}')
+    try:
+        out = unanswered_support_events(tx)
+    except Exception as e:  # noqa: BLE001 -- the rest of the tick goes on
+        tx.execute(f'ROLLBACK TO SAVEPOINT {_SUPPORT_SAVEPOINT}')
+        print(f'sendguard: support reminder skipped ({type(e).__name__})', flush=True)
+        return []
+    tx.execute(f'RELEASE SAVEPOINT {_SUPPORT_SAVEPOINT}')
+    return out
+
+
 # ---------------------------------------------------------------------------
 # the owner's alert
 # ---------------------------------------------------------------------------
@@ -466,7 +490,7 @@ def tick() -> dict:
         with api_tx() as tx:
             events += _shadow_ended(r)
             events += unanswered_feedback_events(tx)
-            events += unanswered_support_events(tx)
+            events += _support_events_isolated(tx)
             insert_events(tx, events)
             _flush_tallies(tx, r, now)
             _sync_halts(tx, r)
