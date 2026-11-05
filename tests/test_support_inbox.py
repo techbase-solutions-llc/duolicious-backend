@@ -353,6 +353,7 @@ def test_nothing_printed_names_a_sender_a_subject_or_a_body(inbox, capsys):
 LIST = '/admin/support/messages'
 HANDLED = '/admin/support/messages/{}/handled'
 NOT_FOR_US = '/admin/support/messages/{}/not-for-us'
+REOPEN = '/admin/support/messages/{}/reopen'
 
 
 @pytest.fixture
@@ -393,6 +394,7 @@ def test_admins_only(client, make_person, sign_in, support_rows):
     assert client.get(LIST, headers=member).status_code == 403
     assert client.post(HANDLED.format(mid), headers=member).status_code == 403
     assert client.post(NOT_FOR_US.format(mid), headers=member).status_code == 403
+    assert client.post(REOPEN.format(mid), headers=member).status_code == 403
     assert client.get(LIST).status_code in (400, 401, 403)  # no session
 
 
@@ -465,6 +467,35 @@ def test_not_for_us(client, admin_headers, support_rows):
 
 def test_an_unknown_message_answers_404(client, admin_headers):
     assert client.post(HANDLED.format(2_000_000_000), headers=admin_headers).status_code == 404
+    assert client.post(REOPEN.format(2_000_000_000), headers=admin_headers).status_code == 404
+
+
+@pytest.mark.parametrize('status', ['handled', 'not_for_us'])
+def test_a_closed_message_can_be_reopened_and_it_is_audited(client, admin_headers, make_person,
+                                                            support_rows, status):
+    member = make_person(name='Reopened')
+    mid = support_rows(person_id=member['id'])
+    mark = HANDLED if status == 'handled' else NOT_FOR_US
+    assert client.post(mark.format(mid), headers=admin_headers).status_code == 200
+    r = client.post(REOPEN.format(mid), headers=admin_headers)
+    assert r.status_code == 200 and r.get_json() == dict(id=mid, status='open')
+    with api_tx('read committed') as tx:
+        row = tx.execute('SELECT status, handled_by, handled_at FROM support_message WHERE id = %(i)s',
+                         dict(i=mid)).fetchone()
+    assert row == dict(status='open', handled_by=None, handled_at=None)
+    reopened = [a for a in _audits(mid) if a['action'] == 'support_reopened']
+    assert len(reopened) == 1
+    assert str(reopened[0]['target_uuid']) == member['uuid'] and reopened[0]['target_email'] is None
+    assert reopened[0]['metadata'] == dict(support_message_id=mid, previous=status)
+    # Open again, so it can be marked again.
+    assert client.post(HANDLED.format(mid), headers=admin_headers).status_code == 200
+
+
+def test_reopening_an_open_message_answers_409(client, admin_headers, support_rows):
+    mid = support_rows()
+    r = client.post(REOPEN.format(mid), headers=admin_headers)
+    assert r.status_code == 409 and r.get_json() == dict(error='already_open')
+    assert _audits(mid) == []
 
 
 # --- 8. the owner's daily alert --------------------------------------------------------

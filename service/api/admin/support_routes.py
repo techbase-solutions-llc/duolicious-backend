@@ -5,9 +5,11 @@ docs/plans/2026-11-05-support-messages-in-admin.md).
        50 a page; open oldest first, the rest newest first
   POST /admin/support/messages/<id>/handled
   POST /admin/support/messages/<id>/not-for-us
+  POST /admin/support/messages/<id>/reopen     a mark made by mistake
 
 Admin only, as every /admin route, under the default rate limit. Only an
-open message can be marked; a second attempt answers 409. Each mark writes
+open message can be marked; a second attempt answers 409. Only a handled or
+not-for-us message can be reopened; an open one answers 409. Each mark writes
 an audit row in its own transaction, naming the message id and the member,
 never the address or the text.
 """
@@ -64,3 +66,20 @@ def post_admin_support_handled(s: t.SessionInfo, mid: int):
 @apost('/admin/support/messages/<int:mid>/not-for-us')
 def post_admin_support_not_for_us(s: t.SessionInfo, mid: int):
     return _mark(s, mid, 'not_for_us', 'support_not_for_us')
+
+
+@apost('/admin/support/messages/<int:mid>/reopen')
+def post_admin_support_reopen(s: t.SessionInfo, mid: int):
+    require_admin(s)
+    try:
+        with api_tx('read committed') as tx:
+            out = support.reopen(tx, mid)
+            record_audit(tx, s, 'support_reopened', target_uuid=out['member_uuid'],
+                         metadata=dict(support_message_id=mid, previous=out['previous']))
+    except support.MessageNotFound:
+        abort(404)
+    except support.AlreadyOpen:
+        return dict(error='already_open'), 409
+    except psycopg.errors.SerializationFailure:
+        return dict(error='already_open'), 409
+    return dict(id=out['id'], status=out['status'])

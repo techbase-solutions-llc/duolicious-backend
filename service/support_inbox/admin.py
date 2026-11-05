@@ -137,6 +137,31 @@ def mark(tx, message_id: int, status: str, *, handled_by: str) -> dict:
                 member_uuid=row['member_uuid'])
 
 
+class AlreadyOpen(Exception):
+    pass
+
+
+_Q_REOPEN = """
+    UPDATE support_message
+       SET status = 'open', handled_at = NULL, handled_by = NULL
+     WHERE id = %(id)s AND status <> 'open'
+    RETURNING id
+"""
+
+
+def reopen(tx, message_id: int) -> dict:
+    """Put a handled or not-for-us message back to open, for a mark made by
+    mistake. Same lock as `mark`, so two reopens at once reopen it once."""
+    row = tx.execute(_Q_LOCK, dict(id=message_id)).fetchone()
+    if row is None:
+        raise MessageNotFound(message_id)
+    if row['status'] == 'open':
+        raise AlreadyOpen()
+    if tx.execute(_Q_REOPEN, dict(id=message_id)).fetchone() is None:  # unreachable under the lock
+        raise AlreadyOpen()
+    return dict(id=message_id, status='open', previous=row['status'], member_uuid=row['member_uuid'])
+
+
 # Message number and age only: no subject, no text and no address, so the
 # owner's alert email carries nothing a member wrote.
 _Q_STALE_OPEN = """
