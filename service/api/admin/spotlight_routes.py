@@ -257,8 +257,42 @@ _E5_SAVEPOINT = 'e5_enqueue'
 
 
 def _enqueue_card_ready(tx, person_id: int, request_key: str) -> Optional[int]:
-    from emails.spotlight_card_ready import enqueue_card_ready
-    return enqueue_card_ready(tx, person_id, request_key)
+    """E4 for a card that has been drawn (TEC-2113), keyed `e4-drawn-<rk>`."""
+    from emails.spotlight_card_ready import drawn_campaign_id, enqueue_card_ready
+    return enqueue_card_ready(tx, person_id, request_key, campaign_id=drawn_campaign_id(request_key))
+
+
+# TEC-2113 (owner's ruling, 5 Nov 2026): "your card is ready" goes only once
+# the card is drawn. The welcome and member-of-the-week routes used to queue
+# E4 when they created the card, but the card is drawn later by the admin's
+# daily tick, so a member could open the link and find nothing to review.
+# The image upload that completes the render now queues it instead, for the
+# same kinds and statuses the invite-pending drain covers.
+_Q_RENDERED_INVITE_SUBJECT = """
+    SELECT subject_person_id FROM publishing_queue
+     WHERE request_key = %(rk)s
+       AND kind IN ('welcome', 'member_of_week')
+       AND status = 'awaiting_member'
+       AND cancellation_requested_at IS NULL
+       AND subject_person_id IS NOT NULL
+     LIMIT 1
+"""
+
+
+def _enqueue_card_ready_on_render(tx, request_key: str) -> Optional[int]:
+    """Called in the transaction whose upload completed the render. Nothing
+    is queued while approvals or invites are off (the member could not act
+    on it); the invite-pending drain sends it once both are on. A failure
+    propagates, so the render rolls back with it and the card stays on the
+    tick's render list, rather than leaving a drawn card whose invite
+    failed."""
+    cfg = settings(tx)
+    if cfg.get('approvals_enabled') != 'true' or cfg.get('invites_enabled') != 'true':
+        return None
+    row = tx.execute(_Q_RENDERED_INVITE_SUBJECT, dict(rk=request_key)).fetchone()
+    if not row:
+        return None
+    return _enqueue_card_ready(tx, row['subject_person_id'], request_key)
 
 
 def _enqueue_card_live(tx, person_id: int, request_key: str, external_post_id: str, platform: str,
@@ -442,16 +476,25 @@ _Q_ROUNDUP_THIS_WEEK = """
 """
 
 # Task 7 (the Wave 1 gap): a request is "invite pending" when its member-facing
-# card exists but E4 was withheld -- created while approvals were off, per
-# post_growth_spotlight_welcome/member_of_week's invite_sent guard. The
-# predicate is shared by the count on GET /candidates and the rows the
-# invite-pending route drains, so the two never disagree about what counts.
+# card exists but E4 was withheld. The predicate is shared by the count on
+# GET /candidates and the rows the invite-pending route drains, so the two
+# never disagree about what counts.
+#
+# TEC-2113: E4 now waits for the card to be drawn, so only a drawn card (its
+# current revision carries an asset hash) is pending, and only the
+# `e4-drawn-<rk>` row (`drawn_campaign_id`) answers it. A card drawn while
+# approvals or invites were off gets nothing at render and is picked up here.
+# A card not yet drawn is not pending: its render queues E4. The old
+# `e4-<rk>` row, queued at creation before this change, does not count, as
+# that email went out before there was a card to see.
 _Q_INVITES_PENDING_PREDICATE = """
     q.kind IN ('welcome', 'member_of_week')
       AND q.status = 'awaiting_member'
       AND q.cancellation_requested_at IS NULL
+      AND EXISTS (SELECT 1 FROM spotlight_revision dr
+                   WHERE dr.id = q.current_revision_id AND dr.asset_hash IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM email_outbox e
-                       WHERE e.campaign = 'e4' AND e.campaign_id = 'e4-' || q.request_key)
+                       WHERE e.campaign = 'e4' AND e.campaign_id = 'e4-drawn-' || q.request_key)
 """
 
 _Q_INVITES_PENDING_COUNT = f"""
@@ -1083,6 +1126,10 @@ def post_growth_queue_image(request_key: str):
                             """UPDATE publishing_queue SET status = 'review', updated_at = NOW()
                                 WHERE request_key = %(rk)s AND status = 'awaiting_render'""",
                             dict(rk=request_key))
+                        # TEC-2113: the card now exists, so the member may be
+                        # told it is ready. Keyed per request, so a card drawn
+                        # again after an edit sends nothing more.
+                        _enqueue_card_ready_on_render(tx, request_key)
                     _audit(tx, s, 'growth.queue.image', request_key=request_key, platform=platform,
                            **({} if slide is None else dict(slide=slide)))
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
@@ -1229,9 +1276,9 @@ def post_growth_spotlight_welcome():
     # Wave 3d Task 3 (Runtime 8a): the `already` guard below is a read, and
     # every racing worker passes it together. Migration 0050's partial unique
     # index is the same guard in database form, so a racing loser fails on
-    # insert instead of creating a second card and a second E4. The except
+    # insert instead of creating a second card. The except
     # sits OUTSIDE the `with` block so the loser's transaction has already
-    # rolled back (its candidate and its invite with it) before it answers,
+    # rolled back (its candidate with it) before it answers,
     # the same shape `post_spotlight_card` uses. Either error can surface
     # depending on timing under REPEATABLE READ. Not retried: the winner's
     # welcome is the answer.
@@ -1268,18 +1315,13 @@ def post_growth_spotlight_welcome():
                                       caption=caption, created_by=_actor(s))
             except ValueError as e:
                 abort(400, str(e))
-            # Added from the Task 2 review: a member must never receive an
-            # invite they cannot act on. Approvals off means there is no way to
-            # approve the card yet, so the candidate is created (ready the
-            # moment approvals resume) but E4 is withheld.
-            invite_sent = cfg.get('approvals_enabled') == 'true'
-            if invite_sent:
-                # Inside the transaction on purpose (F07): the candidate and the
-                # invite that announces it either both land or neither does. A
-                # failure here is NOT caught (unlike E5 on the receipt routes):
-                # no candidate without its invite record.
-                _enqueue_card_ready(tx, person_id, rk)
-            _audit(tx, s, 'growth.queue.welcome', person_id=person_id, request_key=rk, invite_sent=invite_sent)
+            # TEC-2113: no E4 here any more. The card is not drawn yet, and a
+            # member must never be told it is ready before it exists; the
+            # image upload that draws it queues E4 (`_enqueue_card_ready_on_render`),
+            # or the invite-pending drain does if approvals are off by then.
+            # `invite_on_render` records whether approvals were on now.
+            _audit(tx, s, 'growth.queue.welcome', person_id=person_id, request_key=rk, invite_sent=False,
+                   invite_on_render=cfg.get('approvals_enabled') == 'true')
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
         abort(409)
     return dict(request_key=rk)
@@ -1511,11 +1553,13 @@ def _approval_slot(kind: str, requested: Optional[datetime],
 @post('/admin/growth/spotlight/invite-pending', limiter=growth_limit)
 def post_growth_spotlight_invite_pending():
     """Task 7 (the Wave 1 gap): sends the E4 invites that were withheld while
-    approvals were paused. `post_growth_spotlight_welcome` and
-    `post_growth_spotlight_member_of_week` both create the candidate but skip
-    E4 when approvals are off, so nothing ever comes back and asks the member
-    to act -- this is what drains that backlog once approvals resume, and the
-    tick calls it every run `candidates.invites_pending` is above zero.
+    approvals were paused. Since TEC-2113 E4 is queued when the card is drawn
+    (`_enqueue_card_ready_on_render`), and not at all when approvals or
+    invites are off at that moment, so nothing would ever come back and ask
+    the member to act -- this is what drains that backlog once approvals
+    resume, and the tick calls it every run `candidates.invites_pending` is
+    above zero. Only drawn cards are drained (`_Q_INVITES_PENDING_PREDICATE`);
+    a card not yet drawn gets its E4 at render.
 
     Fix round 1 ruling 1: a backlog entry that can never become sendable must
     reach a TERMINAL state rather than sit in `invites_pending` forever, so
@@ -1533,6 +1577,7 @@ def post_growth_spotlight_invite_pending():
     re-creates a cancelled request: a member whose report was dismissed the
     next day simply never got their card. Those now count `skipped` and are
     re-checked on the following run."""
+    from emails.spotlight_card_ready import drawn_campaign_id
     s = _gate()
     with api_tx('read committed') as tx:
         cfg = settings(tx)
@@ -1567,7 +1612,7 @@ def post_growth_spotlight_invite_pending():
                 continue
             has_outbox = tx.execute(
                 "SELECT 1 FROM email_outbox WHERE campaign = 'e4' AND campaign_id = %(cid)s LIMIT 1",
-                dict(cid=f'e4-{rk}')).fetchone()
+                dict(cid=drawn_campaign_id(rk))).fetchone()
             if has_outbox:
                 skipped += 1
             else:
@@ -2152,17 +2197,11 @@ def post_growth_spotlight_member_of_week(s: t.SessionInfo):
             tx.execute(
                 "UPDATE publishing_queue SET scheduled_for = %(w)s WHERE request_key = %(rk)s",
                 dict(w=when, rk=rk))
-        # Fix wave item 4: the same gate the welcome route carries. A
-        # member must never be invited to approve a card they cannot act
-        # on, so with approvals off the candidate is created (ready the
-        # moment approvals resume) but E4 is withheld.
-        invite_sent = settings(tx).get('approvals_enabled') == 'true'
-        if invite_sent:
-            # Inside the transaction on purpose (F07), same as the welcome
-            # route above, and a failure propagates for the same reason.
-            _enqueue_card_ready(tx, person_id, rk)
+        # TEC-2113: as on the welcome route, E4 waits for the card to be
+        # drawn (`_enqueue_card_ready_on_render`, or the invite-pending
+        # drain when approvals are off by then).
         _audit(tx, s, 'growth.queue.member_of_week', person_id=person_id, request_key=rk,
-               invite_sent=invite_sent)
+               invite_sent=False, invite_on_render=settings(tx).get('approvals_enabled') == 'true')
     return dict(request_key=rk)
 
 

@@ -880,6 +880,8 @@ def test_invites_pending_reports_the_oldest_backlog_age(client, make_person, mon
     with api_tx() as tx:
         tx.execute("UPDATE publishing_queue SET created_at = NOW() - interval '5 days' WHERE request_key = %(rk)s",
                    dict(rk=rk))
+        # TEC-2113: only a drawn card is owed an invite.
+        attach_render(tx, current_revision(tx, rk)['id'], f'hash-{rk}', f'k-{rk}', f'https://cdn/k-{rk}.png')
     c = client.get('/admin/growth/candidates', headers=H).get_json()
     assert c['invites_pending'] >= 1
     assert c['invites_pending_oldest_days'] >= 5
@@ -1614,7 +1616,10 @@ def test_purge_leaves_in_flight_rows_to_their_lease_holder(client, make_person):
 
 def test_member_of_week_withholds_the_invite_while_approvals_are_paused(client, make_person, monkeypatch):
     """Fix wave item 4: the same gate the welcome route carries. A member
-    must never be invited to approve a card they cannot act on."""
+    must never be invited to approve a card they cannot act on.
+
+    TEC-2113: and never before the card is drawn, so creation queues no E4
+    either way; the audit row records whether the render will send it."""
     import service.api.admin.spotlight_routes as sr
     sent = []
     monkeypatch.setattr(sr, '_enqueue_card_ready', lambda tx, *a: sent.append(a))
@@ -1629,6 +1634,7 @@ def test_member_of_week_withholds_the_invite_while_approvals_are_paused(client, 
             """SELECT metadata FROM admin_audit_log WHERE action = 'growth.queue.member_of_week'
                 ORDER BY created_at DESC LIMIT 1""").fetchone()
     assert row['metadata']['invite_sent'] is False and row['metadata']['request_key'] == paused_rk
+    assert row['metadata']['invite_on_render'] is False
 
     open_member = _make_eligible(make_person, name='MowOpen')
     with api_tx() as tx:
@@ -1636,20 +1642,32 @@ def test_member_of_week_withholds_the_invite_while_approvals_are_paused(client, 
     try:
         r = client.post('/admin/growth/spotlight/member-of-week', json={'person_id': open_member['id']}, headers=A)
         assert r.status_code == 200
-        assert sent == [(open_member['id'], r.get_json()['request_key'])]
+        assert sent == []
+        with api_tx('read committed') as tx:
+            row = tx.execute(
+                """SELECT metadata FROM admin_audit_log WHERE action = 'growth.queue.member_of_week'
+                    ORDER BY created_at DESC LIMIT 1""").fetchone()
+        assert row['metadata']['request_key'] == r.get_json()['request_key']
+        assert row['metadata']['invite_sent'] is False and row['metadata']['invite_on_render'] is True
     finally:
         with api_tx() as tx:
             set_setting(tx, 'approvals_enabled', 'false')
 
 
-def test_e4_enqueue_failure_takes_the_candidate_with_it(client, make_person, monkeypatch):
+def test_e4_enqueue_failure_takes_the_render_with_it(client, make_person, monkeypatch):
     """Fix round 1, ruling 2, the other half. E4 is the whole reason the
-    candidate exists: a member queued for a Spotlight card with no record of
-    ever having been asked is worse than no candidate at all, so a failure to
-    queue the invite propagates and the candidate rolls back with it.
+    card is drawn for the member: a drawn card with no record of the member
+    ever having been asked is worse than no render at all, so a failure to
+    queue the invite propagates and the render rolls back with it, leaving
+    the card on the tick's render list.
+
+    TEC-2113 moved E4 from candidate creation to the render, so creation no
+    longer fails on it and the candidate stays.
 
     Contrast with E5 on the complete route (tests/test_spotlight_delivery.py),
     where the post is already live and the receipt must survive."""
+    import service.spotlight.storage as st
+    monkeypatch.setattr(st, 'put_card_image', lambda key, data, content_type, public=False: None)
     import emails.spotlight_card_ready as card_ready_mod
 
     def _boom(*a, **kw):
@@ -1662,9 +1680,15 @@ def test_e4_enqueue_failure_takes_the_candidate_with_it(client, make_person, mon
                    dict(e=f'e4-boom-{p["id"]}@ahavah-test.invalid', id=p['id']))
         set_setting(tx, 'approvals_enabled', 'true')
     try:
+        r = client.post('/admin/growth/spotlight/welcome', json={'person_id': p['id']}, headers=H)
+        assert r.status_code == 200
+        rk = r.get_json()['request_key']
+        png = _b64(_png_bytes())
+        assert client.post(f'/admin/growth/queue/{rk}/image', json={'platform': 'facebook', 'png_base64': png},
+                           headers=H).status_code == 200
         with pytest.raises(RuntimeError, match='template exploded'):
-            client.post('/admin/growth/spotlight/welcome', json={'person_id': p['id']},
-                        headers={'X-Growth-Cron': 'test-cron-secret'})
+            client.post(f'/admin/growth/queue/{rk}/image', json={'platform': 'instagram', 'png_base64': png},
+                        headers=H)
         with api_tx('read committed') as tx:
             candidates = tx.execute(
                 """SELECT count(*) AS n FROM publishing_queue
@@ -1673,7 +1697,9 @@ def test_e4_enqueue_failure_takes_the_candidate_with_it(client, make_person, mon
             queued = tx.execute(
                 "SELECT count(*) AS n FROM email_outbox WHERE person_id = %(p)s AND campaign = 'e4'",
                 dict(p=p['id'])).fetchone()
-        assert candidates['n'] == 0     # no candidate without its invite record
+            drawn = current_revision(tx, rk)['asset_hash']
+        assert candidates['n'] == 2     # the candidate stays (one row per platform)
+        assert drawn is None            # no render without its invite record
         assert queued['n'] == 0
     finally:
         with api_tx() as tx:
@@ -1800,7 +1826,7 @@ def _status(result):
     return result[0] if isinstance(result, tuple) else result
 
 
-def test_a_burst_of_duplicate_welcomes_converges_on_one_request_and_one_invite(app, make_person, monkeypatch):
+def test_a_burst_of_duplicate_welcomes_converges_on_one_request_and_no_invite_yet(app, make_person, monkeypatch):
     import service.api.admin.spotlight_routes as sr
     p = _make_eligible(make_person, name='WelcomeBurst')
     with api_tx() as tx:
@@ -1834,7 +1860,9 @@ def test_a_burst_of_duplicate_welcomes_converges_on_one_request_and_one_invite(a
                 WHERE subject_person_id = %(p)s AND kind = 'welcome'""", dict(p=p['id'])).fetchall()}
         e4 = tx.execute("SELECT count(*) AS n FROM email_outbox WHERE campaign = 'e4' AND person_id = %(p)s",
                         dict(p=p['id'])).fetchone()['n']
-    assert (len(keys), e4) == (1, 1), (results, len(keys), e4)
+    # TEC-2113: creation queues no E4 (it waits for the card to be drawn),
+    # so the one request the burst converges on carries no invite yet.
+    assert (len(keys), e4) == (1, 0), (results, len(keys), e4)
     assert sorted(map(_status, results), key=str) == [200] + [409] * 7, results
     assert [r[1] for r in results if _status(r) == 200] == list(keys)
 

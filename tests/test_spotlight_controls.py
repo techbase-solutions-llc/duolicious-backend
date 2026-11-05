@@ -31,6 +31,21 @@ def _restore_defaults(tx):
     _set(tx, **_DEFAULTS)
 
 
+def _draw(tx, rk):
+    """TEC-2113: only a drawn card is owed an invite. Stamps the render on
+    the request's current revision, as the image upload does once every
+    platform row has its artwork."""
+    from service.spotlight.revisions import attach_render, current_revision
+    attach_render(tx, current_revision(tx, rk)['id'], f'hash-{rk}', f'k-{rk}', f'https://cdn/k-{rk}.png')
+
+
+def _draw_welcome(tx, person_id):
+    rk = tx.execute("""SELECT request_key FROM publishing_queue
+                        WHERE subject_person_id = %(p)s AND kind = 'welcome' AND status = 'awaiting_member'
+                        LIMIT 1""", dict(p=person_id)).fetchone()['request_key']
+    _draw(tx, rk)
+
+
 def _make_eligible(make_person, name='Elig', gender='Woman'):
     p = make_person(name=name, gender=gender)
     with api_tx() as tx:
@@ -226,7 +241,8 @@ def test_welcome_creates_candidate_without_invite_when_approvals_disabled(client
             statuses = {row['status'] for row in tx.execute(
                 "SELECT status FROM publishing_queue WHERE request_key = %(rk)s", dict(rk=rk)).fetchall()}
         assert statuses == {'awaiting_member'}   # the candidate still exists
-        assert audited == [('growth.queue.welcome', dict(person_id=p['id'], request_key=rk, invite_sent=False))]
+        assert audited == [('growth.queue.welcome', dict(person_id=p['id'], request_key=rk, invite_sent=False,
+                                                          invite_on_render=False))]
     finally:
         with api_tx() as tx: _restore_defaults(tx)
 
@@ -239,6 +255,9 @@ def test_invites_withheld_during_pause_are_sent_when_approvals_open(client, make
             assert client.post('/admin/growth/spotlight/welcome', json=dict(person_id=p['id']), headers=H).status_code == 200
         with api_tx('read committed') as tx:
             assert tx.execute("SELECT count(*) AS n FROM email_outbox WHERE campaign = 'e4' AND person_id = ANY(%(ids)s)", dict(ids=[a['id'], b['id']])).fetchone()['n'] == 0
+        with api_tx() as tx:
+            for p in (a, b):
+                _draw_welcome(tx, p['id'])
         assert client.get('/admin/growth/candidates', headers=H).get_json()['invites_pending'] >= 2
         r = client.post('/admin/growth/spotlight/invite-pending', json={}, headers=H)
         assert r.status_code == 409 and r.get_json() == dict(error='approvals_paused')
@@ -267,6 +286,7 @@ def test_invite_pending_cancels_a_request_whose_subject_became_ineligible(client
     try:
         assert client.post('/admin/growth/spotlight/welcome', json=dict(person_id=p['id']), headers=H).status_code == 200
         with api_tx() as tx:
+            _draw_welcome(tx, p['id'])
             tx.execute("UPDATE person SET deletion_requested_at = NOW() WHERE id = %(id)s", dict(id=p['id']))
         with api_tx() as tx: _set(tx, approvals_enabled='true')
         r = client.post('/admin/growth/spotlight/invite-pending', json={}, headers=H).get_json()
@@ -299,6 +319,7 @@ def test_invite_pending_skips_a_recoverable_failure_and_queues_it_later(client, 
     try:
         assert client.post('/admin/growth/spotlight/welcome', json=dict(person_id=p['id']), headers=H).status_code == 200
         with api_tx() as tx:
+            _draw_welcome(tx, p['id'])
             tx.execute(
                 """INSERT INTO skipped (subject_person_id, object_person_id, reported, report_reason)
                    VALUES (%(a)s, %(b)s, TRUE, 'spam')""", dict(a=reporter['id'], b=p['id']))

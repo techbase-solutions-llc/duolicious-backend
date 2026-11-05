@@ -197,6 +197,25 @@ def test_e4_and_e5_html_are_on_template_and_escaped():
     assert post_url_for('facebook', '123_456') == 'https://www.facebook.com/123_456'
 
 
+def test_enqueue_card_ready_takes_the_campaign_id_it_is_given(make_person):
+    """TEC-2113: the routes queue E4 under `e4-drawn-<request_key>`, deduped
+    on that key alone, so an earlier `e4-<request_key>` row does not stop it."""
+    from emails.spotlight_card_ready import drawn_campaign_id, enqueue_card_ready
+    p = _make_eligible(make_person)
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET email = %(e)s WHERE id = %(id)s", dict(e=f'card-cid-{p["id"]}@ahavah-test.invalid', id=p['id']))
+        rk = create_candidate(tx, kind='welcome', subject_person_id=p['id'], caption='c', created_by='t')
+        assert drawn_campaign_id(rk) == f'e4-drawn-{rk}'
+        old = enqueue_card_ready(tx, p['id'], rk)
+        drawn = enqueue_card_ready(tx, p['id'], rk, campaign_id=drawn_campaign_id(rk))
+        again = enqueue_card_ready(tx, p['id'], rk, campaign_id=drawn_campaign_id(rk))
+        assert old is not None and drawn is not None and again is None
+        ids = [r['campaign_id'] for r in tx.execute(
+            "SELECT campaign_id FROM email_outbox WHERE person_id = %(p)s AND campaign = 'e4' ORDER BY id",
+            dict(p=p['id'])).fetchall()]
+    assert ids == [f'e4-{rk}', f'e4-drawn-{rk}']
+
+
 def test_enqueue_card_ready_queues_once_and_is_exempt(make_person, outbox_drain):
     """E4 is queued, not sent (F07). The row is written on the CALLER'S
     transaction, `exempt=True` keeps it outside the 7-day cap (it is
@@ -255,35 +274,56 @@ def test_enqueue_card_ready_queues_nothing_when_the_token_is_none(make_person, m
     assert not any('href="None"' in x['body'] for x in sent)
 
 
-def test_e4_is_enqueued_in_the_candidate_transaction_and_survives_restart(client, make_person,
-                                                                          monkeypatch, outbox_drain):
-    """The route-level guarantee F07 buys: POSTing the welcome leaves a
-    DURABLE queued row, written inside the candidate's own transaction, and
-    no thread anywhere. The old implementation fired a daemon thread after
-    the commit, so an api restart in that window lost the invite silently."""
+def test_e4_is_enqueued_in_the_render_transaction_and_survives_restart(client, make_person,
+                                                                       monkeypatch, outbox_drain):
+    """The route-level guarantee F07 buys: drawing the card leaves a DURABLE
+    queued row, written inside the render's own transaction, and no thread
+    anywhere. The old implementation fired a daemon thread after the commit,
+    so an api restart in that window lost the invite silently.
+
+    TEC-2113: POSTing the welcome itself queues nothing. E4 waits until the
+    image upload completes the render, keyed `e4-drawn-<request_key>`."""
+    import base64
+    import io
     import threading
 
+    from PIL import Image
+
     import emails.spotlight_card_ready as card_ready_mod
+    import service.spotlight.storage as st
     assert not hasattr(card_ready_mod, 'send_card_ready_async')
     p = _make_eligible(make_person, name='E4Route')
     with api_tx() as tx:
         tx.execute("UPDATE person SET email = %(e)s WHERE id = %(id)s",
                    dict(e=f'e4-route-{p["id"]}@ahavah-test.invalid', id=p['id']))
         set_setting(tx, 'approvals_enabled', 'true')
+    H = {'X-Growth-Cron': 'test-cron-secret'}
+    buf = io.BytesIO()
+    Image.new('RGB', (1080, 1080), 'white').save(buf, 'PNG')
+    png = base64.b64encode(buf.getvalue()).decode()
     try:
         def _no_threads(*a, **kw):
             raise AssertionError('the invite must not be sent from a thread')
+        monkeypatch.setattr(st, 'put_card_image', lambda key, data, content_type, public=False: None)
         monkeypatch.setattr(threading, 'Thread', _no_threads)
-        r = client.post('/admin/growth/spotlight/welcome', json={'person_id': p['id']},
-                        headers={'X-Growth-Cron': 'test-cron-secret'})
-        monkeypatch.undo()
+        r = client.post('/admin/growth/spotlight/welcome', json={'person_id': p['id']}, headers=H)
         assert r.status_code == 200
         rk = r.get_json()['request_key']
+        with api_tx('read committed') as tx:
+            assert tx.execute("SELECT count(*) AS n FROM email_outbox WHERE person_id = %(p)s AND campaign = 'e4'",
+                              dict(p=p['id'])).fetchone()['n'] == 0
+            platforms = [x['platform'] for x in tx.execute(
+                "SELECT platform FROM publishing_queue WHERE request_key = %(rk)s ORDER BY platform",
+                dict(rk=rk)).fetchall()]
+        for platform in platforms:
+            assert client.post(f'/admin/growth/queue/{rk}/image',
+                               json={'platform': platform, 'png_base64': png}, headers=H).status_code == 200
+        monkeypatch.undo()
         with api_tx('read committed') as tx:
             row = tx.execute(
                 """SELECT campaign, campaign_id, state, payload FROM email_outbox
                     WHERE person_id = %(p)s ORDER BY id DESC LIMIT 1""", dict(p=p['id'])).fetchone()
-        assert (row['campaign'], row['campaign_id'], row['state']) == ('e4', f'e4-{rk}', 'queued')
+        assert (row['campaign'], row['campaign_id'], row['state']) == ('e4', f'e4-drawn-{rk}', 'queued')
         assert '/spotlight/card/' in row['payload']['html']
         assert len(outbox_drain(p['id'])) == 1
     finally:

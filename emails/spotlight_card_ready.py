@@ -88,16 +88,31 @@ You're receiving this because you opted in to Community Spotlight.
     )
 
 
-def enqueue_card_ready(tx, person_id: int, request_key: str) -> int | None:
+def drawn_campaign_id(request_key: str) -> str:
+    """The outbox key of the E4 sent once the card is drawn (TEC-2113). Kept
+    apart from the old `e4-<request_key>` key, which was queued when the card
+    was created, so a member who got that early email still gets this one."""
+    return f'e4-drawn-{request_key}'
+
+
+def enqueue_card_ready(tx, person_id: int, request_key: str, *,
+                       campaign_id: str | None = None) -> int | None:
     """Queue E4 inside the CALLER'S transaction (F07). Returns the outbox row
     id, or None when there is nothing to send.
+
+    `campaign_id` is the outbox key the message is deduplicated on; None
+    keeps the original `e4-<request_key>`. The Spotlight routes pass
+    `drawn_campaign_id(request_key)`: since TEC-2113 (owner's ruling, 5 Nov
+    2026) E4 is queued only once the card has been drawn, when the image
+    upload completes the render or when the invite-pending drain finds a
+    drawn card that has not had it.
 
     This used to be a synchronous send fired from a daemon thread, which
     meant the invite could be lost three separate ways: the thread died with
     the process, an SMTP hiccup dropped it, and a retried request could send
     it twice. Enqueuing here instead ties the invite to the very transaction
-    that created (or re-confirmed) the candidate: either both land or
-    neither does, and the cron drains it afterwards.
+    that decided to send it (the render that drew the card, or the drain):
+    either both land or neither does, and the cron drains it afterwards.
 
     The card nonce is minted on this same `tx` for the same reason -- a token
     must never exist for a message that was rolled back.
@@ -105,7 +120,8 @@ def enqueue_card_ready(tx, person_id: int, request_key: str) -> int | None:
     `exempt=True` because this is member-triggered (a new welcome or
     member-of-week card is a direct consequence of the member's own
     eligibility, not a broadcast), and the campaign_id is keyed on
-    request_key so a retried caller cannot double send for the same request.
+    request_key so a retried caller, or a card drawn a second time after an
+    edit, cannot double send for the same request.
 
     None is returned rather than raised for the three ordinary "nothing to
     send" cases: no activated person, no candidate, or no card token. The
@@ -126,7 +142,7 @@ def enqueue_card_ready(tx, person_id: int, request_key: str) -> int | None:
     html = card_ready_html(person['first_name'], kind_label, cu,
                            CARD_TOKEN_TTL_SECONDS // 86400, unsub)
     return outbox.enqueue(
-        tx, campaign='e4', campaign_id=f'e4-{request_key}', person_id=person_id,
+        tx, campaign='e4', campaign_id=campaign_id or f'e4-{request_key}', person_id=person_id,
         email=person['email'], subject=SUBJECT, html=html, from_addr=FROM_ADDR,
         unsub_scope=UNSUB_SCOPE,
         list_unsubscribe=f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{unsub}>",
