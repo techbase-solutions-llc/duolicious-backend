@@ -481,12 +481,16 @@ _Q_ROUNDUP_THIS_WEEK = """
 # never disagree about what counts.
 #
 # TEC-2113: E4 now waits for the card to be drawn, so only a drawn card (its
-# current revision carries an asset hash) is pending, and only the
-# `e4-drawn-<rk>` row (`drawn_campaign_id`) answers it. A card drawn while
+# current revision carries an asset hash) is pending. A card drawn while
 # approvals or invites were off gets nothing at render and is picked up here.
-# A card not yet drawn is not pending: its render queues E4. The old
-# `e4-<rk>` row, queued at creation before this change, does not count, as
-# that email went out before there was a card to see.
+# A card not yet drawn is not pending: its render queues E4.
+#
+# Either E4 row answers it: `e4-drawn-<rk>` (`drawn_campaign_id`), or the
+# old `e4-<rk>` queued at creation before this change. A member emailed
+# under the old flow whose card is already drawn has a link that works, and
+# must never get a second "card is ready" email for it (owner's ruling).
+# Only the render sends the drawn email to such a card, and only if it is
+# drawn after this change.
 _Q_INVITES_PENDING_PREDICATE = """
     q.kind IN ('welcome', 'member_of_week')
       AND q.status = 'awaiting_member'
@@ -494,7 +498,8 @@ _Q_INVITES_PENDING_PREDICATE = """
       AND EXISTS (SELECT 1 FROM spotlight_revision dr
                    WHERE dr.id = q.current_revision_id AND dr.asset_hash IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM email_outbox e
-                       WHERE e.campaign = 'e4' AND e.campaign_id = 'e4-drawn-' || q.request_key)
+                       WHERE e.campaign = 'e4'
+                         AND e.campaign_id IN ('e4-' || q.request_key, 'e4-drawn-' || q.request_key))
 """
 
 _Q_INVITES_PENDING_COUNT = f"""

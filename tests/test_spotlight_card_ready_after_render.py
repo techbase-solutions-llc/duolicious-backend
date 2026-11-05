@@ -181,6 +181,32 @@ def test_a_card_emailed_before_it_was_drawn_still_gets_the_drawn_e4(client, make
     assert _e4_rows(p['id']) == [f'e4-{rk}']
     _draw(client, rk)
     assert _e4_rows(p['id']) == [f'e4-{rk}', f'e4-drawn-{rk}']
+    # Drawn again after an edit: still exactly one drawn email.
+    with api_tx() as tx:
+        edit_caption(tx, rk, 'A new caption', 't')
+    _draw(client, rk, colour='black')
+    assert _e4_rows(p['id']) == [f'e4-{rk}', f'e4-drawn-{rk}']
+
+
+def test_a_drawn_card_emailed_under_the_old_flow_is_not_drained(client, make_person, switches):
+    """Owner's ruling: a member already emailed about a card that is already
+    drawn (their link works) never gets a second "card is ready" email. The
+    old `e4-<rk>` row keeps the card out of invite-pending and its count."""
+    from emails.spotlight_card_ready import enqueue_card_ready
+    from service.api.admin.spotlight_routes import _Q_INVITES_PENDING_PREDICATE
+    from service.spotlight.revisions import attach_render
+    p = _make_eligible(make_person, name='DrawnAndEmailed')
+    switches(approvals_enabled='true', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    with api_tx() as tx:
+        assert enqueue_card_ready(tx, p['id'], rk) is not None    # the old key, as before
+        # Drawn before this change: the render queued nothing then.
+        attach_render(tx, current_revision(tx, rk)['id'], f'hash-{rk}', f'k-{rk}', f'https://cdn/k-{rk}.png')
+        pending = {r['request_key'] for r in tx.execute(
+            f"SELECT q.request_key FROM publishing_queue q WHERE {_Q_INVITES_PENDING_PREDICATE}").fetchall()}
+    assert rk not in pending
+    client.post('/admin/growth/spotlight/invite-pending', json={}, headers=H)
+    assert _e4_rows(p['id']) == [f'e4-{rk}']
 
 
 @pytest.mark.parametrize('off', ['approvals_enabled', 'invites_enabled'])
