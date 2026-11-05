@@ -6,6 +6,7 @@ fastapi
 Flask
 flask-cors
 Flask-Limiter
+google-auth>=2.30          # TEC-2115 support inbox: service account sign-in for the Gmail API (read only)
 gunicorn
 lxml
 nltk
