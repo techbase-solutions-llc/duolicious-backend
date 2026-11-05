@@ -1232,6 +1232,8 @@ import service.api.feedback_routes  # noqa: E402,F401
 # admin's Feedback panel. Sibling modules.
 import service.api.notices_routes  # noqa: E402,F401
 import service.api.admin.feedback_routes  # noqa: E402,F401
+# Support messages (5 Nov 2026, TEC-2115): the copy of support@ahavah.app.
+import service.api.admin.support_routes  # noqa: E402,F401
 # Beta-tester opt-in (2026-05-26) — onboarding completion screen. Sibling module.
 import service.api.beta_routes  # noqa: E402,F401
 # Beta referrals (2026-06-05) — GET /referrals/me for authed callers.
