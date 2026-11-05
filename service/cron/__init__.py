@@ -21,6 +21,7 @@ from service.cron.questionofweek import question_of_week_forever
 from service.cron.returnmail import return_mail_forever
 from service.cron.adminalerts import admin_alerts_forever
 from service.cron.sendguard import sendguard_forever
+from service.cron.supportinbox import support_inbox_forever
 import asyncio
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
@@ -141,6 +142,12 @@ async def main():
         # restart, alerts the owner and writes the heartbeat the watchdog
         # reads. Every minute.
         sendguard_forever(),
+
+        # The copy of support@ahavah.app in the admin (TEC-2115): reads the
+        # mailbox through the Gmail API, read only, and stores each new
+        # message. Every 5 minutes. Does nothing unless
+        # AHAVAH_SUPPORT_INBOX_ENABLED=1 and the key file is on the droplet.
+        support_inbox_forever(),
 
         check_connections_forever(),
 
