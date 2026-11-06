@@ -76,7 +76,7 @@ def opt_in_push() -> dict:
 
 def card_push(url: str) -> dict:
     return dict(title='Your Spotlight card is ready',
-                body='Check the email we just sent and tap Approve to be featured.',
+                body='Open the email from Ahavah and tap Approve to be featured.',
                 url=url, tag='spotlight-card-ready')
 
 

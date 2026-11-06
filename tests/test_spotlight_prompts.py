@@ -362,7 +362,7 @@ def test_a_card_waiting_for_its_member_is_in_the_card_audience(client, make_pers
     mine = _to(pushes, p['id'])
     assert len(mine) == 1 and res['queued'] >= 1
     assert mine[0]['title'] == 'Your Spotlight card is ready'
-    assert mine[0]['body'] == 'Check the email we just sent and tap Approve to be featured.'
+    assert mine[0]['body'] == 'Open the email from Ahavah and tap Approve to be featured.'
     assert mine[0]['url'].startswith('/spotlight/card/')
     assert _logged(prompts.CARD, p['id']) == [f'{rk}:{_rev(rk)}']
     # Another Send, another week: the same revision is not pushed again.
