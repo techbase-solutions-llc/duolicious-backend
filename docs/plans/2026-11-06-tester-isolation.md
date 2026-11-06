@@ -37,6 +37,8 @@ Places that do not call the barrier get it directly:
 | Chat history (`Q_SELECT_MESSAGE`) | returns nothing across the line |
 | Spotlight | a tester fails the `staff` rule, so never eligible, never a card, never member of the week |
 | Gatherings organiser list (`rsvp_list`) | guests whose account is on the other side of the line from the organiser's member account are left out |
+| Organiser's digest email (`queue_digest`) | the same guests are left out of the names and the total |
+| Inbox details (`Q_INBOX_INFO`) | a peer across the line reads as a deleted account: no name or photo, thread archived |
 
 Campaign email, digests, "new members" and the admin growth and overview counts all bind `%(ex)s` from `_excluded()` (35 sites). `_excluded()` now adds the email of every tester to the static list and the env list, so all of them leave testers out with no edit, and so will any new query written the same way.
 
@@ -58,10 +60,9 @@ Ruling: Together invite links shared outside a chat are not gated. Why: the owne
 
 ## Not covered
 
-- The organiser's digest email of new RSVPs (`queue_digest`) and the public going count still include testers.
+- The public going count still includes testers.
 - A Together session already started from a chat between a tester and a non-tester stays in each side's own list of sessions (`tools.sessions.mine`).
 - The legacy digest (`emails/send_digest.py`, replaced by the community weekly) is not changed.
-- `Q_INBOX_INFO` is not changed: the inbox no longer lists the thread, so the web never asks for it.
 
 ## How the role is granted
 

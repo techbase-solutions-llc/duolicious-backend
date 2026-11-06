@@ -390,6 +390,46 @@ def test_a_gathering_organiser_sees_only_guests_on_their_own_side(world):
     assert (visible, own, no_member, no_account) == (False, True, False, True)
 
 
+@pytest.mark.usefixtures('events_schema', 'events_live', 'no_limits', 'mail_allowed')
+def test_the_organisers_digest_leaves_out_guests_across_the_line(world, organiser, published,
+                                                                 confirmed_guest):
+    from datetime import datetime, timezone
+
+    from service.events import mail
+    o = organiser()
+    with api_tx() as tx:
+        tx.execute('UPDATE organiser SET member_person_id = %(m)s WHERE id = %(i)s',
+                   dict(m=world['asher']['id'], i=o['id']))
+    slug = published(organiser_row=o)
+    confirmed_guest(slug, name='IsoJess Guest', party_size=3, person_id=world['jess']['id'])
+    confirmed_guest(slug, name='IsoMiriam Guest', party_size=1, person_id=world['miriam']['id'])
+    with api_tx() as tx:
+        eid = tx.execute('SELECT id FROM event WHERE slug = %(s)s', dict(s=slug)).fetchone()['id']
+        assert mail.queue_digest(tx, eid, datetime.now(timezone.utc).date()) is not None
+    with api_tx() as tx:
+        [row] = tx.execute("SELECT payload FROM email_outbox WHERE campaign = 'event_digest' "
+                           "AND organiser_id = %(o)s", dict(o=o['id'])).fetchall()
+    body = row['payload']['html']
+    assert 'IsoMiriam Guest' in body and 'IsoJess Guest' not in body
+    assert '1 new RSVP' in row['payload']['subject']
+
+
+def test_inbox_info_reads_a_thread_across_the_line_as_a_deleted_account(world):
+    from service.person.sql import Q_INBOX_INFO
+    converse(world['jess'], world['asher'], 'Shalom')
+    converse(world['tobit'], world['jess'], 'Shalom from a tester')
+
+    def info(me, peer):
+        with api_tx() as tx:
+            rows = tx.execute(Q_INBOX_INFO, dict(person_id=world[me]['id'])).fetchall()
+        [row] = [r for r in rows if str(r['person_uuid']) == world[peer]['uuid']]
+        return row
+
+    across = info('asher', 'jess')
+    assert (across['name'], across['image_uuid'], across['conversation_location']) ==         (None, None, 'archive')
+    assert info('jess', 'tobit')['name'] == 'IsoTobit'
+
+
 # ---------------------------------------------------------------------------
 # Granting the role
 # ---------------------------------------------------------------------------

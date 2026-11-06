@@ -798,21 +798,28 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
         return None
 
     def go():
+        from service.events.manage import guest_shown_sql
         ev = dict(tx.execute('SELECT id, slug, title, organiser_id FROM event WHERE id = %(i)s',
                              dict(i=event_id)).fetchone())
+        o = tx.execute('SELECT email, member_person_id FROM organiser WHERE id = %(i)s',
+                       dict(i=ev['organiser_id'])).fetchone()
+        # Guests on the other side of the tester line from the organiser
+        # are left out, as on the RSVP list (TEC-2135).
+        shown = guest_shown_sql('g', '%(m)s::int')
+        m = o['member_person_id'] if o is not None else None
         new = [dict(r) for r in tx.execute(
-            """SELECT id, name, party_size FROM event_rsvp
-                WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL
-                  AND digested_at IS NULL AND erased_at IS NULL ORDER BY confirmed_at, id""",
-            dict(e=event_id)).fetchall()]
+            f"""SELECT id, name, party_size FROM event_rsvp g
+                 WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL
+                   AND digested_at IS NULL AND erased_at IS NULL AND {shown}
+                 ORDER BY confirmed_at, id""",
+            dict(e=event_id, m=m)).fetchall()]
         if not new:
             return None
         total = tx.execute(
-            """SELECT COALESCE(SUM(party_size), 0)::int AS n FROM event_rsvp
-                WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL""",
-            dict(e=event_id)).fetchone()['n']
-        o = tx.execute('SELECT email, member_person_id FROM organiser WHERE id = %(i)s',
-                       dict(i=ev['organiser_id'])).fetchone()
+            f"""SELECT COALESCE(SUM(party_size), 0)::int AS n FROM event_rsvp g
+                 WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL
+                   AND {shown}""",
+            dict(e=event_id, m=m)).fetchone()['n']
         subject, body = digest_email(ev, new, total, issue_link(tx, ev['organiser_id']),
                                      share=o is not None and kit_on(dict(o)),
                                      your_ahavah=_organiser_line(tx, ev['organiser_id']))

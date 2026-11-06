@@ -1600,8 +1600,12 @@ WITH person_info AS (
     SELECT
         id_table.id AS person_id,
         id_table.uuid AS person_uuid,
-        prospect.id IS NULL AS is_prospect_deleted,
-        COALESCE(prospect.activated, FALSE) AS is_prospect_activated,
+        -- A tester and a member (TEC-2135) read as a deleted account: no
+        -- name or photo, and the thread is archived. Nothing is deleted.
+        (prospect.id IS NULL
+            OR is_tester_split_pair(%(person_id)s, prospect.id)) AS is_prospect_deleted,
+        (COALESCE(prospect.activated, FALSE)
+            AND NOT is_tester_split_pair(%(person_id)s, prospect.id)) AS is_prospect_activated,
         prospect.name AS name,
         prospect.personality AS personality,
         prospect.verification_level_id > 1 AS verified,
