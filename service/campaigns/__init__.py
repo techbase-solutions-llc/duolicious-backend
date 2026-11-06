@@ -42,10 +42,12 @@ TRANSACTIONAL_CAMPAIGNS = ('like', 'match', 'message',
 # Spotlight candidates goes to each member once ever
 # (emails/send_spotlight_candidates_note.py), so it neither waits behind E2
 # nor holds the next E2 back. The quick questions launch email (TEC-1845)
-# goes to each member once ever, in the same way.
+# goes to each member once ever, in the same way. So does the Spotlight
+# announcement to members with push off (TEC-2113,
+# emails/send_spotlight_announcement_push_off.py).
 SELF_CAPPED_CAMPAIGNS = ('likes_waiting', 'one_photo', 'profile_views',
                          'match_reminder', 'message_reminder', 'friend_joined',
-                         'referral', 'spotlight_note', 'questions_launch')
+                         'referral', 'spotlight_note', 'questions_launch', 'e1_push_off')
 
 _TRANSACTIONAL_SQL = ', '.join(f"'{c}'" for c in TRANSACTIONAL_CAMPAIGNS + SELF_CAPPED_CAMPAIGNS)
 

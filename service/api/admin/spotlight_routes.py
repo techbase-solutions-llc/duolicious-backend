@@ -63,6 +63,7 @@ from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enque
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
 from service.spotlight.growthposts import event_approval_slot
+from service.spotlight.prompts import collect_card_pushes
 from service.spotlight.restdays import next_valid_slot, slot_problem
 from service.spotlight.roundup import roundup_caption, roundup_snapshot
 from service.spotlight.storage import InvalidImage
@@ -257,9 +258,17 @@ _E5_SAVEPOINT = 'e5_enqueue'
 
 
 def _enqueue_card_ready(tx, person_id: int, request_key: str) -> Optional[int]:
-    """E4 for a card that has been drawn (TEC-2113), keyed `e4-drawn-<rk>`."""
+    """E4 for a card that has been drawn (TEC-2113), keyed `e4-drawn-<rk>`.
+    A new E4 brings the card push with it (TEC-2113, owner 5 Nov 2026) when
+    the caller collects card pushes (`collect_card_pushes`): it goes once the
+    transaction commits, if the member has push on. A push that cannot go
+    now is left for the Growth tab's card push row."""
     from emails.spotlight_card_ready import drawn_campaign_id, enqueue_card_ready
-    return enqueue_card_ready(tx, person_id, request_key, campaign_id=drawn_campaign_id(request_key))
+    from service.spotlight.prompts import queue_card_ready_push
+    oid = enqueue_card_ready(tx, person_id, request_key, campaign_id=drawn_campaign_id(request_key))
+    if oid is not None:
+        queue_card_ready_push(tx, request_key)
+    return oid
 
 
 # TEC-2113 (owner's ruling, 5 Nov 2026): "your card is ready" goes only once
@@ -1082,7 +1091,8 @@ def post_growth_queue_image(request_key: str):
     # then the answer says how far the set has got.
     progress: Optional[dict] = None
     try:
-        with api_tx() as tx:
+        # The card push that goes with a new E4 is sent once this commits.
+        with collect_card_pushes(), api_tx() as tx:
             attach = dict(key=key, url=url, sha=sha256)
             outcome = None
             if slide_count is not None:
@@ -1613,8 +1623,9 @@ def post_growth_spotlight_invite_pending():
         # One transaction per request (the brief's rule): the eligibility
         # re-check and the enqueue (or the cancellation) either both land or
         # neither does, and one ineligible or already-sent request never
-        # blocks the rest of the batch.
-        with api_tx() as tx:
+        # blocks the rest of the batch. A new E4's card push goes once its
+        # transaction commits.
+        with collect_card_pushes(), api_tx() as tx:
             ok, reason = eligibility(tx, r['subject_person_id'], exclude_request_key=rk)
             if not ok:
                 if reason in TERMINAL_INVITE_REASONS:

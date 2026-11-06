@@ -69,7 +69,7 @@ _WHERE = f"""
        AND NOT p.spotlight_opt_in
        AND p.last_online_time > NOW() - make_interval(days => {ONLINE_DAYS})
        AND EXISTS (SELECT 1 FROM email_send_log l
-                    WHERE l.person_id = p.id AND l.campaign = 'e1')
+                    WHERE l.person_id = p.id AND l.campaign IN ('e1', 'e1_push_off'))
        AND NOT EXISTS (SELECT 1 FROM email_send_log l
                         WHERE l.person_id = p.id AND l.campaign = %(c)s)
        AND NOT EXISTS (SELECT 1 FROM email_outbox ob
