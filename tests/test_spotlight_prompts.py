@@ -409,6 +409,24 @@ def test_with_its_switch_off_drawing_a_card_pushes_nobody(client, make_person, s
     assert len(_to(pushes, p['id'])) == 1
 
 
+def test_a_failing_card_push_never_rolls_the_render_back(client, make_person, switches, storage, pushes,
+                                                         monkeypatch):
+    """A failed query in the card push is held in its savepoint: the card
+    is still drawn and its email still queued."""
+    def broken(tx, campaign, campaign_id=None, **kw):
+        tx.execute("SELECT no_such_column FROM person LIMIT 1")
+    monkeypatch.setattr(prompts, 'audience', broken)
+    p = _eligible(make_person, 'CardPushFails')
+    switches(approvals_enabled='true', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    _draw(client, rk)
+    with api_tx('read committed') as tx:
+        assert current_revision(tx, rk)['asset_hash'] is not None
+        assert tx.execute("""SELECT 1 FROM email_outbox WHERE campaign = 'e4' AND campaign_id = %(c)s""",
+                          dict(c=f'e4-drawn-{rk}')).fetchone() is not None
+    assert _to(pushes, p['id']) == []
+
+
 def test_drawing_a_card_in_quiet_hours_pushes_nobody_yet(client, make_person, switches, storage, pushes,
                                                          monkeypatch):
     p = _eligible(make_person, 'CardQuiet')

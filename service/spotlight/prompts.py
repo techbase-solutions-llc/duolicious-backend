@@ -345,30 +345,39 @@ def queue_card_ready_push(tx, request_key: str) -> bool:
     pending = _PENDING.get()
     if pending is None:
         return False
-    now = _now()
-    if resting(now):
-        return False
-    rows = audience(tx, CARD, request_key=request_key)
-    if not rows or _quiet(rows[0], now):
-        return False
-    r = rows[0]
+    # Everything from here runs inside a savepoint. The email matters more
+    # than its push: nothing the push does, a failed query included, may
+    # roll back the render or the drain that queued the email.
     tx.execute('SAVEPOINT card_push')
     try:
-        if not _claim(tx, r['person_id'], CARD, r['log_id']):
-            tx.execute('RELEASE SAVEPOINT card_push')
-            return False
-        push = _build(tx, CARD, r)
-        if push is None:
-            raise ValueError('no_person')
+        item = _card_push_item(tx, request_key)
     except Exception:
-        # The email matters more than its push: never let the push roll the
-        # render or the drain back.
         tx.execute('ROLLBACK TO SAVEPOINT card_push')
         print(traceback.format_exc())
         return False
     tx.execute('RELEASE SAVEPOINT card_push')
-    pending.append(dict(person_id=r['person_id'], campaign=CARD, log_id=r['log_id'], push=push))
+    if item is None:
+        return False
+    pending.append(item)
     return True
+
+
+def _card_push_item(tx, request_key: str) -> Optional[dict]:
+    """Claim and build the card push for this request, or None when it is
+    not to go now. Raises to the savepoint in queue_card_ready_push."""
+    now = _now()
+    if resting(now):
+        return None
+    rows = audience(tx, CARD, request_key=request_key)
+    if not rows or _quiet(rows[0], now):
+        return None
+    r = rows[0]
+    if not _claim(tx, r['person_id'], CARD, r['log_id']):
+        return None
+    push = _build(tx, CARD, r)
+    if push is None:
+        raise ValueError('no_person')
+    return dict(person_id=r['person_id'], campaign=CARD, log_id=r['log_id'], push=push)
 
 
 # ---------------------------------------------------------------------------
