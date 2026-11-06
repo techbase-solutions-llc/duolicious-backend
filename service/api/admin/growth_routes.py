@@ -259,19 +259,20 @@ def get_admin_growth_emails(s: t.SessionInfo):
 def post_admin_growth_email_preview(s: t.SessionInfo, campaign: str):
     require_admin(s)
     _known(campaign)
-    to = (request.get_json(silent=True) or {}).get('to') or abort(400)
-    if not isinstance(to, str) or not _EMAIL_RE.match(to):
-        abort(400)
     if campaign in _PUSH_CAMPAIGNS:
-        # A push row's preview goes to the devices of the member with this
-        # address (the admin's own), and is audited like an email preview.
-        why_not = spotlight_prompts.preview(campaign, to)
+        # A push row's preview goes to the signed-in admin's own devices,
+        # whatever address the request names, and is audited like an email
+        # preview.
+        why_not = spotlight_prompts.preview(campaign, s.person_id)
         with api_tx() as tx:
-            record_audit(tx, s, 'growth.email.preview', target_email=to,
+            record_audit(tx, s, 'growth.email.preview',
                          metadata=dict(campaign=campaign, channel='push', delivered=why_not is None))
         if why_not is not None:
             return dict(error=why_not), 409
         return dict(ok=True)
+    to = (request.get_json(silent=True) or {}).get('to') or abort(400)
+    if not isinstance(to, str) or not _EMAIL_RE.match(to):
+        abort(400)
     mod = _CAMPAIGNS[campaign]
     preview_row = getattr(mod, 'preview_row', None)
     row = preview_row(to) if preview_row else dict(person_id=0, email=to, name='Preview')

@@ -292,22 +292,20 @@ def run(campaign: str, campaign_id: str, *, send: bool, cap: int = PUSH_CAP,
     return res
 
 
-def preview(campaign: str, to_email: str) -> Optional[str]:
-    """Push the sample to the member with this address (the admin pressing
-    Preview). Nothing is logged. None when it went, else why not."""
+def preview(campaign: str, person_id: int) -> Optional[str]:
+    """Push the sample to the signed-in admin's own devices (`person_id` is
+    the session's, never an address from the request). Nothing is logged.
+    None when it went, else why not."""
     from database import api_tx
     if campaign not in CAMPAIGNS:
         raise KeyError(campaign)
     with api_tx('read committed') as tx:
         row = tx.execute(
-            """SELECT p.id FROM person p
-                WHERE lower(p.email) = lower(%(e)s) AND p.activated
-                  AND EXISTS (SELECT 1 FROM push_subscription ps WHERE ps.person_id = p.id)""",
-            dict(e=to_email.strip())).fetchone()
+            "SELECT 1 FROM push_subscription WHERE person_id = %(p)s LIMIT 1", dict(p=person_id)).fetchone()
     if row is None:
         return 'no_push_subscription'
     push = opt_in_push() if campaign == OPT_IN else card_push('/')
-    return None if _push_one(row['id'], push, f'{campaign}_preview') else 'not_delivered'
+    return None if _push_one(person_id, push, f'{campaign}_preview') else 'not_delivered'
 
 
 # ---------------------------------------------------------------------------

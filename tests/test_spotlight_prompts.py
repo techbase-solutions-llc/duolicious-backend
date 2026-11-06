@@ -531,9 +531,11 @@ def test_the_send_button_runs_the_push_and_audits_it(client, admin, make_person,
     assert any(r['campaign_id'] == cid for r in runs['runs'])
 
 
-def test_preview_pushes_the_admin_only(client, admin, pushes):
+def test_preview_pushes_the_admin_only(client, admin, make_person, pushes):
+    """Whatever address the request names: the session decides."""
+    other = _member(make_person, 'PreviewOther')
     r = client.post('/admin/growth/emails/spotlight_push/preview', headers=admin['headers'],
-                    json=dict(to=admin['email']))
+                    json=dict(to=_email(other['id'])))
     assert r.status_code == 200, r.get_json()
     assert [s['person_id'] for s in pushes] == [admin['id']]
     assert pushes[0]['title'] == 'Be featured on Ahavah'
@@ -542,9 +544,13 @@ def test_preview_pushes_the_admin_only(client, admin, pushes):
                           dict(p=admin['id'])).fetchone()['n'] == 0
 
 
-def test_preview_to_someone_without_push_says_so(client, admin, make_person, pushes):
+def test_preview_to_an_admin_without_push_says_so(client, make_person, pushes):
     p = _member(make_person, 'PreviewNoPush', push=False)
-    r = client.post('/admin/growth/emails/card_push/preview', headers=admin['headers'], json=dict(to=_email(p['id'])))
+    with api_tx() as tx:
+        email = tx.execute("UPDATE person SET roles = ARRAY['admin']::TEXT[] WHERE id = %(i)s RETURNING email",
+                           dict(i=p['id'])).fetchone()['email']
+    r = client.post('/admin/growth/emails/card_push/preview', headers=_bearer(p['id'], email),
+                    json=dict(to=email))
     assert r.status_code == 409 and r.get_json()['error'] == 'no_push_subscription'
     assert pushes == []
 
