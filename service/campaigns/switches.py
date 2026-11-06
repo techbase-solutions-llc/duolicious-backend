@@ -136,6 +136,9 @@ SWITCHES = {
     # preference (admin_alert_pref) turns it off.
     'admin_alerts_cron': 'AHAVAH_ADMIN_ALERTS_CRON_ENABLED',
     'stale_post_alert': 'AHAVAH_STALE_POST_ALERT_ENABLED',
+    # Support messages open for more than 24 hours, a line in the same daily
+    # email (TEC-2115). Off until the owner has seen its proof.
+    'support_alert': 'AHAVAH_SUPPORT_ALERT_ENABLED',
     # The note to a member whose photo the NSFW cron rejected (TEC-1845
     # admin audit): the same "About one of your photos" an admin's Take
     # down sends, queued through the outbox by the cron. Off until the

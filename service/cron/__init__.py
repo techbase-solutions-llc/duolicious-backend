@@ -133,8 +133,9 @@ async def main():
 
         # Owner alerts (TEC-1897): the daily stale-post email, and the error
         # tally and online days kept to 30 and 120 days. Hourly. Does
-        # nothing unless AHAVAH_ADMIN_ALERTS_CRON_ENABLED=1; the email also
-        # needs AHAVAH_STALE_POST_ALERT_ENABLED=1.
+        # nothing unless AHAVAH_ADMIN_ALERTS_CRON_ENABLED=1; the email lists
+        # posts only with AHAVAH_STALE_POST_ALERT_ENABLED=1 and support
+        # messages (TEC-2115) only with AHAVAH_SUPPORT_ALERT_ENABLED=1.
         admin_alerts_forever(),
 
         # The send guard (send safeguards plan, 2 Nov 2026): moves what

@@ -527,3 +527,15 @@ add('STAFF_stale_posts', 'emails/admin_alerts.py stale_posts_email', 'staff',
     'DARK, STAFF: the adminalerts cron to the owner, daily after 07:00 Barbados, while '
     'AHAVAH_ADMIN_ALERTS_CRON_ENABLED and AHAVAH_STALE_POST_ALERT_ENABLED are on (TEC-1897)',
     _stale_posts)
+
+
+def _support_alert():
+    from emails import admin_alerts
+    return admin_alerts.preview_support(admin_alerts.OWNER_TO)
+
+
+add('STAFF_support_alert', 'emails/admin_alerts.py daily_email', 'staff',
+    'DARK, STAFF: the same daily alert with no post waiting and support messages open more '
+    'than 24 hours, while AHAVAH_ADMIN_ALERTS_CRON_ENABLED and AHAVAH_SUPPORT_ALERT_ENABLED '
+    'are on (TEC-2115)',
+    _support_alert)

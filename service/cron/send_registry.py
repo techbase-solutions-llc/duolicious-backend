@@ -26,7 +26,7 @@ largest each may be.
 SENDING_CRONS = {
     'service.cron.adminalerts': {
         'channel': 'email', 'dedupe': 'admin_alert_log (alert, alert_key)',
-        'switch': ('admin_alerts_cron', 'stale_post_alert'),
+        'switch': ('admin_alerts_cron', 'stale_post_alert', 'support_alert'),
         'note': 'owner only; sends straight through the mailer'},
     'service.cron.autodeactivate2': {
         'channel': 'email', 'dedupe': None, 'switch': None,

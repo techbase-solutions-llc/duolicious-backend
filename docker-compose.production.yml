@@ -190,6 +190,7 @@ services:
       # the api reads them to show whether they are on.
       AHAVAH_ADMIN_ALERTS_CRON_ENABLED: ${AHAVAH_ADMIN_ALERTS_CRON_ENABLED:-0}
       AHAVAH_STALE_POST_ALERT_ENABLED: ${AHAVAH_STALE_POST_ALERT_ENABLED:-0}
+      AHAVAH_SUPPORT_ALERT_ENABLED: ${AHAVAH_SUPPORT_ALERT_ENABLED:-0}
       # The note to a member whose photo the NSFW cron rejected (TEC-1845
       # admin audit). Off until the owner decides to announce them.
       AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED: ${AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED:-0}
@@ -498,6 +499,7 @@ services:
       # post email. Off until the owner has seen the proof.
       AHAVAH_ADMIN_ALERTS_CRON_ENABLED: ${AHAVAH_ADMIN_ALERTS_CRON_ENABLED:-0}
       AHAVAH_STALE_POST_ALERT_ENABLED: ${AHAVAH_STALE_POST_ALERT_ENABLED:-0}
+      AHAVAH_SUPPORT_ALERT_ENABLED: ${AHAVAH_SUPPORT_ALERT_ENABLED:-0}
       # The note to a member whose photo the NSFW cron rejected (TEC-1845
       # admin audit). Off until the owner decides to announce them.
       AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED: ${AHAVAH_AUTO_PHOTO_REMOVED_EMAIL_ENABLED:-0}

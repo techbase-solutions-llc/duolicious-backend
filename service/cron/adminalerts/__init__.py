@@ -8,6 +8,11 @@ owner has seen its proof:
 
   * stale_post_alert: once per Barbados day, at or after 07:00, while a post
     has been in review for more than 24 hours (frame G.8).
+  * support_alert (TEC-2115): a line in the same daily email while a
+    support message has been open for more than 24 hours, the count only.
+    With no post waiting it is the whole email, as a lone post line is.
+    The two share the day's one log row, so the owner gets at most one
+    alert email a day.
 
 There is no report alert here: the report email antiabuse/lodgereport sends
 to DUO_REPORT_EMAIL is the report alert, and the owner's "Email me when a
@@ -52,6 +57,13 @@ _Q_STALE = """
      ORDER BY min(created_at)
 """
 
+_Q_SUPPORT = """
+    SELECT count(*)::int AS n
+      FROM support_message
+     WHERE status = 'open'
+       AND received_at < NOW() - make_interval(hours => %(h)s)
+"""
+
 _Q_LOG = """
     INSERT INTO admin_alert_log (alert, alert_key) VALUES (%(a)s, %(k)s)
     ON CONFLICT DO NOTHING RETURNING alert
@@ -75,20 +87,30 @@ def stale_posts(tx) -> list[dict]:
     return out
 
 
-def queue_stale(tx, now: datetime):
-    """The posts to send, after writing the day's log row, or None."""
-    if not enabled('stale_post_alert'):
+def open_support(tx) -> int:
+    return tx.execute(_Q_SUPPORT, dict(h=STALE_HOURS)).fetchone()['n']
+
+
+def queue_daily(tx, now: datetime):
+    """(posts, support messages) to send, after writing the day's log row,
+    or None. Each part counts only while its switch is on. The log row keeps
+    the name 'stale_posts' it had before support joined the email, so the
+    day of the deploy cannot send a second alert."""
+    want_posts, want_support = enabled('stale_post_alert'), enabled('support_alert')
+    if not (want_posts or want_support):
         return None
     local = now.astimezone(BARBADOS)
     if local.hour < SEND_HOUR:
         return None
-    posts = stale_posts(tx)
-    if not posts:
+    posts = stale_posts(tx) if want_posts else []
+    support = open_support(tx) if want_support else 0
+    if not posts and not support:
         return None
     if tx.execute(_Q_LOG, dict(a='stale_posts', k=local.date().isoformat())).fetchone() is None:
         return None
-    record_system_audit(tx, 'cron', 'admin_alert.sent', dict(alert='stale_posts', posts=len(posts)))
-    return posts
+    record_system_audit(tx, 'cron', 'admin_alert.sent',
+                        dict(alert='stale_posts', posts=len(posts), support=support))
+    return posts, support
 
 
 def prune(tx) -> None:
@@ -108,16 +130,17 @@ def tick(now: datetime | None = None) -> dict:
     out: dict = {}
     try:
         with api_tx() as tx:
-            posts = queue_stale(tx, now)
-        out['stale_posts'] = len(posts) if posts else 0
-        if posts:
+            daily = queue_daily(tx, now)
+        posts, support = daily or ([], 0)
+        out['stale_posts'], out['support'] = len(posts), support
+        if daily:
             try:
-                _send(*admin_alerts.stale_posts_email(posts, now))
+                _send(*admin_alerts.daily_email(posts, support, now))
             except Exception:
-                print(f'admin_alerts: stale_posts not sent ({traceback.format_exc()})')
+                print(f'admin_alerts: daily alert not sent ({traceback.format_exc()})')
     except Exception:
         print(traceback.format_exc())
-        out['stale_posts'] = 'error'
+        out['stale_posts'] = out['support'] = 'error'
     try:
         with api_tx() as tx:
             prune(tx)

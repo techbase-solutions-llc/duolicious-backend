@@ -13,6 +13,7 @@ from service.campaigns.switches import SWITCHES, enabled
 NEW = {
     'stale_post_alert': 'AHAVAH_STALE_POST_ALERT_ENABLED',
     'admin_alerts_cron': 'AHAVAH_ADMIN_ALERTS_CRON_ENABLED',
+    'support_alert': 'AHAVAH_SUPPORT_ALERT_ENABLED',
 }
 
 
