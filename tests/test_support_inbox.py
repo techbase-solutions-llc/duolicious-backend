@@ -1020,6 +1020,11 @@ def test_control_characters_never_reach_the_database(inbox):
     assert row['body_text'] == 'Line one\nLine two'
 
 
+def test_carriage_return_line_endings_keep_their_line_breaks():
+    assert support_inbox.body_text({'text': 'Line one\rLine two'}) == 'Line one\nLine two'
+    assert support_inbox.body_text({'text': 'Line one\r\nLine two'}) == 'Line one\nLine two'
+
+
 def test_any_other_resend_error_still_fails_the_pass(inbox):
     first, later = inbox.ids(2)
     client = FakeResend([inbox.mail(first)])

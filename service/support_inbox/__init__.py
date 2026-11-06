@@ -337,7 +337,9 @@ def addressed_to(item: dict, targets: frozenset) -> bool:
 
 
 # Control characters but tab and newline; header-derived text keeps none.
-_CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
+# Tab (\x09), newline (\x0a) and carriage return (\x0d) are kept: clean_text
+# turns every line ending, CR-only included, into \n.
+_CONTROLS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 _ALL_CONTROLS = re.compile(r'[\x00-\x1f\x7f]')
 
 
