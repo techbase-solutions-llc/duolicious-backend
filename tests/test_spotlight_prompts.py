@@ -72,12 +72,17 @@ def _logged(campaign, person_id):
             dict(c=campaign, p=person_id)).fetchall()]
 
 
+class _Sent(list):
+    """The pushes handed to the sender, and how many devices each reaches."""
+    devices = {'n': 1}
+
+
 @pytest.fixture
 def pushes(monkeypatch):
     """Every push the code hands the sender, delivered at once (no thread),
     each reaching one device unless the test says otherwise."""
-    sent = []
-    devices = {'n': 1}
+    sent = _Sent()
+    sent.devices = devices = {'n': 1}
 
     def fake(person_id, payload, kind):
         sent.append(dict(person_id=person_id, kind=kind, **payload))
@@ -87,7 +92,6 @@ def pushes(monkeypatch):
     monkeypatch.setattr(prompts, '_deliver_later', prompts._deliver)
     monkeypatch.setattr(prompts, '_now', lambda: NOON)
     monkeypatch.setattr(prompts, 'resting', lambda now: False)
-    sent.devices = devices  # type: ignore[attr-defined]
     return sent
 
 
@@ -110,10 +114,11 @@ def test_the_push_audience_is_members_with_push_on_who_have_not_opted_in(make_pe
     unsub = _member(make_person, 'PushUnsub')
     suppressed = make_person(name='PushSuppressed')   # the fixture's @example.com address
     nopush = _member(make_person, 'PushNone', push=False)
+    unsub_email = _email(unsub['id'])   # its own transaction: api_tx is never nested
     with api_tx() as tx:
         tx.execute("""INSERT INTO push_subscription (person_id, endpoint, p256dh, auth)
                       VALUES (%(i)s, 'https://push.test/s' || %(i)s::text, 'k', 'a')""", dict(i=suppressed['id']))
-        assert stamp_unsubscribed(tx, 'campaigns', _email(unsub['id']))
+        assert stamp_unsubscribed(tx, 'campaigns', unsub_email)
     _set(admin['id'], "roles = ARRAY['admin']::text[]")
     _set(mod['id'], "roles = ARRAY['mod']::text[]")
     _set(deleted['id'], "deletion_requested_at = NOW()")
@@ -148,8 +153,9 @@ def test_the_push_off_email_leaves_out_staff_opted_in_unsubscribed_and_the_alrea
     sent = _member(make_person, 'MailSent', push=False)
     _set(mod['id'], "roles = ARRAY['mod']::text[]")
     _set(deleted['id'], "deletion_requested_at = NOW()")
+    unsub_email = _email(unsub['id'])   # its own transaction: api_tx is never nested
     with api_tx() as tx:
-        assert stamp_unsubscribed(tx, 'campaigns', _email(unsub['id']))
+        assert stamp_unsubscribed(tx, 'campaigns', unsub_email)
         log_send(tx, sent['id'], e1np.CAMPAIGN, 'cmp_2026w45_e1_push_off', 'mid')
 
     rows = e1np.recipients()
