@@ -57,13 +57,12 @@ from service.spotlight.queue import (CALENDAR_HELD_KINDS, CAPTION_MAX, TEMPLATE_
                                      SETTING_KEYS, FREE_KEYS)
 from service.spotlight.assets import asset_key, attach_platform_image, attach_slide, complete_render_if_ready
 from service.spotlight.country import display_country
-from service.spotlight import cleanup
+from service.spotlight import cleanup, redraw
 from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enqueue_asset_delete,
                                        is_referenced, outstanding_jobs, overdue_removals)
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
 from service.spotlight.growthposts import event_approval_slot
-from service.spotlight import redraw
 from service.spotlight.restdays import next_valid_slot, slot_problem
 from service.spotlight.roundup import roundup_caption, roundup_snapshot
 from service.spotlight.storage import InvalidImage
