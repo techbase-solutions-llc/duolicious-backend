@@ -180,6 +180,9 @@ def test_the_push_off_email_is_e1_with_its_own_counted_link(make_person):
         kinds = {r['kind'] for r in tx.execute(
             "SELECT kind FROM campaign_link WHERE subject_person_id = %(p)s", dict(p=p['id'])).fetchall()}
     assert kinds == {e1np.CAMPAIGN}
+    # A bulk kind to the send guard, like E1: one per address a day.
+    from smtp.guard import BULK_KINDS
+    assert e1np.CAMPAIGN in BULK_KINDS
 
 
 def test_the_push_off_email_counts_as_e1_for_the_resend(make_person):
