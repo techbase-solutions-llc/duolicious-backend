@@ -1567,3 +1567,25 @@ def support_messages_schema(unfinished_signup_schema):
     for name in (SUPPORT_MESSAGES_MIGRATION, SUPPORT_MESSAGES_RESEND_MIGRATION):
         with api_tx() as tx:
             tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Tester isolation (6 Nov 2026, TEC-2135)
+# ---------------------------------------------------------------------------
+# Migration 0095: is_tester_split_pair, and is_blocked_pair and
+# is_deck_suppressed redefined to include it. Idempotent, as the deploy needs.
+# Autouse, after 0070 (which redefines both functions without it) and after
+# 0094, as the deploy applies them.
+
+TESTER_ISOLATION_MIGRATION = '0095_tester_isolation.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def tester_isolation_schema(unmatch_schema, support_messages_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / TESTER_ISOLATION_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

@@ -22,6 +22,7 @@ _WAITING = f"""
 #   has_premium      — person.entitlements contains 'premium'
 #   role_admin       — 'admin' = ANY(person.roles)
 #   role_mod         — 'mod' = ANY(person.roles)
+#   role_tester      — 'tester' = ANY(person.roles) (TEC-2135)
 #   has_likes_waiting: likes nobody has answered (TEC-1897)
 #
 # Search q: ILIKE prefix match against email / person.name / person.uuid::text.
@@ -67,6 +68,7 @@ Q_USERS_LIST = f"""
        AND (NOT %(has_premium)s OR 'premium' = ANY(entitlements))
        AND (NOT %(role_admin)s OR 'admin' = ANY(roles))
        AND (NOT %(role_mod)s OR 'mod' = ANY(roles))
+       AND (NOT %(role_tester)s OR 'tester' = ANY(roles))
        AND (NOT %(has_likes_waiting)s OR likes_waiting > 0)
      ORDER BY joined_at DESC NULLS LAST, email
      LIMIT %(limit)s OFFSET %(offset)s
@@ -105,6 +107,7 @@ Q_USERS_COUNT = f"""
        AND (NOT %(has_premium)s OR 'premium' = ANY(entitlements))
        AND (NOT %(role_admin)s OR 'admin' = ANY(roles))
        AND (NOT %(role_mod)s OR 'mod' = ANY(roles))
+       AND (NOT %(role_tester)s OR 'tester' = ANY(roles))
        AND (NOT %(has_likes_waiting)s OR likes_waiting > 0)
 """
 

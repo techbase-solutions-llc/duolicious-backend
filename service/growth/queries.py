@@ -16,8 +16,12 @@ from service.spotlight.country import display_country
 EXCLUDED_EMAILS = ('admin@ahavah.app', 'admin@techbaseltd.com')
 
 def _excluded() -> list[str]:
+    """Addresses left out of campaign email and member-facing counts: the
+    staff accounts above, AHAVAH_TEST_ACCOUNT_EMAILS, and every tester
+    (TEC-2135, service/testers.py)."""
+    from service.testers import tester_emails
     extra = [e.strip().lower() for e in os.environ.get('AHAVAH_TEST_ACCOUNT_EMAILS', '').split(',') if e.strip()]
-    return [*EXCLUDED_EMAILS, *extra]
+    return [*EXCLUDED_EMAILS, *extra, *tester_emails()]
 
 def _last_action_sql(person_ref: str) -> str:
     """The GREATEST(...) fragment for a person's most recent like, pass or

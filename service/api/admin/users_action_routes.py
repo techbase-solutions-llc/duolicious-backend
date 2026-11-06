@@ -299,7 +299,8 @@ def _other_admins(tx, person_id: int) -> int:
 def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
     require_admin(s)
     require_uuid(uuid)
-    allowed = {'admin', 'mod'}
+    # 'tester' keeps a test account apart from members (TEC-2135).
+    allowed = {'admin', 'mod', 'tester'}
     add = [r for r in req.add if r in allowed]
     remove = [r for r in req.remove if r in allowed]
     # Two admins removing each other at once: the second fails to serialize
@@ -331,6 +332,9 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
             )
     except psycopg.errors.SerializationFailure:
         return dict(error='conflict'), 409
+    if 'tester' in add or 'tester' in remove:
+        from service.testers import forget_tester_emails
+        forget_tester_emails()
     return {'ok': True, 'roles': list(updated['roles'])}
 
 

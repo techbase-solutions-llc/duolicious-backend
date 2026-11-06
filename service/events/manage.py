@@ -16,6 +16,7 @@ import psycopg
 
 from service.events import EventError
 from service.events import fields as f
+from service.testers import tester_sql
 
 # The fields an organiser sets, in the order the draft has them.
 DRAFT_FIELDS = ('title', 'starts_at', 'ends_at', 'tz', 'tz_label', 'mode', 'city', 'country',
@@ -301,18 +302,32 @@ def organiser_view(tx, organiser: dict, now: Optional[datetime] = None) -> dict:
     return dict(organiser=me(organiser), groups=groups)
 
 
+def guest_shown_sql(guest: str, organiser_member: str) -> str:
+    """SQL boolean: the RSVP row aliased `guest` is on the organiser's side
+    of the tester line (TEC-2135). A guest with no account always shows.
+    An organiser with a member account sees the guests that account could
+    see; one with none is a member, so sees no testers."""
+    return f"""({guest}.person_id IS NULL OR CASE
+          WHEN {organiser_member} IS NULL
+          THEN NOT EXISTS (SELECT 1 FROM person gp
+                            WHERE gp.id = {guest}.person_id AND {tester_sql('gp')})
+          ELSE NOT is_tester_split_pair({organiser_member}, {guest}.person_id)
+      END)"""
+
+
 def rsvp_list(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> dict:
     """Names and party sizes (export 4.23); an email only where the guest
     ticked "share my email with the organiser"."""
     now = _now(now)
     event = _event(tx, organiser, slug)
     rows = tx.execute(
-        """SELECT id, name, email, party_size, confirmed_at, attended_at,
-                  share_email_with_organiser AS share
-             FROM event_rsvp
-            WHERE event_id = %(e)s AND status = 'going' AND erased_at IS NULL
-            ORDER BY created_at, id""",
-        dict(e=event['id'])).fetchall()
+        f"""SELECT id, name, email, party_size, confirmed_at, attended_at,
+                   share_email_with_organiser AS share
+              FROM event_rsvp g
+             WHERE event_id = %(e)s AND status = 'going' AND erased_at IS NULL
+               AND {guest_shown_sql('g', '%(m)s::int')}
+             ORDER BY created_at, id""",
+        dict(e=event['id'], m=organiser.get('member_person_id'))).fetchall()
     going, waiting = [], []
     for r in rows:
         if r['confirmed_at'] is None:

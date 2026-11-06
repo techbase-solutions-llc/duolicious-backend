@@ -18,6 +18,17 @@ FROM
     inbox
 WHERE
     luser = %(username)s
+AND
+    -- A thread between a tester and a member is hidden from both, never
+    -- deleted (TEC-2135). remote_bare_jid is uuid@domain.
+    NOT EXISTS (
+        SELECT 1
+        FROM person me
+        JOIN person peer
+          ON peer.uuid = uuid_or_null(split_part(inbox.remote_bare_jid, '@', 1))
+        WHERE me.uuid = uuid_or_null(inbox.luser)
+          AND is_tester_split_pair(me.id, peer.id)
+    )
 ORDER BY
     timestamp
 """

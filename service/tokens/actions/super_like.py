@@ -29,8 +29,10 @@ class NotAvailable(Exception):
     debit, so nothing is charged; the route answers 404."""
 
 
+# An unmatched pair, or a tester and a member (TEC-2135): neither reaches
+# the other, and nothing is charged.
 _Q_UNMATCHED = """
-  SELECT is_unmatched_pair(%(a)s, %(b)s) AS unmatched
+  SELECT is_unmatched_pair(%(a)s, %(b)s) OR is_tester_split_pair(%(a)s, %(b)s) AS unmatched
 """
 
 

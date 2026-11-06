@@ -444,6 +444,9 @@ WHERE sc.searcher_person_id = %(searcher_person_id)s
   -- rebuild would apply these anyway; this just stops waiting for the rebuild).
   AND p.activated
   AND NOT p.hide_me_from_strangers
+  -- A role granted after the card was cached (TEC-2135): a tester and a
+  -- member never see each other, cache or no cache.
+  AND NOT is_tester_split_pair(%(searcher_person_id)s, p.id)
 ORDER BY sc.position
 LIMIT %(n)s OFFSET %(o)s
 """

@@ -449,7 +449,7 @@ class PostTokenAdjust(BaseModel):
 
 
 class PatchRoles(BaseModel):
-    """Admin PATCH /admin/users/:uuid/roles body. Only 'admin'/'mod' are accepted."""
+    """Admin PATCH /admin/users/:uuid/roles body. Only 'admin', 'mod' and 'tester' are accepted."""
     add: list[str] = Field(default_factory=list)
     remove: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1, max_length=512)

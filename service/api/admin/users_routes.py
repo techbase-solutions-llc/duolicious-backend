@@ -30,7 +30,7 @@ _PAGE_SIZE = 20
 
 _FILTER_KEYS = (
     'has_person', 'waitlist_only', 'beta_only',
-    'unsubscribed', 'has_premium', 'role_admin', 'role_mod',
+    'unsubscribed', 'has_premium', 'role_admin', 'role_mod', 'role_tester',
     'has_likes_waiting',
 )
 

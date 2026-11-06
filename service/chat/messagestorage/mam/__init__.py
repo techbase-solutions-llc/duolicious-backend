@@ -80,6 +80,14 @@ WITH page AS (
     AND (
         mam_message.id < %(before_id)s OR %(before_id)s IS NULL
     )
+    AND
+        -- No history between a tester and a member (TEC-2135).
+        NOT EXISTS (
+            SELECT 1
+            FROM person peer
+            WHERE peer.uuid = uuid_or_null(split_part(%(to_username)s, '@', 1))
+              AND is_tester_split_pair(person.id, peer.id)
+        )
     ORDER BY
         mam_message.id DESC
     LIMIT

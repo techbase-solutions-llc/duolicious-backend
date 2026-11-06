@@ -105,6 +105,9 @@ WITH new_like AS (
         -- An unmatch is for good (TEC-1845, migration 0070). Both likes
         -- outlive it, so without this the next like would match them again.
         NOT is_unmatched_pair(%(me_id)s, person.id)
+    AND
+        -- A tester and a member never reach each other (TEC-2135).
+        NOT is_tester_split_pair(%(me_id)s, person.id)
     ON CONFLICT DO NOTHING
     RETURNING liker_id, liked_id
 ), prospect AS (
@@ -112,6 +115,7 @@ WITH new_like AS (
     WHERE uuid = uuid_or_null(%(prospect_uuid)s)
       AND id <> %(me_id)s
       AND NOT is_unmatched_pair(%(me_id)s, id)
+      AND NOT is_tester_split_pair(%(me_id)s, id)
 ), reciprocal AS (
     -- Derived from CURRENT state, not from whether new_like won.
     SELECT 1 FROM liked rev, prospect p

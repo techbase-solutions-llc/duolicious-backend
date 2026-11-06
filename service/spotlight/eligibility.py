@@ -5,10 +5,13 @@ the only member card ever published was a welcome for an admin-role
 account. `staff` is the member predicate of service/admin/queries/members.py
 read the other way round, so every caller (the candidate list, the
 suggestions, card creation, the publish-time check and the roundup) leaves
-them out with no rule of its own."""
+them out with no rule of its own. A tester (TEC-2135) fails the same rule:
+test accounts are never featured, never in a roundup or member of the
+week."""
 from __future__ import annotations
 from typing import Optional
 from service.admin.queries.members import member_sql
+from service.testers import tester_sql
 from service.config import USER_IMAGES_BASE_URL
 
 REASONS = ('not_activated', 'staff', 'not_opted_in', 'not_verified', 'under_18', 'reported',
@@ -21,7 +24,7 @@ def _columns(a: str, xrk: str) -> dict[str, str]:
     and `featurable_sql` cannot drift apart."""
     return {
         'activated': f"{a}.activated",
-        'staff': f"NOT ({member_sql(a)})",
+        'staff': f"(NOT ({member_sql(a)}) OR {tester_sql(a)})",
         'spotlight_opt_in': f"{a}.spotlight_opt_in",
         'verified': (f"({a}.ahavah_verification_tier IS NOT NULL"
                      f" AND {a}.ahavah_verification_tier::text <> 'none')"),
