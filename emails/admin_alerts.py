@@ -17,6 +17,13 @@ approval", "Roundup, week 41, 4 members. In review since 5 Oct.", "Brand
 post. In review since 12 Oct.", "Admin alert · 14 Oct, 07:00 Barbados",
 "Open the queue", "Sent once a day while a post has waited more than 24
 hours."
+
+Support messages (TEC-2115) join the same daily email behind their own
+switch, support_alert: "1 support message has had no answer for more than
+24 hours", "N support messages have had no answer for more than 24 hours",
+"Open support", "Sent once a day while a support message has waited more
+than 24 hours.", "Sent once a day while a post or a support message has
+waited more than 24 hours." A count only, never a subject, body or address.
 """
 from __future__ import annotations
 
@@ -64,24 +71,57 @@ def post_line(post: dict) -> str:
     return f"{KIND_LABELS.get(post['kind'], 'Post')}. In review since {since}."
 
 
-def _email(now: datetime, heading: str, lines: list[str], label: str, url: str, footer: str) -> str:
+def _list(lines: list[str]) -> str:
     items = ''.join(
         f'<li style="margin:0 0 8px;">{_html.escape(line)}</li>' for line in lines)
+    return (f'<ul class="e-text" style="margin:0 0 20px;padding-left:18px;font-family:{SANS};'
+            f'font-size:15px;line-height:1.5;color:{INK_SOFT};">{items}</ul>')
+
+
+def _email(now: datetime, heading: str, sections: list[str], footer: str) -> str:
     body = f"""
 {chip(_html.escape(_stamp(now)))}
 <p class="e-text" style="margin:18px 0 12px;font-family:{SANS};font-size:20px;line-height:1.35;font-weight:800;color:{INK};">{_html.escape(heading)}</p>
-<ul class="e-text" style="margin:0 0 20px;padding-left:18px;font-family:{SANS};font-size:15px;line-height:1.5;color:{INK_SOFT};">{items}</ul>
-{button(label, url)}
+{'<div style="height:20px;"></div>'.join(sections)}
 """
     return render(title=heading, preheader=heading, body_html=body, footer_html=_html.escape(footer))
 
 
+def support_line(n: int) -> str:
+    """Support messages open for more than 24 hours (TEC-2115). A count
+    only: a support message is member content, so no subject, body or
+    address is ever named here."""
+    if n == 1:
+        return '1 support message has had no answer for more than 24 hours'
+    return f'{n} support messages have had no answer for more than 24 hours'
+
+
+def daily_email(posts: list[dict], support: int, now: datetime) -> tuple[str, str]:
+    """The owner's daily alert: the posts waiting for approval, then the
+    support line when a message has waited more than 24 hours. Either alone
+    is the whole email; zero support messages add nothing."""
+    sections = []
+    if posts:
+        n = len(posts)
+        heading = '1 post is waiting for approval' if n == 1 else f'{n} posts are waiting for approval'
+        sections.append(_list([post_line(p) for p in posts])
+                        + button('Open the queue', f'{ADMIN_URL}/?tab=growth'))
+    else:
+        heading = support_line(support)
+    if support:
+        line = _list([support_line(support)]) if posts else ''
+        sections.append(line + button('Open support', f'{ADMIN_URL}/?tab=support'))
+    if posts and support:
+        footer = 'Sent once a day while a post or a support message has waited more than 24 hours.'
+    elif posts:
+        footer = 'Sent once a day while a post has waited more than 24 hours.'
+    else:
+        footer = 'Sent once a day while a support message has waited more than 24 hours.'
+    return heading, _email(now, heading, sections, footer)
+
+
 def stale_posts_email(posts: list[dict], now: datetime) -> tuple[str, str]:
-    n = len(posts)
-    heading = '1 post is waiting for approval' if n == 1 else f'{n} posts are waiting for approval'
-    return heading, _email(now, heading, [post_line(p) for p in posts], 'Open the queue',
-                           f'{ADMIN_URL}/?tab=growth',
-                           'Sent once a day while a post has waited more than 24 hours.')
+    return daily_email(posts, 0, now)
 
 
 def preview_stale(to: str) -> tuple[str, str]:
@@ -92,3 +132,8 @@ def preview_stale(to: str) -> tuple[str, str]:
         dict(kind='roundup', week=42, members=2, in_review_since=datetime(2026, 10, 12, 15, tzinfo=timezone.utc)),
     ]
     return stale_posts_email(posts, now)
+
+
+def preview_support(to: str) -> tuple[str, str]:
+    from datetime import timezone
+    return daily_email([], 2, datetime(2026, 10, 14, 11, 0, tzinfo=timezone.utc))

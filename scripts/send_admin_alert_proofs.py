@@ -1,5 +1,5 @@
-"""Send the owner one proof of the stale-post alert (TEC-1897), before its
-switch is turned on.
+"""Send the owner a proof of the stale-post alert (TEC-1897) and of the
+support line (TEC-2115), before their switches are turned on.
 
     python -m scripts.send_admin_alert_proofs            # DRY RUN
     python -m scripts.send_admin_alert_proofs --send     # send the proof
@@ -25,6 +25,7 @@ def plan() -> list[dict]:
     from emails import admin_alerts
     builders = [
         ('stale_post_alert', 'Posts waiting for approval (G.8)', admin_alerts.preview_stale),
+        ('support_alert', 'Support messages with no answer (TEC-2115)', admin_alerts.preview_support),
     ]
     out = []
     for name, label, build in builders:

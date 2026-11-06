@@ -84,8 +84,8 @@ def _counts():
                 for t in ('email_outbox', 'email_send_log', 'admin_alert_log')}
 
 
-def test_the_proof_plan_covers_the_stale_alert():
-    assert [e['name'] for e in ap.plan()] == ['stale_post_alert']
+def test_the_proof_plan_covers_the_stale_alert_and_the_support_line():
+    assert [e['name'] for e in ap.plan()] == ['stale_post_alert', 'support_alert']
 
 
 def test_a_dry_run_sends_nothing(smtp, capsys):
@@ -102,5 +102,5 @@ def test_send_goes_to_the_owner_only_and_records_nothing(smtp, monkeypatch):
     before = _counts()
     ap.main(['--send'])
     assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'}
-    assert len(smtp.sent) == 1 and smtp.sent[0]['subject'].startswith('[PROOF] ')
+    assert len(smtp.sent) == 2 and all(s['subject'].startswith('[PROOF] ') for s in smtp.sent)
     assert _counts() == before

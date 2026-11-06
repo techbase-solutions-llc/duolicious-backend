@@ -35,6 +35,12 @@ API (`ahavah-api`)
 Admin (`ahavah-admin`)
 6. Support section built from the Claude Design brief `briefs/2026-11-05-support-messages.md` in the Ahavah project, after the design comes back.
 
+## The daily alert line (built 6 Nov 2026)
+
+The owner's daily alert is the stale-post email (TEC-1897, `emails/admin_alerts.py`, sent by the adminalerts cron once per Barbados day at or after 07:00). There is no daily report line: a member report is emailed on its own as it arrives. The support line joins the stale-post email: "1 support message has had no answer for more than 24 hours", "N support messages have had no answer for more than 24 hours", with an Open support button to https://admin.ahavah.app/?tab=support, as the posts have Open the queue. It counts `support_message` rows with status `open` received more than 24 hours ago, and names no subject, body or address. Zero adds nothing.
+
+Ruling: a lone support line is the whole daily alert when no post is waiting, behind its own switch `support_alert` (`AHAVAH_SUPPORT_ALERT_ENABLED`, off, proof in `scripts/send_admin_alert_proofs.py`). Why: a lone post line sends the alert by itself, and a lone report is emailed by itself, so an unanswered message riding only on days a post is stale could wait unseen for weeks, which is the 30 Oct failure this plan exists to stop. The switch ships off, so nothing new sends until the owner has seen the proof, whether or not the stale-post switch is on. Both parts share the day's one log row (still named `stale_posts`, so the deploy day cannot send twice): at most one alert email a day, and a message that passes 24 hours after that day's alert waits for the next one. Cost if wrong: the owner gets a daily email on days with no post waiting; turning `support_alert` off removes it.
+
 ## Privacy
 
 Support messages are member content. They are read only in the admin by staff, never logged, never sent to analytics, and kept 1 year, then deleted by the existing retention cron.
