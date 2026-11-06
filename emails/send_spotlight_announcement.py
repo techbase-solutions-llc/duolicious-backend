@@ -30,9 +30,12 @@ def build_for(row: dict) -> tuple[str, str]:
     return build(row)
 
 
-def build(row: dict, *, new_copy: bool | None = None) -> tuple[str, str]:
+def build(row: dict, *, new_copy: bool | None = None, link_kind: str = 'e1') -> tuple[str, str]:
     """`new_copy` None follows AHAVAH_SPOTLIGHT_COPY_ENABLED; the resend
-    (emails/send_spotlight_resend.py) passes True."""
+    (emails/send_spotlight_resend.py) passes True. `link_kind` is the
+    campaign the counted settings link belongs to: the push-off variant
+    (emails/send_spotlight_announcement_push_off.py, TEC-2113) passes its
+    own name, so its row counts its own clicks."""
     # Mints a real single-use nonce (service.spotlight.nonce.issue_nonce)
     # against the recipient's current consent epoch. Not on a dry run: the
     # runner marks the row, and the token then carries a placeholder nonce
@@ -50,7 +53,7 @@ def build(row: dict, *, new_copy: bool | None = None) -> tuple[str, str]:
     with api_tx() as tx:
         confirm_url = spotlight_confirm_url(tx, row['email'], dry_run=dry)
         if confirm_url is not None:
-            settings_url = make_campaign_link(tx, 'e1', f"{WEB_BASE_URL}/settings/privacy",
+            settings_url = make_campaign_link(tx, link_kind, f"{WEB_BASE_URL}/settings/privacy",
                                               row['person_id'] or None, dry_run=dry)
     if confirm_url is None:
         # No activated person matches this email (deactivated, deleted, or

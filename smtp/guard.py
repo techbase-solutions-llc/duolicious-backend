@@ -82,6 +82,7 @@ CHAT_PUSH_KINDS = frozenset({'chat_message'})
 # whatever the caller's `bulk` flag says. Each was read from its source:
 BULK_KINDS = frozenset({
     'e1',                  # Spotlight announcement, emails/send_spotlight_announcement.py, send_spotlight_resend.py
+    'e1_push_off',         # Spotlight announcement to push-off members, emails/send_spotlight_announcement_push_off.py
     'e2',                  # weekly community email, service/cron/communityweekly, emails/send_community_weekly.py
     'e3',                  # re-invite, emails/send_reinvite.py
     'e6',                  # notifications nudge, emails/send_notifications_nudge.py

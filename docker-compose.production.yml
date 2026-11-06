@@ -136,6 +136,7 @@ services:
       AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
       AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
       AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
+      AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED: ${AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED:-0}
       # The new in-app entries (TEC-1845, service/app_entries.py): off, owner
       # (only the ids or addresses in the allow list) or on. Off by default.
       AHAVAH_APP_ENTRIES: ${AHAVAH_APP_ENTRIES:-off}
@@ -446,6 +447,7 @@ services:
       AHAVAH_FRIEND_JOINED_ENABLED: ${AHAVAH_FRIEND_JOINED_ENABLED:-0}
       AHAVAH_E1_RESEND_ENABLED: ${AHAVAH_E1_RESEND_ENABLED:-0}
       AHAVAH_SPOTLIGHT_COPY_ENABLED: ${AHAVAH_SPOTLIGHT_COPY_ENABLED:-0}
+      AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED: ${AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED:-0}
       # The new in-app entries (TEC-1845, service/app_entries.py): off, owner
       # (only the ids or addresses in the allow list) or on. Off by default.
       AHAVAH_APP_ENTRIES: ${AHAVAH_APP_ENTRIES:-off}

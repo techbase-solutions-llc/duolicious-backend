@@ -19,9 +19,11 @@ from service.growth import email_outcomes
 from service.growth.queries import growth_stats
 from service.growth.sources import source_rows
 import emails.send_spotlight_announcement as e1
+import emails.send_spotlight_announcement_push_off as e1np
 import emails.send_community_weekly as e2
 import emails.send_reinvite as e3
 import emails.send_notifications_nudge as e6
+from service.spotlight import prompts as spotlight_prompts
 
 @aget('/admin/growth/stats')
 def get_admin_growth_stats(s: t.SessionInfo):
@@ -79,7 +81,19 @@ def get_admin_growth_tools(s: t.SessionInfo):
         return tool_counts(tx)
 
 
-_CAMPAIGNS = {'e1': e1, 'e2': e2, 'e3': e3, 'e6': e6}
+_CAMPAIGNS = {'e1': e1, 'e2': e2, 'e3': e3, 'e6': e6, 'e1_push_off': e1np}
+
+# The Spotlight prompts that push rather than email (TEC-2113,
+# service/spotlight/prompts.py). They sit in the same table and answer the
+# same Preview, Dry run, Send, status and run history calls, with
+# `channel` 'push'; a push has no outbox, so each is sent by the prompts
+# runner instead.
+_PUSH_CAMPAIGNS = spotlight_prompts.CAMPAIGNS
+
+
+def _known(campaign: str) -> None:
+    if campaign not in _CAMPAIGNS and campaign not in _PUSH_CAMPAIGNS:
+        abort(404)
 
 # Deliberately simple: this only has to reject things that are obviously not
 # an address before we hand one to SMTP. Real validation is the mail server's
@@ -201,7 +215,7 @@ def get_admin_growth_emails(s: t.SessionInfo):
             cid = last['cid'] if last else None
             reached, clicks = email_outcomes.run_results(tx, key, cid)
             outcome = email_outcomes.run_outcomes(tx, key, cid)
-            out.append(dict(campaign=key, recipients=len(ids),
+            out.append(dict(campaign=key, channel='email', recipients=len(ids),
                             eligible_now=len(ids), would_reach_now=would_reach,
                             last_run_reached=reached, last_run_clicks=clicks,
                             last_run_came_back=outcome['came_back'],
@@ -212,6 +226,8 @@ def get_admin_growth_emails(s: t.SessionInfo):
                             last_sent_at=last['at'].isoformat() if last and last['at'] else None,
                             last_campaign_id=last['cid'] if last else None, system=False,
                             schedule=_schedule_for(key, now, last['at'] if last else None)))
+        for key in _PUSH_CAMPAIGNS:
+            out.append(spotlight_prompts.index_row(tx, key, now, week_campaign_id(now, key)))
     # e4 (the member invite) and e5 (the card-went-live receipt) are sent by
     # the platform itself, not run from this admin screen: they have no
     # recipients()/recipient_count() module to ask, so their count comes
@@ -227,7 +243,7 @@ def get_admin_growth_emails(s: t.SessionInfo):
                      for key in ('e4', 'e5', 'welcome', 'referral')}
     for key in ('e4', 'e5', 'welcome', 'referral'):
         last = last_sent.get(key)
-        out.append(dict(campaign=key, recipients=int(last['n']) if last else 0,
+        out.append(dict(campaign=key, channel='email', recipients=int(last['n']) if last else 0,
                         eligible_now=None, would_reach_now=None,
                         last_run_reached=None, last_run_clicks=None,
                         last_run_came_back=None, last_run_came_back_7d=None,
@@ -242,10 +258,22 @@ def get_admin_growth_emails(s: t.SessionInfo):
 @apost('/admin/growth/emails/<campaign>/preview')
 def post_admin_growth_email_preview(s: t.SessionInfo, campaign: str):
     require_admin(s)
-    mod = _CAMPAIGNS.get(campaign) or abort(404)
+    _known(campaign)
+    if campaign in _PUSH_CAMPAIGNS:
+        # A push row's preview goes to the signed-in admin's own devices,
+        # whatever address the request names, and is audited like an email
+        # preview.
+        why_not = spotlight_prompts.preview(campaign, s.person_id)
+        with api_tx() as tx:
+            record_audit(tx, s, 'growth.email.preview',
+                         metadata=dict(campaign=campaign, channel='push', delivered=why_not is None))
+        if why_not is not None:
+            return dict(error=why_not), 409
+        return dict(ok=True)
     to = (request.get_json(silent=True) or {}).get('to') or abort(400)
     if not isinstance(to, str) or not _EMAIL_RE.match(to):
         abort(400)
+    mod = _CAMPAIGNS[campaign]
     preview_row = getattr(mod, 'preview_row', None)
     row = preview_row(to) if preview_row else dict(person_id=0, email=to, name='Preview')
     subject, html = mod.build_for(row)
@@ -268,7 +296,7 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     `emailoutbox` cron sends them. Progress is read back from
     `/admin/growth/emails/<campaign>/status/<campaign_id>`."""
     require_admin(s)
-    mod = _CAMPAIGNS.get(campaign) or abort(404)
+    _known(campaign)
     body = request.get_json(silent=True) or {}
     cid = body.get('campaign_id') or abort(400)
     dry = bool(body.get('dry_run', True))
@@ -281,6 +309,15 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
     # campaign waits too until the calendar is extended (LT-2).
     if not dry and campaign_schedule.campaign_beyond_known_now():
         return dict(error='unknown'), 409
+    if campaign in _PUSH_CAMPAIGNS:
+        # A push is sent, not queued: the runner logs each member in
+        # push_send_log first, so a second press with the same id pushes
+        # nobody twice. Audited as the email sends are.
+        res = spotlight_prompts.run(campaign, cid, send=not dry)
+        with api_tx() as tx:
+            record_audit(tx, s, SEND_AUDIT_ACTION, metadata=dict(campaign=campaign, **res))
+        return res
+    mod = _CAMPAIGNS[campaign]
     from service.campaigns.runner import run_campaign
     from service.unsubscribe import make_url as _unsub_url
     from service.config import WEB_BASE_URL
@@ -301,6 +338,7 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
                            from_addr=mod.FROM_ADDR,
                            unsub_scope=mod.UNSUB_SCOPE,
                            cap_days=getattr(mod, 'CAP_DAYS', 7),
+                           exempt=getattr(mod, 'EXEMPT', False),
                            list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(mod.UNSUB_SCOPE, e, WEB_BASE_URL)}>",
                            post_send=getattr(mod, 'post_send', None))
     except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
@@ -321,7 +359,10 @@ def get_admin_growth_email_status(s: t.SessionInfo, campaign: str, campaign_id: 
     reported back, so whether they reached the member is genuinely unknown
     and the outbox refuses to guess (F08)."""
     require_admin(s)
-    _CAMPAIGNS.get(campaign) or abort(404)
+    _known(campaign)
+    if campaign in _PUSH_CAMPAIGNS:
+        with api_tx('read committed') as tx:
+            return spotlight_prompts.status(tx, campaign, campaign_id)
     from service.campaigns import outbox
     with api_tx('read committed') as tx:
         return outbox.status(tx, campaign, campaign_id)
@@ -333,7 +374,11 @@ def get_admin_growth_email_runs(s: t.SessionInfo, campaign: str):
     started, reached, clicks and came back, newest first, and the last 30
     days in one line. Admin-run emails only."""
     require_admin(s)
-    _CAMPAIGNS.get(campaign) or abort(404)
+    _known(campaign)
+    if campaign in _PUSH_CAMPAIGNS:
+        with api_tx('read committed') as tx:
+            return dict(runs=spotlight_prompts.run_history(tx, campaign),
+                        last_30_days=spotlight_prompts.last_30_days(tx, campaign))
     with api_tx('read committed') as tx:
         return dict(runs=email_outcomes.run_history(tx, campaign),
                     last_30_days=email_outcomes.last_30_days(tx, campaign))

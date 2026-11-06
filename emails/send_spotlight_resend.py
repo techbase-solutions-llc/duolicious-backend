@@ -10,7 +10,7 @@ goes direct. Campaign `e1`, so the Growth tab counts it with E1; unsubscribe
 scope `campaigns`.
 
 Who: activated members, staff test accounts left out, who have no `e1` row
-in the send log, have not already opted in, and have not left campaigns.
+(or `e1_push_off`, the same email, TEC-2113) in the send log, have not already opted in, and have not left campaigns.
 
 Held. A real send is refused unless AHAVAH_E1_RESEND_ENABLED is on.
 
@@ -48,7 +48,7 @@ _WHERE = f"""
        AND lower(p.email) <> ALL(%(ex)s)
        AND NOT p.spotlight_opt_in
        AND NOT EXISTS (SELECT 1 FROM email_send_log l
-                        WHERE l.person_id = p.id AND l.campaign = 'e1')
+                        WHERE l.person_id = p.id AND l.campaign IN ('e1', 'e1_push_off'))
        AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
        AND NOT ({suppressed_predicate_sql('p.email')})
 """
