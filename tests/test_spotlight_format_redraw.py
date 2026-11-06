@@ -637,3 +637,22 @@ def test_the_redraw_draws_the_frozen_name_and_age_not_the_live_profile(client, m
     with api_tx('read committed') as tx:
         assert tx.execute("SELECT count(*) AS n FROM publishing_queue WHERE request_key = %(rk)s "
                           "AND format_redraw_subject IS NOT NULL", dict(rk=rk)).fetchone()['n'] == 0
+
+
+def test_a_failed_redraw_shows_its_reason_on_the_held_rows_until_it_lands(client, make_person, storage,
+                                                                           approvals):
+    """The tick reports a held card it could not draw through render-failed,
+    so the Growth tab's held line can say why; the redraw that lands clears it."""
+    A, _ = _admin(make_person)
+    _, rk = _approved_card(client, make_person, A)
+    assert _ask(client, rk, A).status_code == 200
+    r = client.post(f'/admin/growth/queue/{rk}/render-failed', json={'reason': 'name_too_wide'}, headers=H)
+    assert r.status_code == 200
+    rows = [r for r in client.get('/admin/growth/queue', headers=H).get_json() if r['request_key'] == rk]
+    assert all(r['format_redraw_pending'] and r['render_error'] == 'name_too_wide' for r in rows)
+    # Still listed for the next tick: the backoff never hides a held card.
+    assert len([r for r in client.get('/admin/growth/queue?format_redraw=1', headers=H).get_json()
+                if r['request_key'] == rk]) == 2
+    _redraw(client, rk)
+    rows = [r for r in client.get('/admin/growth/queue', headers=H).get_json() if r['request_key'] == rk]
+    assert all(r['render_error'] is None and r['render_attempts'] == 0 for r in rows)

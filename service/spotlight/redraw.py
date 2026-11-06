@@ -137,7 +137,10 @@ _Q_ATTACH = f"""
            FOR UPDATE
     )
     UPDATE publishing_queue
-       SET image_key = %(k)s, image_url = %(u)s, image_sha256 = %(h)s, updated_at = NOW()
+       SET image_key = %(k)s, image_url = %(u)s, image_sha256 = %(h)s, updated_at = NOW(),
+           -- A failed try the tick reported (render-failed) is over once
+           -- this row's new artwork lands, as attach_platform_image does.
+           render_attempts = 0, render_next_attempt_at = NULL, render_error = NULL
       FROM prev
      WHERE publishing_queue.id = prev.id
        AND publishing_queue.current_revision_id = %(rev)s
