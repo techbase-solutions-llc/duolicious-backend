@@ -144,9 +144,10 @@ async def main():
         sendguard_forever(),
 
         # The copy of support@ahavah.app in the admin (TEC-2115): reads the
-        # mailbox through the Gmail API, read only, and stores each new
-        # message. Every 5 minutes. Does nothing unless
-        # AHAVAH_SUPPORT_INBOX_ENABLED=1 and the key file is on the droplet.
+        # support mail Gmail forwards to a Resend receiving address, through
+        # Resend's API, read only, and stores each new message. Every 5
+        # minutes. Does nothing unless AHAVAH_SUPPORT_INBOX_ENABLED=1 and
+        # AHAVAH_SUPPORT_INBOUND_ADDRESS and a Resend key are set.
         support_inbox_forever(),
 
         check_connections_forever(),

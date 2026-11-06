@@ -216,10 +216,13 @@ services:
       # it is on.
       AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED: ${AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED:-0}
       # The copy of support@ahavah.app in the admin (TEC-2115). The cron
-      # reads the mailbox; the api reads these to show on Admin > Support
-      # whether the copying is on and to link each message to its Gmail thread.
+      # reads it from Resend; the api reads these to show on Admin > Support
+      # whether the copying is on and to link each message to a search of the
+      # owner's Gmail (AHAVAH_SUPPORT_GMAIL_USER) for it.
       AHAVAH_SUPPORT_INBOX_ENABLED: ${AHAVAH_SUPPORT_INBOX_ENABLED:-0}
       AHAVAH_SUPPORT_MAILBOX: ${AHAVAH_SUPPORT_MAILBOX:-support@ahavah.app}
+      AHAVAH_SUPPORT_INBOUND_ADDRESS: ${AHAVAH_SUPPORT_INBOUND_ADDRESS:-}
+      AHAVAH_SUPPORT_GMAIL_USER: ${AHAVAH_SUPPORT_GMAIL_USER:-admin@techbaseltd.com}
       # Meta Conversions API (service/metapixel.py) — no-op when blank.
       AHAVAH_META_PIXEL_ID: ${AHAVAH_META_PIXEL_ID:-}
       AHAVAH_META_CAPI_ACCESS_TOKEN: ${AHAVAH_META_CAPI_ACCESS_TOKEN:-}
@@ -337,12 +340,9 @@ services:
       AHAVAH_SEND_GUARD_LIMIT_KIND_HALT_PEOPLE: ${AHAVAH_SEND_GUARD_LIMIT_KIND_HALT_PEOPLE:-}
 
   cron:
-    # Writer side of the FireHOL blocklist (see api ro mount). The secrets
-    # directory holds the support mailbox's Google key (TEC-2115), read only.
-    # Docker makes the directory, empty, if it is not there yet.
+    # Writer side of the FireHOL blocklist (see api ro mount).
     volumes: !override
       - ahavah-firehol-data:/var/ahavah-firehol
-      - /opt/ahavah-secrets:/run/ahavah-secrets:ro
     environment:
       DUO_FIREHOL_BIN: /var/ahavah-firehol/blocklist.bin
       DUO_ENV: prod
@@ -522,14 +522,18 @@ services:
       # seen its proof. The cron sends it; the api reads it to show whether
       # it is on.
       AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED: ${AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED:-0}
-      # The copy of support@ahavah.app in the admin (TEC-2115). Off until
-      # the owner has made the Google service account (domain-wide
-      # delegation, scope gmail.readonly only) and put its JSON key in
-      # /opt/ahavah-secrets on the droplet, mounted read only below. The key
-      # is never in the repo or in .env.production, only its path.
+      # The copy of support@ahavah.app in the admin (TEC-2115). A Gmail
+      # filter forwards support mail to a Resend receiving address
+      # (AHAVAH_SUPPORT_INBOUND_ADDRESS) and the cron reads it from Resend
+      # every 5 minutes; no Google key is held. Off, and checks nothing,
+      # until the switch and the inbound address are set. The Resend key
+      # needs full access (listing received mail); blank falls back to
+      # DUO_SMTP_PASS. The cron only: the api never reads received mail.
       AHAVAH_SUPPORT_INBOX_ENABLED: ${AHAVAH_SUPPORT_INBOX_ENABLED:-0}
       AHAVAH_SUPPORT_MAILBOX: ${AHAVAH_SUPPORT_MAILBOX:-support@ahavah.app}
-      AHAVAH_SUPPORT_GMAIL_KEY_PATH: ${AHAVAH_SUPPORT_GMAIL_KEY_PATH:-/run/ahavah-secrets/support-gmail.json}
+      AHAVAH_SUPPORT_INBOUND_ADDRESS: ${AHAVAH_SUPPORT_INBOUND_ADDRESS:-}
+      AHAVAH_SUPPORT_GMAIL_USER: ${AHAVAH_SUPPORT_GMAIL_USER:-admin@techbaseltd.com}
+      AHAVAH_SUPPORT_RESEND_KEY: ${AHAVAH_SUPPORT_RESEND_KEY:-}
       DUO_CRON_SUPPORT_INBOX_POLL_SECONDS: ${DUO_CRON_SUPPORT_INBOX_POLL_SECONDS:-300}
       DUO_CRON_MAX_RANDOM_START_DELAY: ${DUO_CRON_MAX_RANDOM_START_DELAY:-15}
       OPENAI_API_KEY: ${OPENAI_API_KEY}

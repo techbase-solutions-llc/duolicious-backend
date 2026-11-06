@@ -3,6 +3,9 @@ docs/plans/2026-11-05-support-messages-in-admin.md).
 
   GET  /admin/support/messages?status=open|handled|not_for_us&page=N
        50 a page; open oldest first, the rest newest first
+  GET  /admin/support/summary
+       the counts by status and the inbox status only, no message: the
+       admin's badge polls it every minute on every screen
   POST /admin/support/messages/<id>/handled
   POST /admin/support/messages/<id>/not-for-us
   POST /admin/support/messages/<id>/reopen     a mark made by mistake
@@ -40,6 +43,13 @@ def get_admin_support_messages(s: t.SessionInfo):
     with api_tx('read committed') as tx:
         return support.list_messages(tx, status=status, page=page,
                                      enabled=support_inbox.enabled())
+
+
+@aget('/admin/support/summary')
+def get_admin_support_summary(s: t.SessionInfo):
+    require_admin(s)
+    with api_tx('read committed') as tx:
+        return support.summary(tx, enabled=support_inbox.enabled())
 
 
 def _mark(s: t.SessionInfo, mid: int, status: str, action: str):

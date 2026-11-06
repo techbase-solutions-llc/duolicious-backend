@@ -1,81 +1,100 @@
 """A copy of every message sent to support@ahavah.app (TEC-2115,
-docs/plans/2026-11-05-support-messages-in-admin.md).
+docs/plans/2026-11-05-support-messages-in-admin.md, and for how the mail
+gets in, docs/plans/2026-11-05-support-inbox-via-forwarding.md).
 
-The supportinbox cron calls `tick` every 5 minutes. It reads the support
-mailbox through the Gmail API, read only, with a Google service account that
-has domain-wide delegation for the one scope gmail.readonly, and stores each
-new message in `support_message`. Nothing is sent, forwarded, labelled or
-marked read in the mailbox.
+support@ahavah.app is an alias delivered into the owner's main mailbox, so
+the server holds no Google credential: a key for that mailbox would read all
+of it. Instead a Gmail filter forwards mail addressed to support@ahavah.app
+to a receiving address on the Techbase Resend account
+(AHAVAH_SUPPORT_INBOUND_ADDRESS), and the supportinbox cron calls `tick`
+every 5 minutes. A pass lists the received emails through Resend's API,
+fetches each one whose To or Cc holds the support address or the inbound
+address and that is not stored yet, and stores it in `support_message`.
+Nothing is sent, and nothing in Resend or Gmail is changed.
 
 Switched off by default. `tick` does nothing at all, and prints nothing,
-while AHAVAH_SUPPORT_INBOX_ENABLED is off. With it on but no key file at
-AHAVAH_SUPPORT_GMAIL_KEY_PATH, it prints one line per process and checks
-nothing.
+while AHAVAH_SUPPORT_INBOX_ENABLED is off. With it on but no inbound
+address, or no Resend key, it prints one line per process and checks
+nothing. The key is AHAVAH_SUPPORT_RESEND_KEY, falling back to the Resend
+key the API sends mail with (DUO_SMTP_PASS, when it is a Resend key).
+Listing received mail needs a full-access key: a sending-only key answers
+401 or 403, which the inbox status records and the admin shows.
 
-How a pass reads the mailbox:
+How a pass reads the list (Resend keeps received mail 30 days, and does not
+say which way the list is ordered, so the pass works either way):
 
-  1. The first pass records the mailbox's current history id, then reads the
-     whole mailbox a few pages per pass (the backfill), so mail from before
-     the switch was turned on comes in too. The backfill's page token is
-     kept in `support_inbox_state`, so a restart carries on where it was.
-  2. Every pass after that asks Gmail for the messages added since the
-     stored history id, and moves the history id on only once each of them
-     has been stored or skipped. Gmail keeps history for about a week; a
-     cursor older than that answers 404, and the pass starts the backfill
-     again from the current history id. Storing is idempotent on the Gmail
-     message id, so a message read twice is stored once.
+  1. It reads pages of up to 100 from the top, each page after the last
+     id of the one before, until the list ends. When the list comes newest
+     first (seen from the received times), it stops early at a page whose
+     every email is older than `synced_through`, less SYNC_SLACK: the
+     newest received time of the last read that finished. A read that
+     fails part way does not move `synced_through`, so the next pass reads
+     as far again and nothing older is lost.
+  2. At most MAX_PAGES_PER_PASS pages a pass. A read the limit cuts short
+     keeps the id it reached (`backfill_token`) and the newest time it saw
+     (`walk_newest`), carries on from there next pass, and says so in the
+     log. Should Resend no longer know that id, the read starts again from
+     the top in the same pass. `backfill_done` is true once a read has
+     finished with nothing left over.
+  3. Storing is idempotent on the Resend email id, so an email read twice
+     is stored once, and one already stored is never fetched again.
 
 Mail received more than IMPORT_OPEN_DAYS (14) days before the first pass
 is stored as handled, by 'Imported': the switch going on does not fill the
-open list and the owner's alert with a year of old mail. The last 14 days
-come in open.
+open list and the owner's alert with old mail.
 
-A message that cannot be read (Gmail answers 404 for it, or it cannot be
-parsed or stored) is skipped so the pass and its cursor move on; its Gmail
-id is recorded in the inbox status (last_error), never its content. Any
-other Gmail error, or the database going away, fails the pass, which
-starts again from the same cursor next time.
+A message that cannot be read (Resend answers 404 for it, or it cannot be
+parsed or stored) is skipped so the pass moves on; its Resend id is
+recorded in the inbox status (last_error), never its content. Any other
+Resend error, or the database going away, fails the pass, which reads from
+the same place next time.
 
-Skipped, never stored: mail sent by the mailbox itself, drafts, chats, spam
-and trash, automatic replies (Auto-Submitted, X-Autoreply, X-Autorespond,
-Precedence: auto_reply, and the mailer daemon), and anything older than the
-1 year the copies are kept.
+Skipped, never stored: mail sent by the support address itself, automatic
+replies (Auto-Submitted, X-Autoreply, X-Autorespond, Precedence:
+auto_reply, and the mailer daemon), and anything older than the 1 year the
+copies are kept. A message skipped, or that could not be read, is not
+fetched again by the same process.
 
 The member is the one account whose normalised email (normalize_email, as
 person.normalized_email holds it) matches the sender's. Two or none: no
 member.
 
+"Reply in Gmail" opens a search of the owner's mailbox
+(AHAVAH_SUPPORT_GMAIL_USER) for the original Message-ID.
+
 PRIVACY: support messages are member content. Nothing here logs a body, a
-subject or an address, only counts and an error's class name. A failed pass
-prints one line naming the error class, and only when it differs from the
+subject or an address, only counts, an error's class name and HTTP status.
+A failed pass prints one line, and only when the error differs from the
 last one recorded, so a broken key does not fill the log.
 """
 from __future__ import annotations
 
-import base64
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 from html import unescape
 from html.parser import HTMLParser
-from typing import Callable, Optional, Protocol
+from typing import Callable, Iterable, Optional, Protocol
+from urllib.parse import quote
 
 DEFAULT_MAILBOX = 'support@ahavah.app'
-DEFAULT_KEY_PATH = '/run/ahavah-secrets/support-gmail.json'
-SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
+DEFAULT_GMAIL_USER = 'admin@techbaseltd.com'
 
 BODY_MAX = 20_000
 RETENTION_DAYS = 365
-# Pages of the backfill read per pass, of up to 100 messages each.
-BACKFILL_PAGES_PER_PASS = 3
 
-# Mailbox searches the backfill runs: everything but what the mailbox sent
-# and its drafts and chats, within the year kept. Gmail leaves spam and trash out of a search
-# unless asked.
-BACKFILL_QUERY = 'newer_than:1y -in:sent -in:drafts -in:chats'
+# Resend's list: up to 100 a page; at most this many pages a pass.
+PAGE_LIMIT = 100
+MAX_PAGES_PER_PASS = 20
+# A newest-first read stops at a page all older than the last finished read
+# by at least this much, so an email Resend lists a little late is still
+# read.
+SYNC_SLACK = timedelta(minutes=15)
+# Resend statuses that mean it does not know a continuation cursor.
+_CURSOR_REFUSED = frozenset({400, 404, 422})
 
 # Mail older than this, counted back from the first pass, is imported as
 # handled by IMPORTED_BY.
@@ -84,7 +103,6 @@ IMPORTED_BY = 'Imported'
 # The skipped ids recorded in last_error, at most.
 FAILED_IDS_LISTED = 10
 
-_SKIP_LABELS = frozenset({'SENT', 'DRAFT', 'CHAT', 'SPAM', 'TRASH'})
 _AUTOMATIC_SENDERS = frozenset({'mailer-daemon', 'postmaster'})
 
 
@@ -102,40 +120,53 @@ def mailbox() -> str:
     return raw or DEFAULT_MAILBOX
 
 
-def key_path() -> str:
-    return os.environ.get('AHAVAH_SUPPORT_GMAIL_KEY_PATH', '').strip() or DEFAULT_KEY_PATH
+def inbound_address() -> str:
+    """The Resend receiving address the Gmail filter forwards to; empty
+    until it is set up."""
+    return os.environ.get('AHAVAH_SUPPORT_INBOUND_ADDRESS', '').strip().lower()
 
 
-def gmail_url(thread_id: str, box: Optional[str] = None) -> str:
-    """The thread in Gmail, opened as the support mailbox, for "Reply in
-    Gmail"."""
-    return f'https://mail.google.com/mail/?authuser={box or mailbox()}#all/{thread_id}'
+def resend_key() -> str:
+    """AHAVAH_SUPPORT_RESEND_KEY, else the Resend key mail is sent with."""
+    key = os.environ.get('AHAVAH_SUPPORT_RESEND_KEY', '').strip()
+    if key:
+        return key
+    sending = os.environ.get('DUO_SMTP_PASS', '').strip()
+    return sending if sending.startswith('re_') else ''
+
+
+def gmail_user() -> str:
+    return os.environ.get('AHAVAH_SUPPORT_GMAIL_USER', '').strip() or DEFAULT_GMAIL_USER
+
+
+def gmail_url(*, rfc_message_id: Optional[str], thread_id: Optional[str]) -> Optional[str]:
+    """For "Reply in Gmail": a search of the owner's mailbox for the
+    original Message-ID; for a row the old Gmail reader copied, its thread
+    as the support mailbox; otherwise None."""
+    mid = (rfc_message_id or '').strip().strip('<>').strip()
+    if mid:
+        return (f'https://mail.google.com/mail/?authuser={gmail_user()}'
+                f'#search/rfc822msgid%3A{quote(mid, safe="")}')
+    if thread_id:
+        return f'https://mail.google.com/mail/?authuser={mailbox()}#all/{thread_id}'
+    return None
 
 
 # ---------------------------------------------------------------------------
-# the Gmail client the pass uses (service/support_inbox/gmail.py is the real
-# one; tests pass a fake)
+# the Resend client the pass uses (service/support_inbox/resend.py is the
+# real one; tests pass a fake)
 # ---------------------------------------------------------------------------
 
-class HistoryExpired(Exception):
-    """The stored history id is older than Gmail keeps (about a week)."""
-
-
-class GmailError(Exception):
+class ResendError(Exception):
     def __init__(self, status: int):
         super().__init__(f'HTTP {status}')
         self.status = status
 
 
-class GmailClient(Protocol):
-    def current_history_id(self) -> str: ...
+class ResendClient(Protocol):
+    def list_received(self, *, limit: int, after: Optional[str] = None) -> dict: ...
 
-    def list_message_ids(self, page_token: Optional[str]) -> tuple[list[str], Optional[str]]: ...
-
-    def history(self, start_history_id: str,
-                page_token: Optional[str]) -> tuple[list[dict], Optional[str], str]: ...
-
-    def get_message(self, message_id: str) -> dict: ...
+    def get_received(self, email_id: str) -> dict: ...
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +175,8 @@ class GmailClient(Protocol):
 
 @dataclass
 class Parsed:
-    message_id: str
-    thread_id: str
-    labels: frozenset
+    email_id: str
+    rfc_message_id: Optional[str]
     from_address: str
     from_name: Optional[str]
     subject: str
@@ -160,37 +190,6 @@ def _decode_header_value(value: str) -> str:
         return str(make_header(decode_header(value)))
     except Exception:  # noqa: BLE001 -- a malformed header keeps its raw text
         return value
-
-
-def _b64url(data: str) -> bytes:
-    return base64.urlsafe_b64decode(data + '=' * (-len(data) % 4))
-
-
-_CHARSET = re.compile(r'charset\s*=\s*"?([^";\s]+)', re.I)
-
-
-def _part_text(part: dict) -> str:
-    data = (part.get('body') or {}).get('data')
-    if not data:
-        return ''
-    headers = {h['name'].lower(): h['value'] for h in part.get('headers') or []}
-    m = _CHARSET.search(headers.get('content-type', ''))
-    charset = m.group(1) if m else 'utf-8'
-    raw = _b64url(data)
-    try:
-        return raw.decode(charset, errors='replace')
-    except LookupError:
-        return raw.decode('utf-8', errors='replace')
-
-
-def _is_attachment(part: dict) -> bool:
-    return bool(part.get('filename')) or bool((part.get('body') or {}).get('attachmentId'))
-
-
-def _walk(part: dict):
-    yield part
-    for child in part.get('parts') or []:
-        yield from _walk(child)
 
 
 class _HtmlText(HTMLParser):
@@ -246,51 +245,94 @@ def clean_text(text: str) -> str:
     return text[:BODY_MAX]
 
 
-def body_text(payload: dict) -> str:
-    """The message's first plain-text part; failing that its first HTML part
-    as plain text; failing that nothing. Attachments are never read."""
-    parts = [p for p in _walk(payload) if not _is_attachment(p)]
-    for p in parts:
-        if (p.get('mimeType') or '').lower() == 'text/plain':
-            text = _part_text(p)
-            if text.strip():
-                return clean_text(text)
-    for p in parts:
-        if (p.get('mimeType') or '').lower() == 'text/html':
-            text = _part_text(p)
-            if text.strip():
-                return clean_text(html_to_text(text))
+def body_text(email: dict) -> str:
+    """The plain text; failing that the HTML as plain text; failing that
+    nothing. Attachments are never read."""
+    text = email.get('text')
+    if isinstance(text, str) and text.strip():
+        return clean_text(text)
+    html = email.get('html')
+    if isinstance(html, str) and html.strip():
+        return clean_text(html_to_text(html))
     return ''
 
 
-def parse(msg: dict) -> Parsed:
-    payload = msg.get('payload') or {}
-    headers: dict = {}
-    for h in payload.get('headers') or []:
-        headers.setdefault(str(h.get('name', '')).lower(), str(h.get('value', '')))
+_OFFSET_HOURS_ONLY = re.compile(r'([+-]\d{2})$')
+
+
+def parse_time(value) -> datetime:
+    """Resend's created_at ('2026-11-05 10:42:17.123+00', or ISO 8601), in
+    UTC. A time without a zone is taken as UTC. ValueError when unreadable."""
+    s = str(value or '').strip()
+    if s.endswith(('Z', 'z')):
+        s = s[:-1] + '+00:00'
+    s = _OFFSET_HOURS_ONLY.sub(r'\1:00', s)
+    at = datetime.fromisoformat(s)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(timezone.utc)
+
+
+def _try_time(value) -> Optional[datetime]:
+    try:
+        return parse_time(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _headers(email: dict) -> dict:
+    """Header names in lower case, the first value of each."""
+    raw = email.get('headers') or {}
+    pairs: Iterable = raw.items() if isinstance(raw, dict) else (
+        (h.get('name'), h.get('value')) for h in raw if isinstance(h, dict))
+    out: dict = {}
+    for name, value in pairs:
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else ''
+        out.setdefault(str(name or '').lower(), '' if value is None else str(value))
+    return out
+
+
+def _addresses(*fields) -> set[str]:
+    values: list[str] = []
+    for field in fields:
+        if isinstance(field, str):
+            values.append(field)
+        elif isinstance(field, (list, tuple)):
+            values.extend(str(v) for v in field if v)
+    return {addr.strip().lower() for _, addr in getaddresses(values) if addr.strip()}
+
+
+def addressed_to(item: dict, targets: frozenset) -> bool:
+    """True when the email's To or Cc holds one of `targets`."""
+    return bool(_addresses(item.get('to'), item.get('cc')) & targets)
+
+
+def parse(email: dict) -> Parsed:
+    headers = _headers(email)
     # Parsed before decoding, so a comma in an encoded display name cannot
     # split the address.
-    name, address = parseaddr(headers.get('from', ''))
+    name, header_address = parseaddr(headers.get('from', ''))
     name = _decode_header_value(name) if name else name
-    received = datetime.fromtimestamp(int(msg.get('internalDate') or 0) / 1000, tz=timezone.utc)
-    subject = clean_text(_decode_header_value(headers.get('subject', '')))[:998]
+    address = parseaddr(str(email.get('from') or ''))[1] or header_address
+    subject = email.get('subject')
+    if subject is None:
+        subject = headers.get('subject', '')
+    rfc = str(email.get('message_id') or headers.get('message-id') or '').strip().strip('<>').strip()
     return Parsed(
-        message_id=str(msg['id']),
-        thread_id=str(msg.get('threadId') or msg['id']),
-        labels=frozenset(msg.get('labelIds') or []),
+        email_id=str(email['id']),
+        rfc_message_id=rfc[:998] or None,
         from_address=address.strip().lower()[:320],
         from_name=(clean_text(name)[:200] or None) if name else None,
-        subject=subject,
-        body_text=body_text(payload),
-        received_at=received,
+        subject=clean_text(_decode_header_value(str(subject)))[:998],
+        body_text=body_text(email),
+        received_at=parse_time(email.get('created_at')),
         headers=headers,
     )
 
 
 def skip_reason(p: Parsed, box: str, now: datetime) -> Optional[str]:
     """Why a message is not stored, or None to store it."""
-    if p.labels & _SKIP_LABELS:
-        return 'label'
     if not p.from_address or '@' not in p.from_address:
         return 'no_sender'
     if p.from_address == box:
@@ -319,18 +361,18 @@ _Q_PERSON_BY_NORMALISED_EMAIL = """
 
 _Q_INSERT = """
     INSERT INTO support_message (
-        gmail_message_id, gmail_thread_id, from_address, from_name, subject,
+        resend_email_id, rfc_message_id, from_address, from_name, subject,
         body_text, received_at, person_id, status, handled_by, handled_at)
     VALUES (
-        %(mid)s, %(tid)s, %(from_address)s, %(from_name)s, %(subject)s,
+        %(rid)s, %(rfc)s, %(from_address)s, %(from_name)s, %(subject)s,
         %(body)s, %(received_at)s, %(person_id)s, %(status)s, %(handled_by)s,
         CASE WHEN %(status)s = 'open' THEN NULL ELSE NOW() END)
-    ON CONFLICT (gmail_message_id) DO NOTHING
+    ON CONFLICT (resend_email_id) DO NOTHING
     RETURNING id
 """
 
 _Q_KNOWN = """
-    SELECT gmail_message_id FROM support_message WHERE gmail_message_id = ANY(%(ids)s)
+    SELECT resend_email_id FROM support_message WHERE resend_email_id = ANY(%(ids)s)
 """
 
 
@@ -350,7 +392,7 @@ def store(tx, p: Parsed, *, first_pass_at: Optional[datetime] = None) -> bool:
     imported = (first_pass_at is not None
                 and p.received_at < first_pass_at - timedelta(days=IMPORT_OPEN_DAYS))
     row = tx.execute(_Q_INSERT, dict(
-        mid=p.message_id, tid=p.thread_id, from_address=p.from_address,
+        rid=p.email_id, rfc=p.rfc_message_id, from_address=p.from_address,
         from_name=p.from_name, subject=p.subject, body=p.body_text,
         received_at=p.received_at, person_id=member_id(tx, p.from_address),
         status='handled' if imported else 'open',
@@ -364,23 +406,35 @@ def _known(ids: list[str]) -> set[str]:
     if not ids:
         return set()
     with api_tx('read committed') as tx:
-        return {r['gmail_message_id'] for r in tx.execute(_Q_KNOWN, dict(ids=ids)).fetchall()}
+        return {r['resend_email_id'] for r in tx.execute(_Q_KNOWN, dict(ids=ids)).fetchall()}
+
+
+# Ids this process skipped or could not read: not fetched again until it
+# restarts. Bounded, so a long-lived cron cannot grow it without end.
+_seen: set[str] = set()
+_SEEN_MAX = 50_000
+
+
+def _remember(email_id: str) -> None:
+    if len(_seen) >= _SEEN_MAX:
+        _seen.clear()
+    _seen.add(email_id)
 
 
 # ---------------------------------------------------------------------------
-# the cursor
+# where the read has got to
 # ---------------------------------------------------------------------------
 
 _Q_STATE = """
     INSERT INTO support_inbox_state (mailbox) VALUES (%(m)s)
     ON CONFLICT (mailbox) DO UPDATE SET mailbox = EXCLUDED.mailbox
-    RETURNING history_id, backfill_done, backfill_token, last_error, first_pass_at
+    RETURNING backfill_done, backfill_token, synced_through, walk_newest, last_error, first_pass_at
 """
 
-_Q_SAVE_CURSOR = """
+_Q_SAVE_READ = """
     UPDATE support_inbox_state
-       SET history_id = %(history_id)s, backfill_done = %(backfill_done)s,
-           backfill_token = %(backfill_token)s
+       SET backfill_done = %(done)s, backfill_token = %(token)s,
+           synced_through = %(synced)s, walk_newest = %(walk_newest)s
      WHERE mailbox = %(m)s
 """
 
@@ -414,114 +468,116 @@ def _state(box: str) -> dict:
         return dict(tx.execute(_Q_STATE, dict(m=box)).fetchone())
 
 
-def _save_cursor(box: str, *, history_id: Optional[str], backfill_done: bool,
-                 backfill_token: Optional[str]) -> None:
+def _save_read(box: str, *, done: bool, token: Optional[str], synced: Optional[datetime],
+               walk_newest: Optional[datetime]) -> None:
     from database import api_tx
     with api_tx() as tx:
-        tx.execute(_Q_SAVE_CURSOR, dict(m=box, history_id=history_id, backfill_done=backfill_done,
-                                        backfill_token=backfill_token))
+        tx.execute(_Q_SAVE_READ, dict(m=box, done=done, token=token, synced=synced,
+                                      walk_newest=walk_newest))
 
 
 # ---------------------------------------------------------------------------
 # one pass
 # ---------------------------------------------------------------------------
 
-def _take(client: GmailClient, ids: list[str], box: str, now: datetime, counts: dict,
-          labels: Optional[dict] = None, first_pass_at: Optional[datetime] = None) -> None:
-    """Fetch and store each id not already stored. `labels` (from the
-    history) lets mail the mailbox sent be skipped without fetching it.
+def _take(client: ResendClient, ids: list[str], box: str, now: datetime, counts: dict,
+          first_pass_at: Optional[datetime]) -> None:
+    """Fetch and store each id not already stored or seen.
 
     One message that cannot be read is skipped and its id added to
-    counts['failed_ids']: Gmail's 404 for it, or any error parsing or
-    storing it. Any other Gmail error, and the database connection failing,
-    still fail the pass."""
+    counts['failed_ids']: Resend's 404 for it, or any error parsing or
+    storing it. Any other Resend error, and the database connection
+    failing, still fail the pass."""
     import psycopg
     from database import api_tx
-    labels = labels or {}
-    todo = []
-    for mid in dict.fromkeys(ids):
-        if frozenset(labels.get(mid) or ()) & _SKIP_LABELS:
-            counts['skipped'] += 1
-        else:
-            todo.append(mid)
+    todo = [i for i in dict.fromkeys(ids) if i not in _seen]
     known = _known(todo)
-    for mid in todo:
-        if mid in known:
+    for rid in todo:
+        if rid in known:
             counts['already'] += 1
             continue
         try:
-            msg = client.get_message(mid)
-        except GmailError as e:
+            email = client.get_received(rid)
+        except ResendError as e:
             if e.status != 404:
                 raise
-            counts['failed_ids'].append(mid)
+            counts['failed_ids'].append(rid)
+            _remember(rid)
             continue
         try:
-            p = parse(msg)
+            p = parse(email)
             if skip_reason(p, box, now) is not None:
                 counts['skipped'] += 1
+                _remember(rid)
                 continue
             with api_tx() as tx:
                 new = store(tx, p, first_pass_at=first_pass_at)
         except (psycopg.OperationalError, psycopg.InterfaceError):
             raise
         except Exception:  # noqa: BLE001 -- this message only; recorded by id, never content
-            counts['failed_ids'].append(mid)
+            counts['failed_ids'].append(rid)
+            _remember(rid)
             continue
         counts['stored' if new else 'already'] += 1
 
 
-def poll(client: GmailClient, box: str, *, now: Optional[datetime] = None) -> dict:
-    """One pass over the mailbox. Returns counts only."""
+def poll(client: ResendClient, box: str, targets: frozenset, *,
+         now: Optional[datetime] = None) -> dict:
+    """One pass over Resend's received list. Returns counts only."""
     now = now or datetime.now(timezone.utc)
-    counts: dict = dict(stored=0, skipped=0, already=0, backfill_pages=0, restarted=0, failed_ids=[])
+    counts: dict = dict(stored=0, skipped=0, already=0, pages=0, capped=0, restarted=0,
+                        failed_ids=[])
     state = _state(box)
-    history_id = state['history_id']
-    backfill_done = bool(state['backfill_done'])
-    backfill_token = state['backfill_token']
     first_pass_at = state['first_pass_at']
-
     if first_pass_at is None:
         from database import api_tx
         with api_tx() as tx:
             first_pass_at = tx.execute(_Q_FIRST_PASS, dict(m=box, at=now)).fetchone()['first_pass_at']
 
-    if history_id is None:
-        history_id = client.current_history_id()
-        backfill_done, backfill_token = False, None
-        _save_cursor(box, history_id=history_id, backfill_done=False, backfill_token=None)
-    else:
-        added: list[dict] = []
-        token: Optional[str] = None
-        latest = history_id
+    synced: Optional[datetime] = state['synced_through']
+    token: Optional[str] = state['backfill_token']
+    walk_newest: Optional[datetime] = state['walk_newest'] if token else None
+    descending: Optional[bool] = None
+    previous: Optional[datetime] = None
+
+    while True:
+        if counts['pages'] >= MAX_PAGES_PER_PASS:
+            counts['capped'] = 1
+            _save_read(box, done=False, token=token, synced=synced, walk_newest=walk_newest)
+            break
         try:
-            while True:
-                page, token, latest = client.history(history_id, token)
-                added.extend(page)
-                if not token:
-                    break
-        except HistoryExpired:
-            counts['restarted'] = 1
-            history_id = client.current_history_id()
-            backfill_done, backfill_token = False, None
-            _save_cursor(box, history_id=history_id, backfill_done=False, backfill_token=None)
-        else:
-            labels = {str(m['id']): m.get('labelIds') or [] for m in added}
-            _take(client, [str(m['id']) for m in added], box, now, counts, labels, first_pass_at)
-            history_id = latest or history_id
-            _save_cursor(box, history_id=history_id, backfill_done=backfill_done,
-                         backfill_token=backfill_token)
+            page = client.list_received(limit=PAGE_LIMIT, after=token)
+        except ResendError as e:
+            if token and e.status in _CURSOR_REFUSED and not counts['restarted']:
+                counts['restarted'] = 1
+                token, walk_newest, descending, previous = None, None, None, None
+                continue
+            raise
+        counts['pages'] += 1
+        items = [i for i in page.get('data') or [] if isinstance(i, dict) and i.get('id')]
+        times = []
+        for item in items:
+            at = _try_time(item.get('created_at'))
+            times.append(at)
+            if at is None:
+                continue
+            if descending is None and previous is not None and at != previous:
+                descending = at < previous
+            previous = at
+            walk_newest = at if walk_newest is None else max(walk_newest, at)
+        _take(client, [str(i['id']) for i in items if addressed_to(i, targets)], box, now, counts,
+              first_pass_at)
+        if items:
+            token = str(items[-1]['id'])
+        caught_up = (descending is True and synced is not None and bool(items)
+                     and all(at is not None and at < synced - SYNC_SLACK for at in times))
+        if not items or not page.get('has_more') or caught_up:
+            if walk_newest is not None:
+                synced = walk_newest if synced is None else max(synced, walk_newest)
+            _save_read(box, done=True, token=None, synced=synced, walk_newest=None)
+            break
 
-    while not backfill_done and counts['backfill_pages'] < BACKFILL_PAGES_PER_PASS:
-        ids, next_token = client.list_message_ids(backfill_token)
-        _take(client, ids, box, now, counts, first_pass_at=first_pass_at)
-        counts['backfill_pages'] += 1
-        backfill_token = next_token
-        backfill_done = next_token is None
-        _save_cursor(box, history_id=history_id, backfill_done=backfill_done,
-                     backfill_token=backfill_token)
-
-    counts['backfill_done'] = backfill_done
+    counts['backfill_done'] = not counts['capped']
     return counts
 
 
@@ -529,26 +585,18 @@ def poll(client: GmailClient, box: str, *, now: Optional[datetime] = None) -> di
 # the cron's tick
 # ---------------------------------------------------------------------------
 
-_said_no_key = False
-_client_cache: dict = {}
+_said_not_set_up = False
 
 
 def _error_name(exc: BaseException) -> str:
-    if isinstance(exc, GmailError):
-        return f'GmailError {exc.status}'
+    if isinstance(exc, ResendError):
+        return f'ResendError {exc.status}'
     return type(exc).__name__
 
 
-def _real_client(path: str, box: str) -> GmailClient:
-    """One client per key file and mailbox, kept between passes so its
-    access token is reused until it lapses."""
-    from service.support_inbox.gmail import GmailApi
-    key = (path, box, os.path.getmtime(path))
-    client = _client_cache.get(key)
-    if client is None:
-        _client_cache.clear()
-        client = _client_cache[key] = GmailApi(path, box)
-    return client
+def _real_client(key: str) -> ResendClient:
+    from service.support_inbox.resend import ResendReceiving
+    return ResendReceiving(key)
 
 
 def _record_failure(box: str, error: str) -> Optional[str]:
@@ -561,23 +609,24 @@ def _record_failure(box: str, error: str) -> Optional[str]:
     return before['last_error'] if before else None
 
 
-def tick(make_client: Optional[Callable[[str, str], GmailClient]] = None,
+def tick(make_client: Optional[Callable[[str], ResendClient]] = None,
          now: Optional[datetime] = None) -> dict:
-    global _said_no_key
+    global _said_not_set_up
     if not enabled():
         return {'off': True}
-    path, box = key_path(), mailbox()
-    if make_client is None:
-        if not os.path.isfile(path):
-            if not _said_no_key:
-                print('support_inbox: switched on, but there is no key file; nothing checked', flush=True)
-                _said_no_key = True
-            return {'no_key': True}
-        make_client = _real_client
-    _said_no_key = False
+    box, inbound, key = mailbox(), inbound_address(), resend_key()
+    if not inbound or not key:
+        if not _said_not_set_up:
+            missing = ' and '.join(m for m, ok in (('no inbound address', inbound),
+                                                    ('no Resend key', key)) if not ok)
+            print(f'support_inbox: switched on, but there is {missing}; nothing checked', flush=True)
+            _said_not_set_up = True
+        return {'not_set_up': True}
+    _said_not_set_up = False
+    make_client = make_client or _real_client
     from database import api_tx
     try:
-        counts = poll(make_client(path, box), box, now=now)
+        counts = poll(make_client(key), box, frozenset({box, inbound}), now=now)
     except Exception as exc:  # noqa: BLE001 -- recorded by class name only, never content
         error = _error_name(exc)
         if _record_failure(box, error) != error:
@@ -588,14 +637,17 @@ def tick(make_client: Optional[Callable[[str, str], GmailClient]] = None,
     if failed:
         listed = ', '.join(failed[:FAILED_IDS_LISTED])
         more = f' and {len(failed) - FAILED_IDS_LISTED} more' if len(failed) > FAILED_IDS_LISTED else ''
-        note = f'{len(failed)} message(s) {SKIPPED_NOTE}: Gmail ids {listed}{more}'
+        note = f'{len(failed)} message(s) {SKIPPED_NOTE}: Resend ids {listed}{more}'
     with api_tx() as tx:
         tx.execute(_Q_CHECKED_OK, dict(m=box, e=note, note=f'%{SKIPPED_NOTE}%'))
-    if counts['stored'] or counts['restarted'] or failed:
+    if counts['stored'] or counts['capped'] or counts['restarted'] or failed:
         print(f"support_inbox: {counts['stored']} new message(s) copied, "
               f"{counts['skipped']} skipped"
               + (f', {len(failed)} could not be read' if failed else '')
-              + (', history too old so the full read started again' if counts['restarted'] else ''),
+              + (', the saved place in the list was gone so it was read again from the top'
+                 if counts['restarted'] else '')
+              + (f', page limit ({MAX_PAGES_PER_PASS}) reached so the rest is read next pass'
+                 if counts['capped'] else ''),
               flush=True)
     return counts
 

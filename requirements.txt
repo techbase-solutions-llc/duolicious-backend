@@ -6,7 +6,6 @@ fastapi
 Flask
 flask-cors
 Flask-Limiter
-google-auth>=2.30          # TEC-2115 support inbox: service account sign-in for the Gmail API (read only)
 gunicorn
 lxml
 nltk
@@ -25,7 +24,7 @@ pytricia
 PyYAML
 redis
 regex
-requests                   # TEC-2115 support inbox: google-auth's AuthorizedSession transport
+requests                   # Resend over HTTPS: sending (smtp) and the TEC-2115 support inbox reader
 sentry-sdk[flask]>=2.18    # Task 0.5 telemetry; init opt-in via SENTRY_DSN env var
 posthog>=3.7               # Task 0.5 telemetry; init opt-in via POSTHOG_API_KEY
 stripe>=11.0               # Phase 3 Identity verification; opt-in via STRIPE_SECRET_KEY

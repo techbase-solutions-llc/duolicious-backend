@@ -180,9 +180,9 @@ SWITCHES = {
     'unfinished_signup_reminder': 'AHAVAH_UNFINISHED_SIGNUP_REMINDER_ENABLED',
     # The copy of support@ahavah.app in the admin (TEC-2115;
     # service/support_inbox, the supportinbox cron). Sends nothing: it reads
-    # the mailbox. Off until the owner has made the Google service account
-    # and put its key on the droplet. The api reads it too, to show on
-    # Admin > Support whether the copying is on.
+    # the support mail Gmail forwards to a Resend receiving address. Off
+    # until that address (AHAVAH_SUPPORT_INBOUND_ADDRESS) is set up. The api
+    # reads it too, to show on Admin > Support whether the copying is on.
     'support_inbox': 'AHAVAH_SUPPORT_INBOX_ENABLED',
 }
 

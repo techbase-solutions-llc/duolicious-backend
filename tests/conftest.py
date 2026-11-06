@@ -1547,12 +1547,14 @@ def unfinished_signup_schema(matchmaker_schema, report_rewards_schema):
 # ---------------------------------------------------------------------------
 # Support messages (5 Nov 2026, TEC-2115)
 # ---------------------------------------------------------------------------
-# Migration 0093: support_message and support_inbox_state. Idempotent, as the
-# deploy needs. Autouse: the sendguard tick reads open support messages, the
-# lead retention sweep deletes old ones and the admin GET walk calls
-# /admin/support/messages, whichever test asks.
+# Migration 0093: support_message and support_inbox_state; 0094: the Resend
+# ids and the read's progress. Idempotent, as the deploy needs. Autouse: the
+# sendguard tick reads open support messages, the lead retention sweep
+# deletes old ones and the admin GET walk calls /admin/support/messages,
+# whichever test asks.
 
 SUPPORT_MESSAGES_MIGRATION = '0093_support_messages.sql'
+SUPPORT_MESSAGES_RESEND_MIGRATION = '0094_support_messages_resend.sql'
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -1561,6 +1563,7 @@ def support_messages_schema(unfinished_signup_schema):
 
     from database import api_tx
 
-    path = Path(__file__).resolve().parent.parent / 'migrations' / SUPPORT_MESSAGES_MIGRATION
-    with api_tx() as tx:
-        tx.execute(path.read_text(encoding='utf-8'))
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in (SUPPORT_MESSAGES_MIGRATION, SUPPORT_MESSAGES_RESEND_MIGRATION):
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))

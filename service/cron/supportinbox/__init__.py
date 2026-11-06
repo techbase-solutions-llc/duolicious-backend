@@ -1,11 +1,12 @@
 """The copy of support@ahavah.app in the admin (TEC-2115).
 
-Every 5 minutes, service.support_inbox.tick reads the support mailbox through
-the Gmail API, read only, and stores each new message. Off unless
-AHAVAH_SUPPORT_INBOX_ENABLED is on: while it is off a pass does nothing and
-prints nothing. With it on and no key file at AHAVAH_SUPPORT_GMAIL_KEY_PATH,
-it says so once and checks nothing. It sends nothing. Copies are deleted a
-year after they arrived, by the lead_retention cron.
+Every 5 minutes, service.support_inbox.tick reads the mail a Gmail filter
+forwards from support@ahavah.app to a Resend receiving address, through
+Resend's received-mail API, read only, and stores each new message. Off
+unless AHAVAH_SUPPORT_INBOX_ENABLED is on: while it is off a pass does
+nothing and prints nothing. With it on but no AHAVAH_SUPPORT_INBOUND_ADDRESS
+or no Resend key, it says so once and checks nothing. It sends nothing.
+Copies are deleted a year after they arrived, by the lead_retention cron.
 
 `tick` is sync (blocking HTTPS and short transactions), so it runs on a
 thread here, as the send guard's tick does.

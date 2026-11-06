@@ -4,7 +4,14 @@
 A message is `open` until an admin marks it `handled` or `not_for_us`. Only
 an open message can be marked: the row is locked first, so a double click or
 two admins at once mark it once, and the second answers AlreadyHandled.
-Replying stays in Gmail; each row carries the thread's Gmail link.
+Replying stays in Gmail; each row carries a link that finds the message in
+the owner's mailbox (None when the row has no message id). handled_by is
+the email of the admin who marked it, or 'Imported'; handled_by_name is that
+admin's first name when an account has the email, as resolved member
+reports name their resolver.
+
+`summary` is the counts and the inbox status only, for the admin's badge,
+which polls it every minute on every screen: it reads no message.
 """
 from __future__ import annotations
 
@@ -32,8 +39,8 @@ class AlreadyHandled(Exception):
 # Open messages come oldest first, so the longest waits are never on a later
 # page; handled, not for us and all come newest first.
 _Q_LIST = """
-    SELECT m.id, m.gmail_thread_id, m.from_address, m.from_name, m.subject, m.body_text,
-           m.received_at, m.status, m.handled_by, m.handled_at,
+    SELECT m.id, m.gmail_thread_id, m.rfc_message_id, m.from_address, m.from_name, m.subject,
+           m.body_text, m.received_at, m.status, m.handled_by, m.handled_at,
            floor(extract(epoch FROM NOW() - m.received_at) / 3600)::int AS age_hours,
            p.uuid::text AS member_uuid, p.name AS member_name
       FROM support_message m
@@ -62,15 +69,60 @@ def _preview(body: str) -> str:
     return text if len(text) <= PREVIEW_MAX else text[:PREVIEW_MAX - 1].rstrip() + '…'
 
 
-def list_messages(tx, *, status: Optional[str], page: int = 1, enabled: bool = False) -> dict:
-    box = mailbox()
-    query = Q_LIST_OLDEST if status == 'open' else Q_LIST_NEWEST
-    rows = tx.execute(query, dict(status=status, limit=PAGE_SIZE + 1,
-                                  offset=(page - 1) * PAGE_SIZE)).fetchall()
+# The first name of the account with each normalised email, as resolved
+# member reports name their resolver (split_part of person.name). The
+# oldest account when two share one.
+_Q_HANDLER_NAMES = """
+    SELECT DISTINCT ON (normalized_email)
+           normalized_email, NULLIF(split_part(name, ' ', 1), '') AS first_name
+      FROM person
+     WHERE normalized_email = ANY(%(emails)s)
+     ORDER BY normalized_email, id
+"""
+
+
+def _handler_names(tx, handled_by: set) -> dict:
+    """handled_by value -> the admin's first name, for those an account
+    has; 'Imported' and unknown emails are left out."""
+    from antiabuse.antispam.signupemail import normalize_email
+    normalised = {h: normalize_email(h.strip()) for h in handled_by if h and '@' in h}
+    if not normalised:
+        return {}
+    rows = tx.execute(_Q_HANDLER_NAMES, dict(emails=sorted(set(normalised.values())))).fetchall()
+    names = {r['normalized_email']: r['first_name'] for r in rows}
+    return {h: names.get(ne) for h, ne in normalised.items() if names.get(ne)}
+
+
+def _counts(tx) -> dict:
     counts = {s: 0 for s in SUPPORT_STATUSES}
     for r in tx.execute(_Q_COUNTS).fetchall():
         counts[r['status']] = r['n']
+    return counts
+
+
+def _inbox(tx, enabled: bool) -> dict:
+    box = mailbox()
     state = tx.execute(_Q_STATE, dict(m=box)).fetchone()
+    return dict(
+        enabled=enabled,
+        mailbox=box,
+        last_checked_at=_iso(state['last_checked_at']) if state else None,
+        last_ok_at=_iso(state['last_ok_at']) if state else None,
+        last_error=state['last_error'] if state else None,
+        backfill_done=bool(state['backfill_done']) if state else False,
+    )
+
+
+def summary(tx, *, enabled: bool = False) -> dict:
+    """The counts by status and the inbox status; no message."""
+    return dict(counts=_counts(tx), inbox=_inbox(tx, enabled))
+
+
+def list_messages(tx, *, status: Optional[str], page: int = 1, enabled: bool = False) -> dict:
+    query = Q_LIST_OLDEST if status == 'open' else Q_LIST_NEWEST
+    rows = tx.execute(query, dict(status=status, limit=PAGE_SIZE + 1,
+                                  offset=(page - 1) * PAGE_SIZE)).fetchall()
+    names = _handler_names(tx, {r['handled_by'] for r in rows[:PAGE_SIZE] if r['handled_by']})
     return dict(
         messages=[dict(
             id=int(r['id']),
@@ -83,23 +135,17 @@ def list_messages(tx, *, status: Optional[str], page: int = 1, enabled: bool = F
             age_hours=r['age_hours'],
             status=r['status'],
             handled_by=r['handled_by'],
+            handled_by_name=names.get(r['handled_by']),
             handled_at=_iso(r['handled_at']),
             member=(dict(uuid=r['member_uuid'], name=r['member_name'])
                     if r['member_uuid'] else None),
-            gmail_url=gmail_url(r['gmail_thread_id'], box),
+            gmail_url=gmail_url(rfc_message_id=r['rfc_message_id'], thread_id=r['gmail_thread_id']),
         ) for r in rows[:PAGE_SIZE]],
-        counts=counts,
+        counts=_counts(tx),
         page=page,
         page_size=PAGE_SIZE,
         has_more=len(rows) > PAGE_SIZE,
-        inbox=dict(
-            enabled=enabled,
-            mailbox=box,
-            last_checked_at=_iso(state['last_checked_at']) if state else None,
-            last_ok_at=_iso(state['last_ok_at']) if state else None,
-            last_error=state['last_error'] if state else None,
-            backfill_done=bool(state['backfill_done']) if state else False,
-        ),
+        inbox=_inbox(tx, enabled),
     )
 
 

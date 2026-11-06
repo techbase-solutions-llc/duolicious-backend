@@ -54,10 +54,26 @@ def test_nothing_outside_the_mailer_talks_to_a_mail_provider():
     assert bad == [], 'Send through smtp.Smtp.send, where the send guard is:\n' + '\n'.join(sorted(set(bad)))
 
 
+# The one other file that may name Resend's API: the support inbox reader
+# (TEC-2115), which lists and reads received mail. The rule below holds it
+# to the receiving endpoints and to reading, so it can never send.
+RESEND_READER = 'service/support_inbox/resend.py'
+
+
 def test_no_file_of_any_kind_calls_the_resend_api_but_the_mailer():
     bad = [rel(p) for p in files(('.py', '.sh', '.js', '.mjs', '.ts'))
-           if rel(p) != SMTP_INIT and 'api.resend.com' in p.read_text(encoding='utf-8', errors='replace')]
+           if rel(p) not in (SMTP_INIT, RESEND_READER)
+           and 'api.resend.com' in p.read_text(encoding='utf-8', errors='replace')]
     assert bad == [], 'api.resend.com outside smtp/__init__.py: ' + ', '.join(bad)
+
+
+def test_the_support_inbox_reader_only_reads_received_mail():
+    import re
+    path = ROOT / RESEND_READER
+    paths = re.findall(r'https://api\.resend\.com(/[A-Za-z0-9_/-]*)?', path.read_text(encoding='utf-8'))
+    assert paths and all(p.startswith('/emails/receiving') for p in paths), paths
+    verbs = {call_name(c).split('.')[-1] for c in calls(parse(path))}
+    assert not verbs & {'post', 'put', 'patch', 'delete', 'request', 'urlopen'}, verbs
 
 
 def test_nothing_outside_notifications_pushes_to_a_device():
