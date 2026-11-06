@@ -275,6 +275,43 @@ def test_a_push_no_device_took_gives_its_row_back(make_person, pushes):
     assert len(_to(pushes, p['id'])) == 2 and _logged(prompts.OPT_IN, p['id']) == [cid]
 
 
+def _pending(person_id, campaign_id, ago):
+    """A claim a restart left behind, `ago` old."""
+    with api_tx() as tx:
+        tx.execute("""INSERT INTO push_send_log (person_id, campaign, campaign_id, sent_at)
+                      VALUES (%(p)s, %(c)s, %(cid)s, NOW() - %(a)s::interval)""",
+                   dict(p=person_id, c=prompts.pending_name(prompts.OPT_IN), cid=campaign_id, a=ago))
+
+
+def test_a_claim_a_restart_left_pending_is_retried_once_it_is_stale(make_person, pushes):
+    stale = _member(make_person, 'PendingStale')
+    young = _member(make_person, 'PendingYoung')
+    cid = f'cmp_test_{uuid.uuid4().hex[:8]}'
+    _pending(stale['id'], cid, '11 minutes')
+    _pending(young['id'], cid, '1 minute')
+
+    prompts.run(prompts.OPT_IN, cid, send=True)
+
+    assert len(_to(pushes, stale['id'])) == 1 and _logged(prompts.OPT_IN, stale['id']) == [cid]
+    # Still in flight as far as anyone can tell: not pushed twice, and not
+    # counted as delivered.
+    assert _to(pushes, young['id']) == [] and _logged(prompts.OPT_IN, young['id']) == []
+
+
+def test_only_delivered_pushes_count_as_reached(make_person, pushes):
+    p = _member(make_person, 'ReachedOnly')
+    cid = f'cmp_test_{uuid.uuid4().hex[:8]}'
+    _pending(p['id'], cid, '1 minute')
+    with api_tx('read committed') as tx:
+        assert prompts.status(tx, prompts.OPT_IN, cid)['accepted'] == 0
+    prompts.run(prompts.OPT_IN, cid + 'b', send=True)
+    with api_tx('read committed') as tx:
+        assert prompts.status(tx, prompts.OPT_IN, cid + 'b')['accepted'] >= 1
+        assert tx.execute("""SELECT count(*) AS n FROM push_send_log
+                               WHERE person_id = %(p)s AND campaign = %(c)s""",
+                          dict(p=p['id'], c=prompts.pending_name(prompts.OPT_IN))).fetchone()['n'] == 1
+
+
 # ---------------------------------------------------------------------------
 # the card push
 # ---------------------------------------------------------------------------

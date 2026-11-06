@@ -24,13 +24,15 @@ sends it once the transaction commits. Outside such a block nothing is
 logged, so the Growth row can still send it.
 
 Every push here waits out quiet hours (21:00 to 08:00 the member's time). A
-push is logged in push_send_log before it is sent, and a push that reached
-no device gives its row back, so the next Send tries that member again. A
+push is claimed in push_send_log under `<campaign>:pending` before it is
+sent and moved to `<campaign>` once a device took it, so the Growth row's
+figures count delivered pushes only. A push that reached no device gives
+its claim back, and a claim a restart left pending for PENDING_RETRY_MINUTES
+is tried again by the next Send with the same id. A
 run sends at most PUSH_CAP pushes; a second Send with the same id carries on
 from where it stopped. A dry run counts, writes nothing and runs inside the
-send guard's no_send(). The sends run on a thread after the rows are
-written, so a full run does not hold the request open; a restart part way
-loses the rest of that run's pushes, which stay logged.
+send guard's no_send(). The sends run on a thread after the claims are
+written, so a full run does not hold the request open.
 
 The emailed half is emails/send_spotlight_announcement_push_off.py.
 """
@@ -58,6 +60,26 @@ CAMPAIGNS = (OPT_IN, CARD)
 
 # The most pushes one run sends. Another Send with the same id goes on.
 PUSH_CAP = 500
+
+# A claim is written under `<campaign>:pending` before the push and moved to
+# `<campaign>` once a device took it, so push_send_log under the campaign's
+# own name is pushes delivered. A pending claim older than this, left by a
+# restart part way through a run, is tried again by the next Send.
+PENDING_RETRY_MINUTES = 10
+
+
+def pending_name(campaign: str) -> str:
+    return f'{campaign}:pending'
+
+
+def _sent_or_in_flight_sql(person_ref: str, campaign: str, cid_expr: str) -> str:
+    """SQL boolean: this member has this push delivered, or a claim on it
+    young enough to still be going out."""
+    return f"""EXISTS (SELECT 1 FROM push_send_log l
+                 WHERE l.person_id = {person_ref} AND l.campaign_id = {cid_expr}
+                   AND (l.campaign = '{campaign}'
+                        OR (l.campaign = '{pending_name(campaign)}'
+                            AND l.sent_at > NOW() - make_interval(mins => {PENDING_RETRY_MINUTES}))))"""
 
 
 def _now() -> datetime:
@@ -107,9 +129,7 @@ _Q_OPT_IN = f"""
       FROM person p
      WHERE {_member_rules('p')}
        AND NOT p.spotlight_opt_in
-       AND (%(cid)s::text IS NULL OR NOT EXISTS (
-             SELECT 1 FROM push_send_log l
-              WHERE l.person_id = p.id AND l.campaign = '{OPT_IN}' AND l.campaign_id = %(cid)s))
+       AND (%(cid)s::text IS NULL OR NOT {_sent_or_in_flight_sql('p.id', OPT_IN, '%(cid)s')})
      ORDER BY p.id
 """
 
@@ -135,9 +155,7 @@ _Q_CARD = f"""
                           AND e.state NOT IN ('failed', 'skipped'))
            AND p.spotlight_opt_in
            AND {_member_rules('p')}
-           AND NOT EXISTS (SELECT 1 FROM push_send_log l
-                            WHERE l.person_id = p.id AND l.campaign = '{CARD}'
-                              AND l.campaign_id = q.request_key || ':' || q.current_revision_id::text)
+           AND NOT {_sent_or_in_flight_sql('p.id', CARD, "q.request_key || ':' || q.current_revision_id::text")}
          ORDER BY q.request_key, q.id
     ) cards
     ORDER BY person_id, request_key
@@ -173,11 +191,20 @@ def _push_one(person_id: int, payload: dict, kind: str) -> int:
 
 
 def _unlog(person_id: int, campaign: str, log_id: str) -> None:
+    """Give back a claim no device took."""
     from database import api_tx
     with api_tx() as tx:
         tx.execute("""DELETE FROM push_send_log
                        WHERE person_id = %(p)s AND campaign = %(c)s AND campaign_id = %(cid)s""",
-                   dict(p=person_id, c=campaign, cid=log_id))
+                   dict(p=person_id, c=pending_name(campaign), cid=log_id))
+
+
+def _mark_delivered(person_id: int, campaign: str, log_id: str) -> None:
+    from database import api_tx
+    with api_tx() as tx:
+        tx.execute("""UPDATE push_send_log SET campaign = %(c)s, sent_at = NOW()
+                       WHERE person_id = %(p)s AND campaign = %(pc)s AND campaign_id = %(cid)s""",
+                   dict(p=person_id, c=campaign, pc=pending_name(campaign), cid=log_id))
 
 
 def _deliver(items: list[dict]) -> int:
@@ -190,13 +217,14 @@ def _deliver(items: list[dict]) -> int:
         except Exception:
             print(traceback.format_exc())
             n = 0
-        if n:
-            went += 1
-        else:
-            try:
+        try:
+            if n:
+                _mark_delivered(it['person_id'], it['campaign'], it['log_id'])
+                went += 1
+            else:
                 _unlog(it['person_id'], it['campaign'], it['log_id'])
-            except Exception:
-                print(traceback.format_exc())
+        except Exception:
+            print(traceback.format_exc())
     if items:
         print('SPOTLIGHT_PUSH ' + json.dumps(dict(campaign=items[0]['campaign'], handed=len(items), went=went)),
               flush=True)
@@ -209,10 +237,17 @@ def _deliver_later(items: list[dict]) -> None:
 
 
 def _claim(tx, person_id: int, campaign: str, log_id: str) -> bool:
+    """Write a pending claim, or take over one a restart left behind. False
+    when the push was delivered or another claim on it is still young."""
     return tx.execute(
-        """INSERT INTO push_send_log (person_id, campaign, campaign_id)
-           VALUES (%(p)s, %(c)s, %(cid)s) ON CONFLICT DO NOTHING RETURNING person_id""",
-        dict(p=person_id, c=campaign, cid=log_id)).fetchone() is not None
+        f"""INSERT INTO push_send_log (person_id, campaign, campaign_id)
+            SELECT %(p)s, %(pc)s, %(cid)s
+             WHERE NOT EXISTS (SELECT 1 FROM push_send_log
+                                WHERE person_id = %(p)s AND campaign = %(c)s AND campaign_id = %(cid)s)
+            ON CONFLICT (person_id, campaign, campaign_id) DO UPDATE SET sent_at = NOW()
+             WHERE push_send_log.sent_at < NOW() - make_interval(mins => {PENDING_RETRY_MINUTES})
+            RETURNING person_id""",
+        dict(p=person_id, c=campaign, pc=pending_name(campaign), cid=log_id)).fetchone() is not None
 
 
 def _card_link(tx, request_key: str, email: str) -> Optional[str]:
