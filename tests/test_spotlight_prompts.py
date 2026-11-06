@@ -92,6 +92,8 @@ def pushes(monkeypatch):
     monkeypatch.setattr(prompts, '_deliver_later', prompts._deliver)
     monkeypatch.setattr(prompts, '_now', lambda: NOON)
     monkeypatch.setattr(prompts, 'resting', lambda now: False)
+    # The automatic card push is switched on here; one test turns it off.
+    monkeypatch.setenv('AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED', '1')
     return sent
 
 
@@ -390,6 +392,20 @@ def test_drawing_a_card_pushes_its_member_with_the_email(client, make_person, sw
     with api_tx() as tx:
         edit_caption(tx, rk, 'A new caption', 't')
     _draw(client, rk, colour='black')
+    assert len(_to(pushes, p['id'])) == 1
+
+
+def test_with_its_switch_off_drawing_a_card_pushes_nobody(client, make_person, switches, storage, pushes,
+                                                         monkeypatch):
+    """AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED is off by default. The card push
+    row the owner presses still sends."""
+    monkeypatch.delenv('AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED')
+    p = _eligible(make_person, 'CardSwitchOff')
+    switches(approvals_enabled='true', invites_enabled='true')
+    rk = _welcome(client, p['id'])
+    _draw(client, rk)
+    assert _to(pushes, p['id']) == [] and _logged(prompts.CARD, p['id']) == []
+    prompts.run(prompts.CARD, f'cmp_test_{uuid.uuid4().hex[:8]}', send=True)
     assert len(_to(pushes, p['id'])) == 1
 
 

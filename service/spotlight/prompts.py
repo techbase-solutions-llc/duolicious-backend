@@ -45,6 +45,7 @@ from typing import Optional
 
 from emails.base import mask_email, suppressed_sql_pattern
 from service.campaigns import suppressed_predicate_sql, unsubscribed_predicate_sql
+from service.campaigns.switches import enabled
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded
 from service.man_woman import staff_sql
@@ -339,6 +340,8 @@ def queue_card_ready_push(tx, request_key: str) -> bool:
     push for the current revision and hand it to the collecting block. Not
     outside such a block, in quiet hours or a rest period: then nothing is
     logged and the Growth row's Send can push it later."""
+    if not enabled('spotlight_card_push'):
+        return False
     pending = _PENDING.get()
     if pending is None:
         return False

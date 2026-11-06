@@ -42,6 +42,10 @@ SWITCHES = {
     'e1_resend': 'AHAVAH_E1_RESEND_ENABLED',
     # E1 and E4 say "your main profile photo" (web lane copy, 79 and 82).
     'spotlight_copy': 'AHAVAH_SPOTLIGHT_COPY_ENABLED',
+    # The push that goes by itself with each new card-ready email (TEC-2113,
+    # service/spotlight/prompts.py). The Growth tab's card push row, which
+    # the owner presses, does not wait for it.
+    'spotlight_card_push': 'AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED',
     # Quick questions (TEC-1845), the master switch: until launch day the
     # app shows members no question and takes no answer, and nothing below
     # sends, whichever way its own switch is set. Admin > Questions works
