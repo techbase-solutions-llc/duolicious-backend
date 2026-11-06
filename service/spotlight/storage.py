@@ -108,16 +108,18 @@ def _bucket():
     return _bucket_cache
 
 
-# The exact pixel sizes a card may be. Square is what the member card renderer
-# produces. Portrait 4:5 is what the Claude Design brand sets are drawn at
-# (TEC-945): it takes the most vertical space Instagram gives a feed post,
-# and both Instagram and Facebook accept it. Exact sizes, not ranges: every
-# producer of cards is deterministic, so anything else is a renderer bug to
-# refuse rather than an image to store.
+# The exact pixel sizes a card may be. Portrait 4:5 is the feed size: the
+# Claude Design brand sets (TEC-945), the roundup (since 26 Oct 2026) and,
+# by the owner's ruling of 6 Nov 2026 ("no square posts for IG feed"), the
+# member cards. It takes the most vertical space Instagram gives a feed
+# post, and both Instagram and Facebook accept it. Square stays accepted
+# for a member card drawn by a renderer from before that ruling. Exact
+# sizes, not ranges: every producer of cards is deterministic, so anything
+# else is a renderer bug to refuse rather than an image to store.
 CARD_SIZES = ((1080, 1080), (1080, 1350))
-# The only size a brand post may be. The image route holds brand rows to it,
-# because square is what the tick's renderer draws, and a square image on a
-# brand row is the wrong card (TEC-945 review).
+# 4:5. The image route holds the calendar kinds to it, and the format
+# redraw (TEC-2113) accepts nothing else: a square image there is the wrong
+# card, whatever sent it (TEC-945 review).
 BRAND_CARD_SIZE = (1080, 1350)
 
 

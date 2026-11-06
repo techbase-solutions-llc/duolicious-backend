@@ -1589,3 +1589,25 @@ def tester_isolation_schema(unmatch_schema, support_messages_schema):
     path = Path(__file__).resolve().parent.parent / 'migrations' / TESTER_ISOLATION_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Format-only redraw (TEC-2113)
+# ---------------------------------------------------------------------------
+# Migration 0096: publishing_queue.format_redraw_requested_at, which the queue
+# listing, the dispatch check and create_revision all read, and
+# claim_spotlight_posts re-created to skip a held row. Idempotent, as the
+# deploy needs. Autouse, since every Spotlight test reaches those reads.
+
+FORMAT_REDRAW_MIGRATION = '0096_spotlight_format_redraw.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def format_redraw_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / FORMAT_REDRAW_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

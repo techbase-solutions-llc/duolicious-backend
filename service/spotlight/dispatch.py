@@ -25,14 +25,14 @@ from service.spotlight.restdays import is_beyond_known, is_rest_period
 from service.spotlight.revisions import consent_complete
 
 REASONS = ('not_found', 'not_processing', 'lease_required', 'lease_mismatch', 'lease_expired', 'withdrawn',
-           'no_revision', 'not_rendered', 'slides_incomplete', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
+           'format_redraw_pending', 'no_revision', 'not_rendered', 'slides_incomplete', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
            'participant:<person_id>:<reason>', 'rest_day', 'calendar_unknown', 'publication_disabled',
            'external_access_disabled')
 
 _Q_ROW = """
     SELECT status, lease_token, (lease_until IS NOT NULL AND lease_until > NOW()) AS lease_valid,
            cancellation_requested_at, current_revision_id, kind, subject_person_id, request_key,
-           slide_count
+           slide_count, format_redraw_requested_at
       FROM publishing_queue WHERE id = %(id)s
 """
 
@@ -64,6 +64,12 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
         return False, 'lease_expired'
     if row['cancellation_requested_at'] is not None:
         return False, 'withdrawn'
+    # A format-only redraw is still pending (TEC-2113): the row carries the
+    # artwork it is being redrawn away from, or one platform's new artwork
+    # beside the other's old. `claim_spotlight_posts` already skips such a
+    # row (migration 0096); this is the second guard.
+    if row['format_redraw_requested_at'] is not None:
+        return False, 'format_redraw_pending'
     if row['current_revision_id'] is None:
         return False, 'no_revision'
     rev = tx.execute(_Q_REVISION, dict(id=row['current_revision_id'])).fetchone()

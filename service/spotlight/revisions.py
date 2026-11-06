@@ -68,10 +68,14 @@ _Q_OLD_KEYS = f"""
 
 # Wave 3d Task 4 fix round 1 (I2): a new revision is new content, so the
 # render backoff the old one earned is cleared with its artwork and the card
-# is tried again at the next tick.
+# is tried again at the next tick. A pending format-only redraw (TEC-2113,
+# service/spotlight/redraw.py) goes too: the new revision is drawn with the
+# current renderer through the ordinary flow, and a hold left behind would
+# keep the row out of the publish run for good.
 _Q_UNRENDER = f"""
     UPDATE publishing_queue SET image_key = NULL, image_url = NULL, image_sha256 = NULL,
-                                render_attempts = 0, render_next_attempt_at = NULL, render_error = NULL
+                                render_attempts = 0, render_next_attempt_at = NULL, render_error = NULL,
+                                format_redraw_requested_at = NULL, format_redraw_subject = NULL
      WHERE request_key = %(rk)s AND {_REPOINT_SCOPE.format(q='')}
 """
 
