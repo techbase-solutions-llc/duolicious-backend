@@ -20,6 +20,13 @@ SET lock_timeout = '5s';
 ALTER TABLE publishing_queue
   ADD COLUMN IF NOT EXISTS format_redraw_requested_at TIMESTAMPTZ;
 
+-- The member's first name, age and country as the approved card showed
+-- them, checked and frozen when the redraw is asked for, so the redraw draws
+-- what was approved even if the profile changes (a new name, a birthday)
+-- before the tick. Cleared with the hold.
+ALTER TABLE publishing_queue
+  ADD COLUMN IF NOT EXISTS format_redraw_subject JSONB;
+
 -- The tick's listing of held rows reads this; almost every row is NULL.
 CREATE INDEX IF NOT EXISTS publishing_queue_format_redraw_idx
   ON publishing_queue (request_key) WHERE format_redraw_requested_at IS NOT NULL;

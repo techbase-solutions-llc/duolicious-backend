@@ -114,13 +114,29 @@ def _draw_square(client, rk):
         assert r.status_code == 200, r.get_json()
 
 
-def _approved_card(client, make_person, A, *, kind='member_of_week', slot=FUTURE_SLOT, schedule=True):
+def _live_caption(person_id, kind):
+    """The caption the card's own builder makes from the member's profile,
+    as the welcome and member-of-the-week routes write it."""
+    from service.api.admin.spotlight_routes import _member_of_week_caption, _welcome_caption
+    with api_tx('read committed') as tx:
+        info = tx.execute(
+            """SELECT split_part(name, ' ', 1) AS first_name,
+                      date_part('year', age(date_of_birth))::int AS age,
+                      COALESCE(country, location_short_friendly) AS country
+                 FROM person WHERE id = %(p)s""", dict(p=person_id)).fetchone()
+    if kind == 'welcome':
+        return _welcome_caption(info['first_name'], info['country'])
+    return _member_of_week_caption(info['first_name'], info['age'], info['country'])
+
+
+def _approved_card(client, make_person, A, *, kind='member_of_week', slot=FUTURE_SLOT, schedule=True,
+                   caption=None):
     """A member card drawn, consented to and (by default) approved onto a
     slot, as Stewart's is."""
-    p = _make_eligible(make_person, name=f'Redraw{kind}')
+    p = _make_eligible(make_person, name=f'Redraw{kind} Surname')
+    caption = caption or _live_caption(p['id'], kind)      # never inside an open api_tx
     with api_tx() as tx:
-        rk = create_candidate(tx, kind=kind, subject_person_id=p['id'], caption='Meet him. More here.',
-                              created_by='t')
+        rk = create_candidate(tx, kind=kind, subject_person_id=p['id'], caption=caption, created_by='t')
     _draw_square(client, rk)
     with api_tx() as tx:
         record_consent(tx, current_revision(tx, rk)['id'], p['id'], 'subject')
@@ -545,3 +561,79 @@ def test_the_request_and_the_redraw_are_audited(client, make_person, storage, ap
     assert done[0]['metadata']['previous_revision_key'] == old['facebook']
     assert done[0]['metadata']['revision_id'] == revision_id
     assert done[0]['metadata']['late'] is False
+
+
+# ---------------------------------------------------------------------------
+# The redraw draws what the member approved (review, 6 Nov 2026)
+# ---------------------------------------------------------------------------
+
+def _refusals(rk):
+    with api_tx('read committed') as tx:
+        return [r['metadata'] for r in tx.execute(
+            """SELECT metadata FROM admin_audit_log
+                WHERE action = 'growth.queue.format_redraw.refused' AND metadata->>'request_key' = %(rk)s""",
+            dict(rk=rk)).fetchall()]
+
+
+@pytest.mark.parametrize('kind', ['member_of_week', 'welcome'])
+def test_refused_when_the_name_changed_since_approval(client, make_person, storage, approvals, kind):
+    A, _ = _admin(make_person)
+    p, rk = _approved_card(client, make_person, A, kind=kind)
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET name = 'Renamed Person' WHERE id = %(p)s", dict(p=p['id']))
+    r = _ask(client, rk, A)
+    assert r.status_code == 409 and r.get_json() == {'error': 'subject_changed', 'field': 'name'}
+    assert all(row['format_redraw_requested_at'] is None for row in _rows(rk))
+    assert [m['field'] for m in _refusals(rk)] == ['name']
+
+
+@pytest.mark.parametrize('kind', ['member_of_week', 'welcome'])
+def test_refused_when_a_birthday_passed_since_approval(client, make_person, storage, approvals, kind):
+    """Approved three days ago, at 29; the birthday was yesterday. The card
+    would now print 30, which the member never saw."""
+    A, _ = _admin(make_person)
+    p, rk = _approved_card(client, make_person, A, kind=kind)
+    revision_id = _rows(rk)[0]['current_revision_id']     # never inside an open api_tx
+    with api_tx() as tx:
+        tx.execute("""UPDATE person SET date_of_birth = (CURRENT_DATE - interval '30 years' - interval '1 day')::date
+                       WHERE id = %(p)s""", dict(p=p['id']))
+        tx.execute("""UPDATE spotlight_revision_consent SET approved_at = NOW() - interval '3 days'
+                       WHERE revision_id = %(r)s""", dict(r=revision_id))
+    r = _ask(client, rk, A)
+    assert r.status_code == 409 and r.get_json() == {'error': 'subject_changed', 'field': 'age'}
+    assert all(row['format_redraw_requested_at'] is None for row in _rows(rk))
+    assert [m['field'] for m in _refusals(rk)] == ['age']
+
+
+def test_refused_when_the_caption_cannot_say_what_the_card_showed(client, make_person, storage, approvals):
+    A, _ = _admin(make_person)
+    _, rk = _approved_card(client, make_person, A, caption='A week of good company. More here.')
+    r = _ask(client, rk, A)
+    assert r.status_code == 409 and r.get_json()['error'] == 'subject_changed'
+    assert r.get_json()['field'] in ('name', 'caption')
+    assert all(row['format_redraw_requested_at'] is None for row in _rows(rk))
+
+
+def test_the_redraw_draws_the_frozen_name_and_age_not_the_live_profile(client, make_person, storage,
+                                                                         approvals):
+    """Checked and frozen when asked for: a profile change before the tick
+    does not reach the card."""
+    A, _ = _admin(make_person)
+    p, rk = _approved_card(client, make_person, A)
+    before = [r for r in client.get('/admin/growth/queue', headers=H).get_json() if r['request_key'] == rk][0]
+    assert _ask(client, rk, A).status_code == 200
+    with api_tx() as tx:
+        tx.execute("""UPDATE person SET name = 'Renamed Person', country = 'FR',
+                             date_of_birth = (CURRENT_DATE - interval '50 years')::date
+                       WHERE id = %(p)s""", dict(p=p['id']))
+    rows = [r for r in client.get('/admin/growth/queue?format_redraw=1', headers=H).get_json()
+            if r['request_key'] == rk]
+    assert len(rows) == 2
+    for row in rows:
+        assert row['subject']['first_name'] == before['subject']['first_name']
+        assert row['subject']['age'] == before['subject']['age']
+        assert row['subject']['country'] == before['subject']['country']
+    _redraw(client, rk)
+    with api_tx('read committed') as tx:
+        assert tx.execute("SELECT count(*) AS n FROM publishing_queue WHERE request_key = %(rk)s "
+                          "AND format_redraw_subject IS NOT NULL", dict(rk=rk)).fetchone()['n'] == 0

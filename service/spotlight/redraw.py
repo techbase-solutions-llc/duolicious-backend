@@ -23,8 +23,11 @@ none calls storage.
 """
 from __future__ import annotations
 
-from typing import Optional
+import json
+import re
+from typing import Callable, Optional
 
+from service.config import WEB_BASE_URL
 from service.spotlight.cleanup import enqueue_asset_delete, is_referenced
 from service.spotlight.revisions import consent_complete
 
@@ -37,9 +40,73 @@ REDRAWABLE = ('review', 'scheduled')
 TERMINAL = ('published', 'cancelled')
 UNRESOLVED_DELIVERY = ('attempting', 'delivery_unknown')
 
+class SubjectChanged(ValueError):
+    """The member's name, age or country is no longer what the approved card
+    showed, or the approved caption cannot say what it showed (`field` is
+    'name', 'age', 'country' or 'caption'). A redraw would draw something the
+    member never approved, so it is refused."""
+
+    def __init__(self, field: str):
+        super().__init__('subject_changed')
+        self.field = field
+
+
+# What the card prints about its member, as the tick reads it (_Q_ROWS), and
+# their age on the day they approved this revision.
+_Q_SUBJECT = """
+    SELECT split_part(p.name, ' ', 1) AS first_name,
+           date_part('year', age(p.date_of_birth))::int AS age_now,
+           date_part('year', age(c.approved_at::date, p.date_of_birth))::int AS age_then,
+           COALESCE(p.country, p.location_short_friendly) AS country
+      FROM person p
+      JOIN spotlight_revision_consent c
+        ON c.person_id = p.id AND c.revision_id = %(rev)s AND c.role = 'subject'
+     WHERE p.id = %(pid)s
+"""
+
+
+def _bare_caption(tx, request_key: str, caption: str) -> str:
+    """The revision's caption without the request's campaign link, which
+    `create_candidate` and `edit_caption` append after a space."""
+    link = tx.execute("SELECT key FROM campaign_link WHERE kind = %(k)s ORDER BY created_at ASC LIMIT 1",
+                      dict(k=f'post:{request_key}')).fetchone()
+    if link:
+        url = f"{WEB_BASE_URL.rstrip('/')}/s/{link['key']}"
+        caption = re.sub(re.escape(url) + r'(?:\?p=[a-z]+)?', '', caption)
+    return ' '.join(caption.split())
+
+
+def freeze_subject(tx, request_key: str, kind: str, person_id: Optional[int], revision_id: int,
+                   expected_caption: Callable[[str, str, int, Optional[str]], str]) -> dict:
+    """The name, age and country the approved card showed, frozen for the
+    redraw. The revision stores a caption and a photo, not these, so they
+    are checked: the age the member had on the day they approved must be
+    their age now, and the approved caption must be exactly the sentence the
+    card's own caption builder (`expected_caption`) makes from today's name,
+    age and country. A custom caption cannot say what the card showed, so it
+    is refused as 'caption'. Raises SubjectChanged."""
+    live = tx.execute(_Q_SUBJECT, dict(pid=person_id, rev=revision_id)).fetchone() if person_id else None
+    if not live:
+        raise SubjectChanged('name')
+    if live['age_now'] != live['age_then']:
+        raise SubjectChanged('age')
+    caption = tx.execute("SELECT caption FROM spotlight_revision WHERE id = %(id)s",
+                         dict(id=revision_id)).fetchone()['caption']
+    bare = _bare_caption(tx, request_key, caption)
+    expected = expected_caption(kind, live['first_name'], live['age_then'], live['country'])
+    if bare != expected:
+        if not re.search(r'\b' + re.escape(live['first_name'] or '') + r'\b', bare):
+            raise SubjectChanged('name')
+        # The name is there: the sentence matches up to the name and age and
+        # differs after it (the country), or it is not the builder's at all.
+        head = expected.rsplit(',', 1)[0] if kind == 'member_of_week' else expected.split('.')[0]
+        raise SubjectChanged('country' if bare.startswith(head) else 'caption')
+    return dict(first_name=live['first_name'], age=live['age_then'], country=live['country'])
+
+
 _Q_LOCK_REQUEST = """
     SELECT id, request_key, platform, kind, status, delivery_state, cancellation_requested_at,
-           current_revision_id, image_key, format_redraw_requested_at
+           current_revision_id, image_key, format_redraw_requested_at, subject_person_id
       FROM publishing_queue
      WHERE request_key = (SELECT request_key FROM publishing_queue WHERE id = %(id)s)
      ORDER BY id
@@ -96,11 +163,14 @@ def lock_request(tx, queue_id) -> list:
     return tx.execute(_Q_LOCK_REQUEST, dict(id=queue_id)).fetchall()
 
 
-def request_format_redraw(tx, rows: list) -> dict:
+def request_format_redraw(tx, rows: list,
+                          expected_caption: Callable[[str, str, int, Optional[str]], str]) -> dict:
     """Hold every row of one request for a format-only redraw of its current
     revision. `rows` is `lock_request`'s answer. Raises ValueError with the
     first reason that refuses it: not_found, not_member_card, terminal,
-    bad_status, delivery_unresolved, withdrawn, not_approved.
+    bad_status, delivery_unresolved, withdrawn, not_approved; or
+    SubjectChanged (see `freeze_subject`). The frozen subject is stored on
+    the rows with the hold.
 
     Returns `already` (every row was held before this call, nothing
     written), `held` (how many rows are held), `revision_id`, and `old_keys`
@@ -127,10 +197,13 @@ def request_format_redraw(tx, rows: list) -> dict:
         raise ValueError('not_approved')
     waiting = [r['id'] for r in rows if r['format_redraw_requested_at'] is None]
     if waiting:
+        subject = freeze_subject(tx, rows[0]['request_key'], rows[0]['kind'], rows[0]['subject_person_id'],
+                                 revision_id, expected_caption)
         tx.execute(
-            """UPDATE publishing_queue SET format_redraw_requested_at = NOW(), updated_at = NOW()
+            """UPDATE publishing_queue
+                  SET format_redraw_requested_at = NOW(), format_redraw_subject = %(s)s::jsonb, updated_at = NOW()
                 WHERE id = ANY(%(ids)s)""",
-            dict(ids=waiting))
+            dict(ids=waiting, s=json.dumps(subject)))
     return dict(already=not waiting, held=len(rows), revision_id=revision_id,
                 old_keys={r['platform']: r['image_key'] for r in rows})
 
@@ -192,7 +265,8 @@ def finish_format_redraw(tx, request_key: str, revision_id: int, sha256: str) ->
             WHERE id = %(id)s""",
         dict(h=sha256, k=pinned['image_key'], u=pinned['image_url'], id=revision_id))
     tx.execute(
-        """UPDATE publishing_queue SET format_redraw_requested_at = NULL, updated_at = NOW()
+        """UPDATE publishing_queue SET format_redraw_requested_at = NULL, format_redraw_subject = NULL,
+                  updated_at = NOW()
             WHERE id = ANY(%(ids)s)""",
         dict(ids=[r['id'] for r in rows]))
     if previous and previous != pinned['image_key'] and not is_referenced(tx, previous):

@@ -380,6 +380,7 @@ _Q_ROWS = f"""
            -- A format-only redraw asked for and not yet landed (TEC-2113,
            -- migration 0096): the row is held out of the publish run.
            q.format_redraw_requested_at,
+           q.format_redraw_subject,
            -- A carousel's slides (TEC-1845), in order: only those stored so
            -- far, so the Growth tab can say how far a set has got.
            q.slide_count,
@@ -706,15 +707,19 @@ def _age_days(v: Optional[datetime]) -> Optional[int]:
 def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
     subject = None
     if r['subject_person_id'] is not None:
+        # A held format redraw (TEC-2113) draws the name, age and country the
+        # approved card showed, frozen when the redraw was asked for, never
+        # the live profile.
+        frozen = r.get('format_redraw_subject') or {}
         subject = dict(
             person_id=r['subject_person_id'],
-            first_name=r['first_name'],
-            age=r['age'],
+            first_name=frozen.get('first_name', r['first_name']),
+            age=frozen.get('age', r['age']),
             # `_Q_ROWS` selects the raw alpha-2 column; this is the one point
             # every consumer of those rows goes through (the operator's queue
             # list and the render tick that draws the card), so the code
             # becomes a country name here and nowhere downstream.
-            country=display_country(r['country']),
+            country=display_country(frozen['country'] if 'country' in frozen else r['country']),
             photo_url=photo_url(r['photo_uuid']) if r['photo_uuid'] else None,
         )
     row = dict(
@@ -1303,7 +1308,13 @@ def post_growth_queue_format_redraw(s: t.SessionInfo, qid: str):
         if not rows:
             abort(404)
         try:
-            result = redraw.request_format_redraw(tx, rows)
+            result = redraw.request_format_redraw(tx, rows, _redraw_expected_caption)
+        except redraw.SubjectChanged as e:
+            # Recorded: refused because the card it would draw is not the one
+            # the member approved.
+            _audit_redraw(tx, s, 'growth.queue.format_redraw.refused', queue_id=str(queue_id),
+                          request_key=rows[0]['request_key'], reason='subject_changed', field=e.field)
+            return dict(error='subject_changed', field=e.field), 409
         except ValueError as e:
             return dict(error=str(e)), 409
         if not result['already']:
@@ -2445,6 +2456,14 @@ def _member_of_week_caption(first_name: str, age, country: Optional[str]) -> str
     if country:
         return f'Member of the week: {first_name}, {age}, {country}.'
     return f'Member of the week: {first_name}, {age}.'
+
+
+def _redraw_expected_caption(kind: str, first_name: str, age, country: Optional[str]) -> str:
+    """The caption the card's own builder makes, which a format redraw
+    compares the approved caption with (redraw.freeze_subject)."""
+    if kind == 'welcome':
+        return _welcome_caption(first_name, country)
+    return _member_of_week_caption(first_name, age, country)
 
 
 def _suggest_reason(last_featured: Optional[datetime]) -> str:

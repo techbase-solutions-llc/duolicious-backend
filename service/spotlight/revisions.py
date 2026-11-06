@@ -75,7 +75,7 @@ _Q_OLD_KEYS = f"""
 _Q_UNRENDER = f"""
     UPDATE publishing_queue SET image_key = NULL, image_url = NULL, image_sha256 = NULL,
                                 render_attempts = 0, render_next_attempt_at = NULL, render_error = NULL,
-                                format_redraw_requested_at = NULL
+                                format_redraw_requested_at = NULL, format_redraw_subject = NULL
      WHERE request_key = %(rk)s AND {_REPOINT_SCOPE.format(q='')}
 """
 
