@@ -38,22 +38,35 @@ say which way the list is ordered, so the pass works either way):
      finished with nothing left over.
   3. Storing is idempotent on the Resend email id, so an email read twice
      is stored once, and one already stored is never fetched again.
+  4. Resend allows 10 requests a second for the whole Techbase team, so
+     the client spaces its calls (service/support_inbox/resend.py). A 429
+     stops the pass where it is and keeps the place, as the page limit
+     does; it is recorded in the inbox status as 'ResendError 429', and
+     what the pass copied before it stands.
 
 Mail received more than IMPORT_OPEN_DAYS (14) days before the first pass
 is stored as handled, by 'Imported': the switch going on does not fill the
 open list and the owner's alert with old mail.
 
 A message that cannot be read (Resend answers 404 for it, or it cannot be
-parsed or stored) is skipped so the pass moves on; its Resend id is
-recorded in the inbox status (last_error), never its content. Any other
-Resend error, or the database going away, fails the pass, which reads from
-the same place next time.
+parsed or stored) goes on the retry list (support_inbox_state.retry_ids:
+its id, attempts, when it first failed and when it arrived) and is tried
+again at the start of each pass. synced_through does not move past it
+while it waits. After RETRY_MAX_ATTEMPTS (10) attempts or RETRY_FOR (24
+hours) it is given up, and its Resend id, never its content, is recorded
+in the inbox status (last_error); it stays on the list, marked given up,
+until Resend no longer holds it, so the walk does not take it up again.
+Any other Resend error, or the database going away, fails the pass, which
+reads from the same place next time.
 
 Skipped, never stored: mail sent by the support address itself, automatic
 replies (Auto-Submitted, X-Autoreply, X-Autorespond, Precedence:
 auto_reply, and the mailer daemon), and anything older than the 1 year the
-copies are kept. A message skipped, or that could not be read, is not
-fetched again by the same process.
+copies are kept. Gmail's forwarding confirmation
+(forwarding-noreply@google.com) is never taken for an automatic reply: it
+carries the code that switches the forwarding on. A message skipped is not
+fetched again by the same process. Header text is stored without control
+characters.
 
 The member is the one account whose normalised email (normalize_email, as
 person.normalized_email holds it) matches the sender's. Two or none: no
@@ -69,6 +82,7 @@ last one recorded, so a broken key does not fill the log.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -96,6 +110,16 @@ SYNC_SLACK = timedelta(minutes=15)
 # Resend statuses that mean it does not know a continuation cursor.
 _CURSOR_REFUSED = frozenset({400, 404, 422})
 
+# An email Resend lists but that cannot be read (404, or it cannot be parsed
+# or stored) is tried again on later passes, and given up after this many
+# attempts or this long since the first, whichever comes first. Until then
+# synced_through does not move past it.
+RETRY_MAX_ATTEMPTS = 10
+RETRY_FOR = timedelta(hours=24)
+# A given-up id stays on the list, marked, so the walk does not take it up
+# again, until Resend (30 days) no longer holds the email.
+GIVEN_UP_KEPT = timedelta(days=31)
+
 # Mail older than this, counted back from the first pass, is imported as
 # handled by IMPORTED_BY.
 IMPORT_OPEN_DAYS = 14
@@ -104,6 +128,9 @@ IMPORTED_BY = 'Imported'
 FAILED_IDS_LISTED = 10
 
 _AUTOMATIC_SENDERS = frozenset({'mailer-daemon', 'postmaster'})
+# Automatic, but stored: Gmail's forwarding confirmation carries the code
+# that switches the forwarding on.
+_NEVER_AUTOMATIC = frozenset({'forwarding-noreply@google.com'})
 
 
 # ---------------------------------------------------------------------------
@@ -247,13 +274,14 @@ def clean_text(text: str) -> str:
 
 def body_text(email: dict) -> str:
     """The plain text; failing that the HTML as plain text; failing that
-    nothing. Attachments are never read."""
+    nothing. Attachments are never read. Control characters but tab and
+    newline are dropped."""
     text = email.get('text')
     if isinstance(text, str) and text.strip():
-        return clean_text(text)
+        return clean_text(_CONTROLS.sub('', text))
     html = email.get('html')
     if isinstance(html, str) and html.strip():
-        return clean_text(html_to_text(html))
+        return clean_text(_CONTROLS.sub('', html_to_text(html)))
     return ''
 
 
@@ -308,23 +336,38 @@ def addressed_to(item: dict, targets: frozenset) -> bool:
     return bool(_addresses(item.get('to'), item.get('cc')) & targets)
 
 
+# Control characters but tab and newline; header-derived text keeps none.
+_CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
+_ALL_CONTROLS = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def _header_text(value: str) -> str:
+    """Header-derived text as stored: no control characters, one line."""
+    return clean_text(_ALL_CONTROLS.sub(' ', value))
+
+
 def parse(email: dict) -> Parsed:
     headers = _headers(email)
+    raw_from = str(email.get('from') or '')
     # Parsed before decoding, so a comma in an encoded display name cannot
-    # split the address.
+    # split the address. The name comes from the From header, else from a
+    # "Name <addr>" in Resend's own from field.
     name, header_address = parseaddr(headers.get('from', ''))
+    from_name, from_address = parseaddr(raw_from)
+    name = name or from_name
     name = _decode_header_value(name) if name else name
-    address = parseaddr(str(email.get('from') or ''))[1] or header_address
+    address = from_address or header_address
     subject = email.get('subject')
     if subject is None:
         subject = headers.get('subject', '')
-    rfc = str(email.get('message_id') or headers.get('message-id') or '').strip().strip('<>').strip()
+    rfc = _ALL_CONTROLS.sub('', str(email.get('message_id') or headers.get('message-id') or ''))
+    rfc = rfc.strip().strip('<>').strip()
     return Parsed(
         email_id=str(email['id']),
         rfc_message_id=rfc[:998] or None,
-        from_address=address.strip().lower()[:320],
-        from_name=(clean_text(name)[:200] or None) if name else None,
-        subject=clean_text(_decode_header_value(str(subject)))[:998],
+        from_address=_ALL_CONTROLS.sub('', address).strip().lower()[:320],
+        from_name=(_header_text(name)[:200] or None) if name else None,
+        subject=_header_text(_decode_header_value(str(subject)))[:998],
         body_text=body_text(email),
         received_at=parse_time(email.get('created_at')),
         headers=headers,
@@ -337,6 +380,10 @@ def skip_reason(p: Parsed, box: str, now: datetime) -> Optional[str]:
         return 'no_sender'
     if p.from_address == box:
         return 'own'
+    if p.received_at < now - timedelta(days=RETENTION_DAYS):
+        return 'too_old'
+    if p.from_address in _NEVER_AUTOMATIC:
+        return None
     if p.from_address.split('@', 1)[0] in _AUTOMATIC_SENDERS:
         return 'automatic'
     auto = p.headers.get('auto-submitted', '').strip().lower()
@@ -346,8 +393,6 @@ def skip_reason(p: Parsed, box: str, now: datetime) -> Optional[str]:
         return 'automatic'
     if p.headers.get('precedence', '').strip().lower() == 'auto_reply':
         return 'automatic'
-    if p.received_at < now - timedelta(days=RETENTION_DAYS):
-        return 'too_old'
     return None
 
 
@@ -409,8 +454,10 @@ def _known(ids: list[str]) -> set[str]:
         return {r['resend_email_id'] for r in tx.execute(_Q_KNOWN, dict(ids=ids)).fetchall()}
 
 
-# Ids this process skipped or could not read: not fetched again until it
-# restarts. Bounded, so a long-lived cron cannot grow it without end.
+# Ids this process skipped on purpose (automatic replies, own mail): not
+# fetched again until it restarts. Bounded, so a long-lived cron cannot grow
+# it without end. Mail that could not be read goes to the retry list
+# instead (support_inbox_state.retry_ids).
 _seen: set[str] = set()
 _SEEN_MAX = 50_000
 
@@ -428,14 +475,20 @@ def _remember(email_id: str) -> None:
 _Q_STATE = """
     INSERT INTO support_inbox_state (mailbox) VALUES (%(m)s)
     ON CONFLICT (mailbox) DO UPDATE SET mailbox = EXCLUDED.mailbox
-    RETURNING backfill_done, backfill_token, synced_through, walk_newest, last_error, first_pass_at
+    RETURNING backfill_done, backfill_token, synced_through, walk_newest, retry_ids, last_error,
+              first_pass_at
 """
 
 _Q_SAVE_READ = """
     UPDATE support_inbox_state
        SET backfill_done = %(done)s, backfill_token = %(token)s,
-           synced_through = %(synced)s, walk_newest = %(walk_newest)s
+           synced_through = %(synced)s, walk_newest = %(walk_newest)s,
+           retry_ids = %(retry)s::jsonb
      WHERE mailbox = %(m)s
+"""
+
+_Q_SAVE_RETRIES = """
+    UPDATE support_inbox_state SET retry_ids = %(retry)s::jsonb WHERE mailbox = %(m)s
 """
 
 _Q_CHECKED_OK = """
@@ -469,56 +522,122 @@ def _state(box: str) -> dict:
 
 
 def _save_read(box: str, *, done: bool, token: Optional[str], synced: Optional[datetime],
-               walk_newest: Optional[datetime]) -> None:
+               walk_newest: Optional[datetime], retry: dict) -> None:
     from database import api_tx
     with api_tx() as tx:
         tx.execute(_Q_SAVE_READ, dict(m=box, done=done, token=token, synced=synced,
-                                      walk_newest=walk_newest))
+                                      walk_newest=walk_newest, retry=json.dumps(retry)))
+
+
+def _save_retries(box: str, retry: dict) -> None:
+    from database import api_tx
+    with api_tx() as tx:
+        tx.execute(_Q_SAVE_RETRIES, dict(m=box, retry=json.dumps(retry)))
 
 
 # ---------------------------------------------------------------------------
 # one pass
 # ---------------------------------------------------------------------------
 
-def _take(client: ResendClient, ids: list[str], box: str, now: datetime, counts: dict,
-          first_pass_at: Optional[datetime]) -> None:
-    """Fetch and store each id not already stored or seen.
+class _RateLimited(Exception):
+    """Resend answered 429: the pass stops and keeps its place."""
 
-    One message that cannot be read is skipped and its id added to
-    counts['failed_ids']: Resend's 404 for it, or any error parsing or
-    storing it. Any other Resend error, and the database connection
-    failing, still fail the pass."""
+
+def _read_one(client: ResendClient, rid: str, box: str, now: datetime,
+              first_pass_at: Optional[datetime]) -> str:
+    """Fetch, parse and store one email: 'stored', 'already', 'skipped' or
+    'failed' (Resend's 404 for it, or any error parsing or storing it).
+    A 429 raises _RateLimited; any other Resend error, and the database
+    connection failing, raise and fail the pass."""
     import psycopg
     from database import api_tx
-    todo = [i for i in dict.fromkeys(ids) if i not in _seen]
+    try:
+        email = client.get_received(rid)
+    except ResendError as e:
+        if e.status == 429:
+            raise _RateLimited() from None
+        if e.status != 404:
+            raise
+        return 'failed'
+    try:
+        p = parse(email)
+        if skip_reason(p, box, now) is not None:
+            _remember(rid)
+            return 'skipped'
+        with api_tx() as tx:
+            new = store(tx, p, first_pass_at=first_pass_at)
+    except (psycopg.OperationalError, psycopg.InterfaceError):
+        raise
+    except Exception:  # noqa: BLE001 -- this message only; recorded by id, never content
+        return 'failed'
+    return 'stored' if new else 'already'
+
+
+def _give_up(entry: dict, now: datetime) -> bool:
+    first = _try_time(entry.get('first'))
+    return (int(entry.get('attempts') or 0) >= RETRY_MAX_ATTEMPTS
+            or first is None or now - first >= RETRY_FOR)
+
+
+def _retry(client: ResendClient, retry: dict, box: str, now: datetime, counts: dict,
+           first_pass_at: Optional[datetime]) -> None:
+    """Try each email on the retry list again. Read: off the list. Failed
+    again: one more attempt counted, and after RETRY_MAX_ATTEMPTS
+    attempts or RETRY_FOR since the first, given up and named in
+    counts['failed_ids']."""
+    known = _known(list(retry))
+    for rid in list(retry):
+        entry = retry[rid]
+        if entry.get('given_up'):
+            # Kept only so the list's walk does not take it up again, until
+            # Resend no longer holds it.
+            first = _try_time(entry.get('first'))
+            if first is None or now - first > GIVEN_UP_KEPT:
+                del retry[rid]
+            continue
+        if rid in known:
+            del retry[rid]
+            continue
+        outcome = _read_one(client, rid, box, now, first_pass_at)
+        if outcome == 'failed':
+            entry['attempts'] = int(entry.get('attempts') or 0) + 1
+            if _give_up(entry, now):
+                entry['given_up'] = True
+                counts['failed_ids'].append(rid)
+            continue
+        del retry[rid]
+        counts[outcome] += 1
+
+
+def _take(client: ResendClient, items: list[dict], box: str, now: datetime, counts: dict,
+          retry: dict, first_pass_at: Optional[datetime]) -> None:
+    """Fetch and store each email not already stored, skipped or waiting on
+    the retry list. One that cannot be read goes on the retry list."""
+    created = {}
+    for item in items:
+        created.setdefault(str(item['id']), item.get('created_at'))
+    todo = [i for i in created if i not in _seen and i not in retry]
     known = _known(todo)
     for rid in todo:
         if rid in known:
             counts['already'] += 1
             continue
-        try:
-            email = client.get_received(rid)
-        except ResendError as e:
-            if e.status != 404:
-                raise
-            counts['failed_ids'].append(rid)
-            _remember(rid)
+        outcome = _read_one(client, rid, box, now, first_pass_at)
+        if outcome == 'failed':
+            at = _try_time(created[rid])
+            retry[rid] = dict(attempts=1, first=now.isoformat(), created=at.isoformat() if at else None)
+            counts['retrying'] += 1
             continue
-        try:
-            p = parse(email)
-            if skip_reason(p, box, now) is not None:
-                counts['skipped'] += 1
-                _remember(rid)
-                continue
-            with api_tx() as tx:
-                new = store(tx, p, first_pass_at=first_pass_at)
-        except (psycopg.OperationalError, psycopg.InterfaceError):
-            raise
-        except Exception:  # noqa: BLE001 -- this message only; recorded by id, never content
-            counts['failed_ids'].append(rid)
-            _remember(rid)
-            continue
-        counts['stored' if new else 'already'] += 1
+        counts[outcome] += 1
+
+
+def _hold_back(synced: Optional[datetime], retry: dict) -> Optional[datetime]:
+    """synced_through never passes an email still on the retry list."""
+    waiting = [t for t in (_try_time(e.get('created')) for e in retry.values() if not e.get('given_up'))
+               if t is not None]
+    if synced is None or not waiting:
+        return synced
+    return min(synced, min(waiting) - timedelta(microseconds=1))
 
 
 def poll(client: ResendClient, box: str, targets: frozenset, *,
@@ -526,7 +645,7 @@ def poll(client: ResendClient, box: str, targets: frozenset, *,
     """One pass over Resend's received list. Returns counts only."""
     now = now or datetime.now(timezone.utc)
     counts: dict = dict(stored=0, skipped=0, already=0, pages=0, capped=0, restarted=0,
-                        failed_ids=[])
+                        retrying=0, rate_limited=0, failed_ids=[])
     state = _state(box)
     first_pass_at = state['first_pass_at']
     if first_pass_at is None:
@@ -534,48 +653,71 @@ def poll(client: ResendClient, box: str, targets: frozenset, *,
         with api_tx() as tx:
             first_pass_at = tx.execute(_Q_FIRST_PASS, dict(m=box, at=now)).fetchone()['first_pass_at']
 
+    retry: dict = dict(state['retry_ids'] or {})
     synced: Optional[datetime] = state['synced_through']
     token: Optional[str] = state['backfill_token']
     walk_newest: Optional[datetime] = state['walk_newest'] if token else None
     descending: Optional[bool] = None
     previous: Optional[datetime] = None
+    page_cursor = token
 
-    while True:
-        if counts['pages'] >= MAX_PAGES_PER_PASS:
-            counts['capped'] = 1
-            _save_read(box, done=False, token=token, synced=synced, walk_newest=walk_newest)
-            break
-        try:
-            page = client.list_received(limit=PAGE_LIMIT, after=token)
-        except ResendError as e:
-            if token and e.status in _CURSOR_REFUSED and not counts['restarted']:
-                counts['restarted'] = 1
-                token, walk_newest, descending, previous = None, None, None, None
-                continue
-            raise
-        counts['pages'] += 1
-        items = [i for i in page.get('data') or [] if isinstance(i, dict) and i.get('id')]
-        times = []
-        for item in items:
-            at = _try_time(item.get('created_at'))
-            times.append(at)
-            if at is None:
-                continue
-            if descending is None and previous is not None and at != previous:
-                descending = at < previous
-            previous = at
-            walk_newest = at if walk_newest is None else max(walk_newest, at)
-        _take(client, [str(i['id']) for i in items if addressed_to(i, targets)], box, now, counts,
-              first_pass_at)
-        if items:
-            token = str(items[-1]['id'])
-        caught_up = (descending is True and synced is not None and bool(items)
-                     and all(at is not None and at < synced - SYNC_SLACK for at in times))
-        if not items or not page.get('has_more') or caught_up:
-            if walk_newest is not None:
-                synced = walk_newest if synced is None else max(synced, walk_newest)
-            _save_read(box, done=True, token=None, synced=synced, walk_newest=None)
-            break
+    try:
+        if retry:
+            _retry(client, retry, box, now, counts, first_pass_at)
+            _save_retries(box, retry)
+        while True:
+            if counts['pages'] >= MAX_PAGES_PER_PASS:
+                counts['capped'] = 1
+                _save_read(box, done=False, token=token, synced=synced, walk_newest=walk_newest,
+                           retry=retry)
+                break
+            page_cursor = token
+            try:
+                page = client.list_received(limit=PAGE_LIMIT, after=token)
+            except ResendError as e:
+                if e.status == 429:
+                    raise _RateLimited() from None
+                if token and e.status in _CURSOR_REFUSED and not counts['restarted']:
+                    counts['restarted'] = 1
+                    token, walk_newest, descending, previous = None, None, None, None
+                    continue
+                raise
+            counts['pages'] += 1
+            items = [i for i in page.get('data') or [] if isinstance(i, dict) and i.get('id')]
+            times = []
+            for item in items:
+                at = _try_time(item.get('created_at'))
+                times.append(at)
+                if at is None:
+                    continue
+                if descending is None and previous is not None and at != previous:
+                    descending = at < previous
+                previous = at
+                walk_newest = at if walk_newest is None else max(walk_newest, at)
+            _take(client, [i for i in items if addressed_to(i, targets)], box, now, counts, retry,
+                  first_pass_at)
+            if items:
+                token = str(items[-1]['id'])
+            caught_up = (descending is True and synced is not None and bool(items)
+                         and all(at is not None and at < synced - SYNC_SLACK for at in times))
+            if not items or not page.get('has_more') or caught_up:
+                if walk_newest is not None:
+                    synced = walk_newest if synced is None else max(synced, walk_newest)
+                synced = _hold_back(synced, retry)
+                _save_read(box, done=True, token=None, synced=synced, walk_newest=None, retry=retry)
+                break
+    except _RateLimited:
+        # Keep the place: the page being read when Resend said 429 is read
+        # again next pass (what it stored is not fetched again).
+        counts['rate_limited'] = 1
+        if page_cursor is None:
+            _save_read(box, done=bool(state['backfill_done']), token=None, synced=state['synced_through'],
+                       walk_newest=None, retry=retry)
+        else:
+            _save_read(box, done=False, token=page_cursor, synced=state['synced_through'],
+                       walk_newest=walk_newest, retry=retry)
+        counts['backfill_done'] = page_cursor is None and bool(state['backfill_done'])
+        return counts
 
     counts['backfill_done'] = not counts['capped']
     return counts
@@ -628,7 +770,7 @@ def tick(make_client: Optional[Callable[[str], ResendClient]] = None,
     try:
         counts = poll(make_client(key), box, frozenset({box, inbound}), now=now)
     except Exception as exc:  # noqa: BLE001 -- recorded by class name only, never content
-        error = _error_name(exc)
+        error = _error_name(exc)[:200]
         if _record_failure(box, error) != error:
             print(f'support_inbox: check failed ({error})', flush=True)
         return {'error': error}
@@ -638,12 +780,22 @@ def tick(make_client: Optional[Callable[[str], ResendClient]] = None,
         listed = ', '.join(failed[:FAILED_IDS_LISTED])
         more = f' and {len(failed) - FAILED_IDS_LISTED} more' if len(failed) > FAILED_IDS_LISTED else ''
         note = f'{len(failed)} message(s) {SKIPPED_NOTE}: Resend ids {listed}{more}'
+    if counts['rate_limited']:
+        # Not a failed pass: what it copied stands and the place is kept.
+        # Recorded, and printed when it changes, as a failure is.
+        error = ('ResendError 429' + (f'; {note}' if note else ''))[:200]
+        if _record_failure(box, error) != error:
+            print(f'support_inbox: Resend rate limit ({error}); '
+                  f"{counts['stored']} new message(s) copied, the rest next pass", flush=True)
+        return counts
     with api_tx() as tx:
         tx.execute(_Q_CHECKED_OK, dict(m=box, e=note, note=f'%{SKIPPED_NOTE}%'))
-    if counts['stored'] or counts['capped'] or counts['restarted'] or failed:
+    if counts['stored'] or counts['capped'] or counts['restarted'] or failed or counts['retrying']:
         print(f"support_inbox: {counts['stored']} new message(s) copied, "
               f"{counts['skipped']} skipped"
-              + (f', {len(failed)} could not be read' if failed else '')
+              + (f", {counts['retrying']} could not be read and will be tried again"
+                 if counts['retrying'] else '')
+              + (f', {len(failed)} given up after trying again' if failed else '')
               + (', the saved place in the list was gone so it was read again from the top'
                  if counts['restarted'] else '')
               + (f', page limit ({MAX_PAGES_PER_PASS}) reached so the rest is read next pass'

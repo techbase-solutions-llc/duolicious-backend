@@ -850,7 +850,7 @@ def test_a_failed_support_read_does_not_break_the_tick(guard_mail, monkeypatch, 
 
 # --- 11. one bad message --------------------------------------------------------------------
 
-def test_a_message_resend_cannot_find_is_skipped_by_id_and_the_pass_moves_on(inbox, capsys):
+def test_a_message_resend_cannot_find_is_tried_again_and_stored_when_it_can_be(inbox, capsys):
     first, gone, good = inbox.ids(3)
     client = FakeResend([inbox.mail(first)])
     inbox.run(client)
@@ -858,47 +858,166 @@ def test_a_message_resend_cannot_find_is_skipped_by_id_and_the_pass_moves_on(inb
     client.deliver(inbox.mail(good))
     client.fail_ids[gone] = support_inbox.ResendError(404)
     out = inbox.run(client)
-    assert out['stored'] == 1 and out['failed_ids'] == [gone]
+    assert out['stored'] == 1 and out['retrying'] == 1 and out['failed_ids'] == []
     st = _state(inbox.mailbox)
-    assert st['last_error'] == f'1 message(s) could not be read and were skipped: Resend ids {gone}'
-    assert _stored([first, gone, good]) == {first, good}
+    assert set(st['retry_ids']) == {gone} and st['retry_ids'][gone]['attempts'] == 1
+    assert st['last_error'] is None
     printed = capsys.readouterr().out
-    assert '1 could not be read' in printed and gone not in printed and 'SECRET' not in printed
+    assert '1 could not be read and will be tried again' in printed and gone not in printed
+    assert 'SECRET' not in printed
 
-    # Not asked for again, and the note stays through a clean pass, so the
-    # admin still sees it.
+    # Resend can read it now: stored, and off the list.
+    del client.fail_ids[gone]
+    out = inbox.run(client)
+    assert out['stored'] == 1 and _stored([first, gone, good]) == {first, gone, good}
+    st = _state(inbox.mailbox)
+    assert st['retry_ids'] == {} and st['last_error'] is None
+
+
+def test_an_unreadable_message_is_given_up_after_10_attempts_and_holds_the_mark_till_then(inbox, capsys):
+    ids = inbox.ids(3)
+    start = datetime.now(timezone.utc) - timedelta(days=2)
+    client = FakeResend(_spaced(inbox, ids, start=start, minutes=60))
+    gone = ids[1]
+    client.fail_ids[gone] = support_inbox.ResendError(404)
+    inbox.run(client)
+    gone_at = start + timedelta(minutes=60)
+    for attempt in range(2, 10):
+        out = inbox.run(client)
+        assert out['failed_ids'] == []
+        st = _state(inbox.mailbox)
+        assert st['retry_ids'][gone]['attempts'] == attempt
+        # The mark stays below the email still waiting.
+        assert st['synced_through'] < gone_at
+    out = inbox.run(client)
+    assert out['failed_ids'] == [gone]
+    st = _state(inbox.mailbox)
+    assert st['retry_ids'][gone]['given_up'] is True
+    assert st['last_error'] == f'1 message(s) could not be read and were skipped: Resend ids {gone}'
+    assert abs(st['synced_through'] - (start + timedelta(minutes=120))) < timedelta(milliseconds=2)
+    assert _stored(ids) == {ids[0], ids[2]}
+    assert '1 given up after trying again' in capsys.readouterr().out
+    # The note stays through a clean pass, and the email is not asked for again.
     fetched = len(client.fetched)
     inbox.run(client)
-    assert len(client.fetched) == fetched
+    assert client.fetched[fetched:].count(gone) == 0
     assert _state(inbox.mailbox)['last_error'].startswith('1 message(s) could not be read')
 
 
-def test_a_message_that_cannot_be_parsed_or_stored_is_skipped(inbox, monkeypatch):
+def test_an_unreadable_message_is_given_up_24_hours_after_it_first_failed(inbox):
+    first, gone = inbox.ids(2)
+    now = datetime.now(timezone.utc)
+    client = FakeResend([inbox.mail(first), inbox.mail(gone)])
+    client.fail_ids[gone] = support_inbox.ResendError(404)
+    inbox.run(client, now=now)
+    assert inbox.run(client, now=now + timedelta(hours=23))['failed_ids'] == []
+    assert inbox.run(client, now=now + timedelta(hours=25))['failed_ids'] == [gone]
+    assert _state(inbox.mailbox)['retry_ids'][gone]['given_up'] is True
+    # Dropped from the list once Resend no longer holds the email (30 days).
+    del client.emails[gone]
+    inbox.run(client, now=now + timedelta(days=32))
+    assert _state(inbox.mailbox)['retry_ids'] == {}
+
+
+def test_a_message_that_cannot_be_parsed_or_stored_is_tried_again(inbox, monkeypatch):
     broken, unstorable, good = inbox.ids(3)
     client = FakeResend([inbox.mail(broken), inbox.mail(unstorable), inbox.mail(good)])
     real_get = client.get_received
+    unreadable = {broken}
 
     def get_received(email_id):
         email = dict(real_get(email_id))
-        if email_id == broken:
+        if email_id in unreadable:
             email['created_at'] = 'not a time'
         return email
 
     client.get_received = get_received
     real_store = support_inbox.store
+    unstorable_now = {unstorable}
 
     def store(tx, p, **kw):
-        if p.email_id == unstorable:
+        if p.email_id in unstorable_now:
             tx.execute('SELECT 1 FROM no_such_table')
         return real_store(tx, p, **kw)
 
     monkeypatch.setattr(support_inbox, 'store', store)
     out = inbox.run(client)
-    assert out['stored'] == 1 and sorted(out['failed_ids']) == sorted([broken, unstorable])
-    assert out['backfill_done'] is True
+    assert out['stored'] == 1 and out['retrying'] == 2 and out['backfill_done'] is True
     assert _stored([broken, unstorable, good]) == {good}
+    assert set(_state(inbox.mailbox)['retry_ids']) == {broken, unstorable}
+
+    unreadable.clear()
+    unstorable_now.clear()
+    out = inbox.run(client)
+    assert out['stored'] == 2 and _stored([broken, unstorable, good]) == {broken, unstorable, good}
+    assert _state(inbox.mailbox)['retry_ids'] == {}
+
+
+# --- Resend's rate limit -------------------------------------------------------------------
+
+@pytest.mark.parametrize('where', ['list', 'email'])
+def test_a_429_stops_the_pass_and_keeps_its_place(inbox, capsys, where):
+    ids = inbox.ids(6)
+    start = datetime.now(timezone.utc) - timedelta(days=2)
+    client = FakeResend(_spaced(inbox, ids, start=start))
+    # Newest first, pages of 2: [5, 4], [3, 2], [1, 0].
+    if where == 'list':
+        client.fail_after[ids[4]] = support_inbox.ResendError(429)
+    else:
+        client.fail_ids[ids[3]] = support_inbox.ResendError(429)
+    out = inbox.run(client)
+    assert out['rate_limited'] == 1 and out['stored'] == 2
     st = _state(inbox.mailbox)
-    assert '2 message(s) could not be read' in st['last_error'] and 'SECRET' not in st['last_error']
+    assert st['last_error'] == 'ResendError 429' and st['backfill_token'] == ids[4]
+    assert st['synced_through'] is None and not st['backfill_done']
+    assert 'Resend rate limit (ResendError 429)' in capsys.readouterr().out
+    inbox.run(client)  # the same 429 again prints nothing more
+    client.fail_ids.clear()
+    client.fail_after.clear()
+    out = inbox.run(client)
+    assert out['rate_limited'] == 0 and out['backfill_done'] is True
+    assert _stored(ids) == set(ids)
+    st = _state(inbox.mailbox)
+    assert st['last_error'] is None and st['backfill_token'] is None
+    assert capsys.readouterr().out.count('rate limit') == 0
+
+
+def test_the_client_spaces_its_calls_by_half_a_second_or_more():
+    from service.support_inbox import resend
+    assert resend.MIN_INTERVAL_SECONDS >= 0.5
+
+
+# --- Gmail's forwarding confirmation, names and control characters ----------------------------
+
+def test_gmails_forwarding_confirmation_is_stored(inbox):
+    [confirm] = inbox.ids(1)
+    inbox.run(FakeResend([inbox.mail(
+        confirm, to=(inbox.inbound_address,),
+        frm='Gmail Team <forwarding-noreply@google.com>',
+        extra_headers={'Auto-Submitted': 'auto-generated', 'Precedence': 'auto_reply'})]))
+    [row] = _rows([confirm])
+    assert row['from_address'] == 'forwarding-noreply@google.com' and row['status'] == 'open'
+
+
+def test_the_name_comes_from_resends_from_field_when_the_header_has_none():
+    msg = rmail('x', frm='rivka@ahavah-test.invalid')
+    msg['from'] = 'Rivka Levi <Rivka@ahavah-test.invalid>'
+    p = support_inbox.parse(msg)
+    assert p.from_name == 'Rivka Levi' and p.from_address == 'rivka@ahavah-test.invalid'
+
+
+def test_control_characters_never_reach_the_database(inbox):
+    [mid] = inbox.ids(1)
+    email = inbox.mail(mid, frm='Ri' + chr(7) + 'vka <rivka@ahavah-test.invalid>',
+                       subject='Help' + chr(0) + chr(27) + '[31m now',
+                       message_id='<a' + chr(0) + chr(1) + 'b@mail.ahavah-test.invalid' + chr(13) + chr(10) + '>',
+                       text='Line one' + chr(0) + chr(8) + '\nLine two')
+    inbox.run(FakeResend([email]))
+    [row] = _rows([mid])
+    for field in ('rfc_message_id', 'subject', 'from_name', 'from_address', 'body_text'):
+        assert not any(ord(c) < 32 and c not in '\n\t' for c in row[field]), field
+    assert row['rfc_message_id'] == 'ab@mail.ahavah-test.invalid'
+    assert row['body_text'] == 'Line one\nLine two'
 
 
 def test_any_other_resend_error_still_fails_the_pass(inbox):

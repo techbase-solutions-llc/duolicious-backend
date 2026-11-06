@@ -22,6 +22,11 @@
 --                                    by a read the page limit cut short;
 --                                    backfill_token then holds the id it
 --                                    carries on from
+--   support_inbox_state.retry_ids    emails Resend listed that could not be
+--                                    read, tried again each pass: Resend id
+--                                    -> attempts, when it first failed, when
+--                                    it arrived. Ids and times only, never
+--                                    content.
 BEGIN;
 
 ALTER TABLE support_message ADD COLUMN IF NOT EXISTS resend_email_id TEXT;
@@ -34,5 +39,6 @@ ALTER TABLE support_message ALTER COLUMN gmail_thread_id DROP NOT NULL;
 
 ALTER TABLE support_inbox_state ADD COLUMN IF NOT EXISTS synced_through TIMESTAMPTZ;
 ALTER TABLE support_inbox_state ADD COLUMN IF NOT EXISTS walk_newest TIMESTAMPTZ;
+ALTER TABLE support_inbox_state ADD COLUMN IF NOT EXISTS retry_ids JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 COMMIT;

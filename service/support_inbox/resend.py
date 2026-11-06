@@ -9,8 +9,9 @@ refuses urllib's TLS fingerprint; see smtp/__init__.py):
 
 Both need a full-access key; a sending-only key answers 401 or 403, raised
 as ResendError with the status and nothing else. Resend allows 10 requests a
-second per team, shared with the API's own sending, so calls here are
-spaced at least MIN_INTERVAL_SECONDS apart.
+second per team, and every Techbase project shares the team, so calls here
+are spaced at least MIN_INTERVAL_SECONDS (half a second) apart. A 429 is a
+ResendError like any other here; the pass stops on it and keeps its place.
 
 Tests never call Resend: they pass a fake client to
 service.support_inbox.tick, and a fake session to this class.
@@ -26,7 +27,7 @@ from service.support_inbox import ResendError
 BASE = 'https://api.resend.com/emails/receiving'
 TIMEOUT_SECONDS = 30
 USER_AGENT = 'ahavah-backend/1.0 (support inbox)'
-MIN_INTERVAL_SECONDS = 0.15
+MIN_INTERVAL_SECONDS = 0.5
 
 
 class ResendReceiving:
