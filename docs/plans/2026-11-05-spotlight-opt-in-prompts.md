@@ -12,7 +12,7 @@ Three new rows on the Growth tab's Emails table, each with the existing Preview,
 
 1. `spotlight_push`, a push to every activated member who is not staff, has push on and has not opted in to Spotlight. Title "Be featured on Ahavah", body "Turn on Spotlight and you could be our member of the week." A tap opens `/settings/privacy`, where the Spotlight switch is.
 2. `e1_push_off`, the existing Spotlight announcement email (E1, same builder, same single-use confirm link) to every activated member who is not staff, has no push subscription and has not opted in.
-3. `card_push`, a push to each member whose drawn Spotlight card is waiting for their approval and whose card-ready email has gone. Title "Your Spotlight card is ready", body "Open the email from Ahavah and tap Approve to be featured." (true for a card emailed days ago too) The same push now also goes on its own when a drawn card's card-ready email is queued (the `e4-drawn` path), so the owner presses Send only for cards drawn before this change, such as the 9 Nov member of the week.
+3. `card_push`, a push to each member whose drawn Spotlight card is waiting for their approval and whose card-ready email has gone. Title "Your Spotlight card is ready", body "Open the email from Ahavah and tap Approve to be featured." (true for a card emailed days ago too) The same push also goes on its own when a drawn card's card-ready email is queued (the `e4-drawn` path), while `AHAVAH_SPOTLIGHT_CARD_PUSH_ENABLED` is on (off by default), so the owner presses Send only for cards drawn before this change, such as the 9 Nov member of the week.
 
 ## How it works
 
