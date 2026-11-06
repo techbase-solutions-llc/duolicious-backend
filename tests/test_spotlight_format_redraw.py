@@ -324,6 +324,28 @@ def test_a_redraw_finishing_after_the_slot_is_audited_as_late(client, make_perso
     assert [row['scheduled_for'] for row in _rows(rk)] == [datetime(2001, 1, 1, 12, tzinfo=timezone.utc)] * 2
 
 
+def test_a_square_redraw_is_refused_and_the_card_stays_held(client, make_person, storage, approvals):
+    """Asked for before the 4:5 renderer is live: the tick still draws
+    square, and that must not clear the hold and post the square card."""
+    A, _ = _admin(make_person)
+    _, rk = _approved_card(client, make_person, A, slot=PAST_SLOT)
+    before = _rows(rk)
+    assert _ask(client, rk, A).status_code == 200
+    for platform in ('facebook', 'instagram'):
+        r = client.post(f'/admin/growth/queue/{rk}/format-redraw/image',
+                        json={'platform': platform, 'image_base64': _image((1080, 1080), 'navy', 'JPEG'),
+                              'content_type': 'image/jpeg'}, headers=H)
+        assert r.status_code == 400 and r.get_json() == {'error': 'invalid_image', 'reason': 'bad_dimensions'}
+    rows = _rows(rk)
+    assert all(row['format_redraw_requested_at'] is not None for row in rows)
+    assert [row['image_key'] for row in rows] == [row['image_key'] for row in before]
+    assert storage['put'] == [k for k in storage['put'] if not k.endswith('.jpg')]   # nothing uploaded
+    assert _claimed(rk) == []
+    # Once the renderer draws 4:5, the same card goes through.
+    _redraw(client, rk)
+    assert len(_claimed(rk)) == 2
+
+
 def test_dispatch_refuses_a_held_row(make_person):
     """Second guard behind the claim filter: a held row that somehow holds a
     lease is refused before any Graph call."""

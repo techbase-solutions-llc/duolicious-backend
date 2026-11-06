@@ -1340,8 +1340,12 @@ def post_growth_queue_format_redraw_image(request_key: str):
         data = base64.b64decode(encoded, validate=True)
     except Exception:
         abort(400)
+    # 4:5 only (review of 6 Nov 2026). The redraw exists to move an approved
+    # card to 4:5; a square card here means the renderer has not changed yet,
+    # and accepting it would clear the hold and post the square card. Refused,
+    # the card stays held and waits for a tick that draws 4:5.
     try:
-        sha256 = st.validate_card_image(data, content_type)
+        sha256 = st.validate_card_image(data, content_type, sizes=(st.BRAND_CARD_SIZE,))
     except InvalidImage as e:
         return dict(error='invalid_image', reason=str(e)), 400
 
