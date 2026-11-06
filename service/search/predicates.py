@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Optional
 
 from service.admin.queries.members import member_sql
+from service.testers import tester_sql
 
 
 def gender_sql(p: str) -> str:
@@ -102,8 +103,10 @@ def deck_base_sql(p: str, owner: Optional[str]) -> str:
     not hidden from strangers, not held for verification, with an approved
     photo. With `owner` (an SQL expression for the viewer's person id), not
     the viewer, and no block or unmatch between the two either way. A
-    visitor (owner None) has no pairs."""
-    pairs = ''
+    visitor (owner None) has no pairs, and is never a tester, so testers
+    are left out of a visitor's counts (TEC-2135)."""
+    pairs = f"""
+      AND NOT {tester_sql(p)}"""
     if owner is not None:
         pairs = f"""
       AND {p}.id <> {owner}

@@ -27,7 +27,7 @@ _Q_TARGETS = """
      WHERE unsubscribed_at IS NULL
     UNION
     SELECT email FROM person
-     WHERE activated
+     WHERE activated AND NOT ('tester' = ANY(COALESCE(roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
     ORDER BY email
 """
 

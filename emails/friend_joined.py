@@ -35,9 +35,13 @@ FROM_ADDR = f"support@{EMAIL_DOMAIN}"
 TARGET = f"{WEB_BASE_URL}/invite"
 SUBJECT = "Someone you invited has joined Ahavah"
 
+# A tester's invitee who is a member, or a member's invitee who is a
+# tester, is never news to the inviter (TEC-2135). Tester to tester is,
+# so the flow can be tested.
 _Q_INVITER = """
     SELECT id, email FROM person
      WHERE uuid::text = %(u)s AND activated AND deletion_requested_at IS NULL
+       AND NOT is_tester_split_pair(id, %(f)s)
 """
 
 
@@ -64,7 +68,7 @@ def friend_joined_html(cta_url: str, unsubscribe_url: str) -> str:
 
 
 def _queue(tx, inviter_uuid: str, friend_person_id: int) -> Optional[int]:
-    row = tx.execute(_Q_INVITER, dict(u=str(inviter_uuid))).fetchone()
+    row = tx.execute(_Q_INVITER, dict(u=str(inviter_uuid), f=friend_person_id)).fetchone()
     if not row or is_suppressed_send(row['email']):
         return None
     if campaign_unsubscribed(tx, row['id'], UNSUB_SCOPE):

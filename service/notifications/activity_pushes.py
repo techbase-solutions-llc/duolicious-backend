@@ -135,7 +135,9 @@ def _tz(alias: str) -> str:
 
 
 def _params(**extra) -> dict:
-    return dict(ex=_excluded(), sup=suppressed_sql_pattern(), **extra)
+    # Testers get these about other testers (TEC-2135): each is about one
+    # pair or one gathering, and the tester line already gates the pair.
+    return dict(ex=_excluded(testers=False), sup=suppressed_sql_pattern(), **extra)
 
 
 def _push(person_id: int, push: dict, event_kind: str) -> int:
@@ -237,6 +239,8 @@ _Q_NEW_GUESTS = f"""
              (SELECT max(l.sent_at) FROM push_send_log l
                WHERE l.person_id = p.id AND l.campaign = '{NEW_GUESTS}'), '-infinity'::timestamptz))
        AND (r.person_id IS NULL OR r.person_id <> p.id)
+       -- A guest across the tester line is not news (TEC-2135).
+       AND (r.person_id IS NULL OR NOT is_tester_split_pair(p.id, r.person_id))
      GROUP BY p.id, e.id
      ORDER BY p.id, e.starts_at, e.id
 """

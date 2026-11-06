@@ -33,6 +33,19 @@ _Q_EVENT = """
 """
 
 
+def guest_shown_sql(guest: str, organiser_member: str) -> str:
+    """SQL boolean: the RSVP row aliased `guest` is on the organiser's side
+    of the tester line (TEC-2135). A guest with no account always shows.
+    An organiser with a member account sees the guests that account could
+    see; one with none is a member, so sees no testers."""
+    return f"""({guest}.person_id IS NULL OR CASE
+          WHEN {organiser_member} IS NULL
+          THEN NOT EXISTS (SELECT 1 FROM person gp
+                            WHERE gp.id = {guest}.person_id AND {tester_sql('gp')})
+          ELSE NOT is_tester_split_pair({organiser_member}, {guest}.person_id)
+      END)"""
+
+
 def _now(now: Optional[datetime]) -> datetime:
     return now or datetime.now(timezone.utc)
 
@@ -268,11 +281,14 @@ def cancel_event(tx, organiser: dict, slug: str, note: Optional[str]) -> dict:
     return dict(notified=notified)
 
 
-_Q_LIST = """
+# Guests across the tester line from the organiser are not counted
+# (TEC-2135), as on the RSVP list. Binds %(m)s: the organiser's member id.
+_Q_LIST = f"""
     SELECT e.slug, e.title, e.starts_at, e.ends_at, e.status, e.paused_at IS NOT NULL AS paused,
            COALESCE(SUM(r.party_size) FILTER (WHERE r.status = 'going' AND r.confirmed_at IS NOT NULL), 0)::int AS going,
            COUNT(r.id) FILTER (WHERE r.status = 'going' AND r.confirmed_at IS NOT NULL)::int AS confirmed
       FROM event e LEFT JOIN event_rsvp r ON r.event_id = e.id
+                                         AND {guest_shown_sql('r', '%(m)s::int')}
      WHERE e.organiser_id = %(oid)s
      GROUP BY e.id
      ORDER BY e.starts_at, e.id
@@ -285,7 +301,8 @@ def organiser_view(tx, organiser: dict, now: Optional[datetime] = None) -> dict:
     from service.events.organisers import me
     now = _now(now)
     groups: dict[str, list] = dict(drafts=[], waiting=[], published=[], cancelled=[], ended=[])
-    for r in tx.execute(_Q_LIST, dict(oid=organiser['id'])).fetchall():
+    for r in tx.execute(_Q_LIST, dict(oid=organiser['id'],
+                                      m=organiser.get('member_person_id'))).fetchall():
         item = dict(slug=r['slug'], title=r['title'], starts_at=r['starts_at'].isoformat(),
                     status=r['status'], paused=r['paused'], going=r['going'],
                     confirmed=r['confirmed'])
@@ -300,19 +317,6 @@ def organiser_view(tx, organiser: dict, now: Optional[datetime] = None) -> dict:
         else:
             groups['published'].append(item)
     return dict(organiser=me(organiser), groups=groups)
-
-
-def guest_shown_sql(guest: str, organiser_member: str) -> str:
-    """SQL boolean: the RSVP row aliased `guest` is on the organiser's side
-    of the tester line (TEC-2135). A guest with no account always shows.
-    An organiser with a member account sees the guests that account could
-    see; one with none is a member, so sees no testers."""
-    return f"""({guest}.person_id IS NULL OR CASE
-          WHEN {organiser_member} IS NULL
-          THEN NOT EXISTS (SELECT 1 FROM person gp
-                            WHERE gp.id = {guest}.person_id AND {tester_sql('gp')})
-          ELSE NOT is_tester_split_pair({organiser_member}, {guest}.person_id)
-      END)"""
 
 
 def rsvp_list(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> dict:

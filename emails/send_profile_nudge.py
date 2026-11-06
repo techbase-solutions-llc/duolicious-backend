@@ -30,7 +30,7 @@ _Q_TARGETS = """
         NOT (ahavah_extra ? 'intent')                            AS needs_intent,
         NOT (ahavah_extra ? 'wantsChildren')                     AS needs_children
     FROM person
-    WHERE activated
+    WHERE activated AND NOT ('tester' = ANY(COALESCE(roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
     ORDER BY email
 """
 

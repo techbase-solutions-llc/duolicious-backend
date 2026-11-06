@@ -30,6 +30,7 @@ _Q_WINDOW = """
       FROM person
      WHERE activated
        AND email <> 'admin@ahavah.app'
+       AND NOT ('tester' = ANY(COALESCE(roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
        AND sign_up_time > %(since)s
      ORDER BY sign_up_time
 """

@@ -10,8 +10,9 @@
 -- surface that hides a reported or unmatched pair hides them too, in both
 -- directions. Nothing is deleted: revoking the role brings it all back.
 --
--- Staff (admin or mod) who are not testers are never split from anyone:
--- staff keep seeing everyone. Staff who are testers are testers.
+-- Staff are no exception: in the member app a tester and a non-tester never
+-- meet, staff included. Staff still see everyone in the admin panel, which
+-- does not read these functions for its lists.
 --
 -- Additive and idempotent (CREATE OR REPLACE only), as the deploy and the
 -- test fixtures both need. Never edit once shipped; a change is the next
@@ -32,11 +33,6 @@ AS $$
           -- Exactly one of the two is a tester.
           AND ('tester' = ANY(COALESCE(pa.roles, ARRAY[]::text[])))
               <> ('tester' = ANY(COALESCE(pb.roles, ARRAY[]::text[])))
-          -- The one who is not a tester is not staff.
-          AND NOT (COALESCE(pa.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
-                   AND NOT ('tester' = ANY(COALESCE(pa.roles, ARRAY[]::text[]))))
-          AND NOT (COALESCE(pb.roles, ARRAY[]::text[]) && ARRAY['admin', 'mod']::text[]
-                   AND NOT ('tester' = ANY(COALESCE(pb.roles, ARRAY[]::text[]))))
     );
 $$;
 

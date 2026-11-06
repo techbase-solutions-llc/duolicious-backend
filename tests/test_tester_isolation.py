@@ -7,8 +7,8 @@ users and only allowing those test accounts to interact with each other for
 the purpose of testing".
 
 A tester (roles holds 'tester') and a member who is not a tester never see
-or reach each other; testers see testers, men women and women men; staff
-who are not testers see everyone. What already exists across the line is
+or reach each other in the member app, staff included; testers see
+testers, men women and women men. What already exists across the line is
 hidden, never deleted, and comes back when the role is revoked. Campaign
 email and member counts leave testers out.
 """
@@ -121,8 +121,9 @@ def _uuids(w, *names):
     (['tester'], ['tester'], False),
     (['tester'], [], True),
     ([], ['tester'], True),
-    (['admin'], ['tester'], False),
-    (['mod'], ['tester'], False),
+    (['admin'], ['tester'], True),
+    (['mod'], ['tester'], True),
+    (['admin'], [], False),
     (['admin', 'tester'], [], True),
     (['mod', 'tester'], ['tester'], False),
 ])
@@ -190,9 +191,12 @@ def test_testers_open_each_others_profiles(client, world):
 
 
 @pytest.mark.parametrize('role', ['admin', 'mod'])
-def test_staff_who_are_not_testers_see_both_sides(client, world, role):
+def test_staff_who_are_not_testers_are_members_in_the_app(client, world, role):
+    # Ruling, 6 Nov 2026: in the member app a tester and a non-tester never
+    # meet, staff included; the admin panel still shows everyone.
     _grant(world['asher'], role)
-    assert _profile_status(client, world, 'asher', 'jess') == 200
+    assert _profile_status(client, world, 'asher', 'jess') == 404
+    assert _profile_status(client, world, 'jess', 'asher') == 404
     assert _profile_status(client, world, 'asher', 'miriam') == 200
 
 
@@ -368,6 +372,29 @@ def test_testers_are_left_out_of_campaign_email_and_counts(world):
     assert rows == {world['jess']['id']: False, world['miriam']['id']: True}
 
 
+def test_the_tester_email_lookup_never_fails_its_caller(monkeypatch, capsys):
+    from service import testers
+
+    testers.forget_tester_emails()
+    monkeypatch.setattr(testers, '_read_tester_emails', lambda: ['jess@example.test'])
+    assert testers.tester_emails() == ['jess@example.test']
+
+    def boom():
+        raise OSError('no database')
+    monkeypatch.setattr(testers, '_read_tester_emails', boom)
+    monkeypatch.setattr(testers, '_TTL_SECONDS', 0.0)
+    monkeypatch.setattr(testers, '_failure_logged', False)
+    # The last list it read, and one log line however often it fails.
+    assert testers.tester_emails() == ['jess@example.test']
+    monkeypatch.setattr(testers, '_retry_after', 0.0)
+    assert testers.tester_emails() == ['jess@example.test']
+    assert capsys.readouterr().out.count('tester email lookup failed (OSError)') == 1
+    # Before any list was read: none, never an error.
+    testers.forget_tester_emails()
+    assert testers.tester_emails() == []
+    testers.forget_tester_emails()
+
+
 def test_a_gathering_organiser_sees_only_guests_on_their_own_side(world):
     from service.events.manage import guest_shown_sql
     with api_tx() as tx:
@@ -428,6 +455,79 @@ def test_inbox_info_reads_a_thread_across_the_line_as_a_deleted_account(world):
     across = info('asher', 'jess')
     assert (across['name'], across['image_uuid'], across['conversation_location']) ==         (None, None, 'archive')
     assert info('jess', 'tobit')['name'] == 'IsoTobit'
+
+
+def test_no_unread_message_push_across_the_line(world):
+    from service.cron.notifications.sql import Q_UNREAD_INBOX
+    converse(world['asher'], world['jess'], 'Shalom Jess')     # member to tester
+    converse(world['jess'], world['tobit'], 'Shalom Tobit')    # tester to tester
+    with api_tx() as tx:
+        tx.execute("""UPDATE inbox SET timestamp = EXTRACT(EPOCH FROM NOW() - INTERVAL '1 hour')::bigint * 1000000
+                       WHERE luser = ANY(%(u)s)""", dict(u=list(_uuids(world, 'jess', 'tobit'))))
+        tx.execute("UPDATE person SET last_online_time = NOW() - INTERVAL '2 hours' WHERE id = ANY(%(i)s)",
+                   dict(i=[world['jess']['id'], world['tobit']['id']]))
+        due = {str(r['person_uuid']) for r in tx.execute(Q_UNREAD_INBOX).fetchall()}
+    assert world['tobit']['uuid'] in due
+    assert world['jess']['uuid'] not in due
+
+
+def test_the_organisers_going_total_leaves_out_guests_across_the_line(world, organiser, published,
+                                                                       confirmed_guest):
+    from service.events.manage import organiser_view
+    from service.events.organisers import organiser_for
+    o = organiser()
+    with api_tx() as tx:
+        tx.execute('UPDATE organiser SET member_person_id = %(m)s WHERE id = %(i)s',
+                   dict(m=world['asher']['id'], i=o['id']))
+    slug = published(organiser_row=o)
+    confirmed_guest(slug, name='IsoJess Guest', party_size=3, person_id=world['jess']['id'])
+    confirmed_guest(slug, name='IsoMiriam Guest', party_size=1, person_id=world['miriam']['id'])
+    with api_tx() as tx:
+        view = organiser_view(tx, organiser_for(tx, o['token']))
+    [item] = [i for g in view['groups'].values() for i in g if i['slug'] == slug]
+    assert (item['going'], item['confirmed']) == (1, 1)
+
+
+def test_a_visitors_matchmaker_count_leaves_out_testers(world):
+    from service.search.predicates import deck_base_sql
+    with api_tx() as tx:
+        shown = {r['id']: r['shown'] for r in tx.execute(
+            f"SELECT p.id, {deck_base_sql('p', None)} AS shown FROM person p WHERE p.id = ANY(%(i)s)",
+            dict(i=[world['jess']['id'], world['miriam']['id']])).fetchall()}
+    assert shown == {world['jess']['id']: False, world['miriam']['id']: True}
+
+
+def test_friend_joined_is_never_sent_across_the_line(world):
+    from emails.friend_joined import _Q_INVITER
+    with api_tx() as tx:
+        def inviter(who, friend):
+            return tx.execute(_Q_INVITER, dict(u=world[who]['uuid'],
+                                               f=world[friend]['id'])).fetchone()
+        assert inviter('asher', 'jess') is None
+        assert inviter('jess', 'miriam') is None
+        assert inviter('tobit', 'jess') is not None
+        assert inviter('asher', 'miriam') is not None
+
+
+def test_testers_still_get_reminders_and_pushes_about_testers(world):
+    from service.growth.queries import _excluded
+    with api_tx() as tx:
+        jess_email = tx.execute('SELECT lower(email) AS e FROM person WHERE id = %(i)s',
+                                dict(i=world['jess']['id'])).fetchone()['e']
+    assert jess_email in _excluded()
+    assert jess_email not in _excluded(testers=False)
+
+
+@pytest.mark.parametrize('module,name', [
+    ('emails.send_digest', '_Q_NEW'), ('emails.send_digest', '_Q_STATS'),
+    ('emails.send_new_features', '_Q_TARGETS'), ('emails.send_comeback', '_Q_TARGETS'),
+    ('emails.send_onboarding_nudge', '_Q_TARGETS'), ('emails.send_profile_nudge', '_Q_TARGETS'),
+    ('emails.send_member_welcome', '_Q_WINDOW'),
+    ('emails.send_first_match_announcement', '_Q_TARGETS'),
+])
+def test_the_hand_run_senders_leave_out_testers(module, name):
+    import importlib
+    assert "'tester' = ANY(" in getattr(importlib.import_module(module), name)
 
 
 # ---------------------------------------------------------------------------

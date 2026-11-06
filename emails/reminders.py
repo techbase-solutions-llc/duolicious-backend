@@ -245,7 +245,7 @@ def queue_match_reminders(tx, now: datetime) -> int:
     if not enabled(MATCH) or not held.in_reminder_window(now):
         return 0
     n = 0
-    for r in tx.execute(_Q_MATCHES, dict(ex=_excluded(), sup=suppressed_sql_pattern())).fetchall():
+    for r in tx.execute(_Q_MATCHES, dict(ex=_excluded(testers=False), sup=suppressed_sql_pattern())).fetchall():
         stage = _stage(int(r['days']))
         if stage is None:
             continue
@@ -263,7 +263,7 @@ def queue_message_reminders(tx, now: datetime) -> int:
     if not enabled(MESSAGE) or not held.in_reminder_window(now):
         return 0
     n = 0
-    for r in tx.execute(_Q_MESSAGES, dict(ex=_excluded(), sup=suppressed_sql_pattern())).fetchall():
+    for r in tx.execute(_Q_MESSAGES, dict(ex=_excluded(testers=False), sup=suppressed_sql_pattern())).fetchall():
         stage = _stage(int(r['days']))
         if stage is None:
             continue

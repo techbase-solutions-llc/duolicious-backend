@@ -37,6 +37,7 @@ _Q_TARGETS = f"""
     FROM person p
     WHERE NOT p.activated
       AND p.deletion_requested_at IS NULL
+      AND NOT ('tester' = ANY(COALESCE(p.roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
       AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
       AND p.sign_up_time > NOW() - make_interval(days => %(window_days)s)
       -- stalled, not mid-session: last touch over 6 hours ago

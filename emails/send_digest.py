@@ -31,7 +31,7 @@ NEW_WINDOW_DAYS = 14
 _Q_STATS = """
     SELECT
         (SELECT count(*) FROM person
-          WHERE activated AND email <> 'admin@ahavah.app') AS total_members,
+          WHERE activated AND email <> 'admin@ahavah.app' AND NOT ('tester' = ANY(COALESCE(roles, ARRAY[]::text[])))) AS total_members,
         (SELECT count(*) FROM ahavah_match) AS total_matches
 """
 
@@ -39,6 +39,7 @@ _Q_NEW = """
     SELECT name FROM person
     WHERE activated
       AND email <> 'admin@ahavah.app'
+      AND NOT ('tester' = ANY(COALESCE(roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
       AND sign_up_time > NOW() - make_interval(days => %(days)s)
     ORDER BY sign_up_time ASC
 """

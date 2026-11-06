@@ -32,6 +32,7 @@ _Q_TARGETS = f"""
       -- dormancy only: members who asked to delete (mig 0008 soft-delete
       -- grace window) are never contacted
       AND p.deletion_requested_at IS NULL
+      AND NOT ('tester' = ANY(COALESCE(p.roles, ARRAY[]::text[])))  -- test accounts (TEC-2135)
       AND NOT ({unsubscribed_predicate_sql(UNSUB_SCOPE, 'p.id')})
     ORDER BY p.email
 """
