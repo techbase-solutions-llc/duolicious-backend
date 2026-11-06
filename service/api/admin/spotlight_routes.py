@@ -63,6 +63,7 @@ from service.spotlight.cleanup import (abandoned_job_rows, abandoned_jobs, enque
 from service.spotlight.revisions import (consent_complete, create_revision,
                                          current_revision, edit_caption)
 from service.spotlight.growthposts import event_approval_slot
+from service.spotlight import redraw
 from service.spotlight.restdays import next_valid_slot, slot_problem
 from service.spotlight.roundup import roundup_caption, roundup_snapshot
 from service.spotlight.storage import InvalidImage
@@ -377,6 +378,9 @@ _Q_ROWS = f"""
            q.render_next_attempt_at,
            q.render_error,
            q.current_revision_id,
+           -- A format-only redraw asked for and not yet landed (TEC-2113,
+           -- migration 0096): the row is held out of the publish run.
+           q.format_redraw_requested_at,
            -- A carousel's slides (TEC-1845), in order: only those stored so
            -- far, so the Growth tab can say how far a set has got.
            q.slide_count,
@@ -438,6 +442,12 @@ _Q_ROWS = f"""
             OR (r.asset_hash IS NULL
                 AND q.status NOT IN ('cancelled', 'published', 'processing', 'scheduled')
                 AND q.kind = ANY(%(template)s::text[])))
+       -- The tick's listing of held member cards (TEC-2113): drawn again with
+       -- the current renderer and uploaded through the redraw's own path.
+       AND (%(format_redraw)s::bool IS NOT TRUE
+            OR (q.format_redraw_requested_at IS NOT NULL
+                AND q.status IN ('review', 'scheduled')
+                AND q.cancellation_requested_at IS NULL))
        -- Wave 3d Task 4 (acceptance 8c): a card whose render was reported
        -- failed sits out its backoff (`post_growth_queue_render_failed`), so
        -- one that keeps failing cannot hold a place in either render listing.
@@ -745,6 +755,9 @@ def _queue_row(r, consent_ok: Optional[bool] = None) -> dict:
         render_attempts=r['render_attempts'],
         render_next_attempt_at=_plain(r['render_next_attempt_at']),
         render_error=r['render_error'],
+        # TEC-2113: a format-only redraw is waiting for the next tick, and
+        # the row is held out of the publish run until it lands.
+        format_redraw_pending=r['format_redraw_requested_at'] is not None,
     )
     # Only kind 'roundup' rows carry a payload snapshot (stamped at creation
     # by post_growth_spotlight_roundup); every other kind leaves these keys
@@ -783,9 +796,10 @@ def get_growth_queue():
     # The old status filter keeps working unchanged for compatibility.
     needs_render = request.args.get('needs_render') in ('1', 'true', 'yes')
     template_render = request.args.get('template_render') in ('1', 'true', 'yes')
+    format_redraw = request.args.get('format_redraw') in ('1', 'true', 'yes')
     with api_tx('read committed') as tx:
         rows = tx.execute(_Q_ROWS, dict(status=status, due=due, needs_render=needs_render,
-                                        template_render=template_render,
+                                        template_render=template_render, format_redraw=format_redraw,
                                         held=list(CALENDAR_HELD_KINDS),
                                         template=list(TEMPLATE_KINDS))).fetchall()
         # Memoised per revision_id: both platform rows of a request share one
@@ -1255,6 +1269,133 @@ def post_growth_queue_render_failed(request_key: str):
         _audit(tx, s, 'growth.queue.render_failed', request_key=request_key, render_attempts=attempts)
     return dict(request_key=request_key, render_attempts=attempts,
                 render_next_attempt_at=_plain(next_attempt_at))
+
+
+# ---------------------------------------------------------------------------
+# Format-only redraw of an approved member card (TEC-2113)
+# ---------------------------------------------------------------------------
+# The owner, 6 Nov 2026: member cards move to 4:5, and an approved card is
+# redrawn without asking the member again ("it's just an aspect ratio fix").
+# service/spotlight/redraw.py holds the rules; these two routes are the
+# admin's request and the tick's upload. Neither queues an email or a push:
+# nothing here reaches `_enqueue_card_ready`, `_enqueue_card_ready_on_render`
+# or `complete_render_if_ready`.
+
+def _audit_redraw(tx, s, action, **metadata):
+    """Always a row in the audit log, the tick's uploads included: the
+    old and new artwork of an approved card has to be traceable afterwards,
+    and `_audit` only prints a cron call."""
+    if s is not None:
+        record_audit(tx, s, action, metadata=metadata)
+    else:
+        record_system_audit(tx, 'cron', action, metadata=metadata)
+
+
+@apost('/admin/growth/queue/<qid>/format-redraw')
+def post_growth_queue_format_redraw(s: t.SessionInfo, qid: str):
+    """Hold the whole request this row belongs to for a format-only redraw
+    of its current revision. The admin's daily tick draws it again with the
+    current renderer and uploads through the route below. Asking again while
+    one is pending changes nothing."""
+    require_admin(s)
+    queue_id = _qid(qid)
+    with api_tx() as tx:
+        rows = redraw.lock_request(tx, queue_id)
+        if not rows:
+            abort(404)
+        try:
+            result = redraw.request_format_redraw(tx, rows)
+        except ValueError as e:
+            return dict(error=str(e)), 409
+        if not result['already']:
+            _audit_redraw(tx, s, 'growth.queue.format_redraw', queue_id=str(queue_id),
+                          request_key=rows[0]['request_key'],
+                          revision_id=result['revision_id'], old_keys=result['old_keys'])
+    return dict(ok=True, already=result['already'], held=result['held'])
+
+
+@post('/admin/growth/queue/<request_key>/format-redraw/image', limiter=growth_limit)
+def post_growth_queue_format_redraw_image(request_key: str):
+    """The replace path: one platform row's new artwork for a held request,
+    drawn for the same revision. Refused (`no_redraw_pending`) for any row
+    that is not held, so it can never swap the artwork of an ordinary card.
+
+    Ordered as the plan sets out. The bytes are checked, then uploaded
+    privately, outside any transaction. The row's artwork is swapped in one
+    compare-and-set. When every held row carries these bytes, the objects of
+    any row already approved onto a slot are made public, again outside a
+    transaction, and only then is the revision moved and the hold taken off.
+    A failed public flip leaves the hold on; the next tick draws the card
+    again and finishes it."""
+    s = _gate()
+    body = _body()
+    platform = body.get('platform')
+    if platform not in PLATFORMS:
+        abort(400)
+    encoded = body.get('image_base64')
+    content_type = body.get('content_type')
+    if not isinstance(encoded, str) or not isinstance(content_type, str) \
+            or content_type not in st.CARD_IMAGE_TYPES:
+        abort(400)
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except Exception:
+        abort(400)
+    try:
+        sha256 = st.validate_card_image(data, content_type)
+    except InvalidImage as e:
+        return dict(error='invalid_image', reason=str(e)), 400
+
+    with api_tx('read committed') as tx:
+        if not tx.execute("SELECT 1 FROM publishing_queue WHERE request_key = %(rk)s AND platform = %(pl)s",
+                          dict(rk=request_key, pl=platform)).fetchone():
+            abort(404)
+        revision_id = redraw.redraw_target(tx, request_key, platform)
+    if revision_id is None:
+        return dict(error='no_redraw_pending'), 409
+
+    key = asset_key(request_key, revision_id, sha256, platform, content_type)
+    url = f'{USER_IMAGES_BASE_URL}/{key}'
+    try:
+        st.put_card_image(key, data, content_type)
+    except RuntimeError as e:
+        if str(e) != 'storage_unconfigured':
+            raise
+        return dict(error='storage_unavailable'), 503
+
+    public_keys = None
+    try:
+        with api_tx() as tx:
+            outcome, displaced = redraw.attach_redraw_image(tx, request_key, platform, revision_id,
+                                                            key, url, sha256)
+            if outcome == 'superseded':
+                if not is_referenced(tx, key):
+                    enqueue_asset_delete(tx, key)
+            else:
+                _audit_redraw(tx, s, 'growth.queue.format_redraw.image', request_key=request_key,
+                              platform=platform, revision_id=revision_id, old_key=displaced, new_key=key)
+                public_keys = redraw.ready_to_finish(tx, request_key, revision_id, sha256)
+    except (psycopg.errors.UniqueViolation, psycopg.errors.SerializationFailure):
+        with api_tx() as tx:
+            if not is_referenced(tx, key):
+                enqueue_asset_delete(tx, key)
+        return dict(error='image_race'), 409
+    if outcome == 'superseded':
+        return dict(error='superseded'), 409
+    if public_keys is None:
+        return dict(image_url=url, done=False)
+
+    try:
+        for public_key in public_keys:
+            st.make_public(public_key)
+    except Exception:
+        return dict(error='storage_unavailable'), 503
+
+    with api_tx() as tx:
+        done = redraw.finish_format_redraw(tx, request_key, revision_id, sha256)
+        if done is not None:
+            _audit_redraw(tx, s, 'growth.queue.format_redraw.done', request_key=request_key, **done)
+    return dict(image_url=url, done=done is not None)
 
 
 @get('/admin/growth/candidates', limiter=growth_limit)
