@@ -21,6 +21,7 @@ from emails.likes_waiting import (
     FROM_ADDR,
 )
 from service.campaigns import unsubscribed_predicate_sql
+from service.decisions.answered import passed_after_like_sql
 from service.config import WEB_BASE_URL
 from service.unsubscribe import make_url as _unsub_url
 from smtp import make_aws_smtp
@@ -50,6 +51,8 @@ _Q_TARGETS = f"""
       )
       -- and there is no block either way
       AND NOT is_blocked_pair(p.id, l.liker_id)
+      -- and not answered with a pass after it arrived (11 Nov 2026)
+      AND NOT {passed_after_like_sql('p.id', 'l.liker_id', 'l.created_at')}
       -- the liker still has an account worth answering
       AND EXISTS (
           SELECT 1 FROM person lp WHERE lp.id = l.liker_id AND lp.activated

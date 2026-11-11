@@ -19,6 +19,7 @@ from typing import Optional, Tuple
 from database import api_tx
 from service.photo_gate import gate_params
 from service.man_woman import man_woman_pair_sql
+from service.decisions.answered import passed_after_like_sql
 import duotypes as t
 
 
@@ -222,7 +223,7 @@ ORDER BY
 """
 
 
-Q_LIST_INCOMING_LIKES = """
+Q_LIST_INCOMING_LIKES = f"""
 -- People who liked the session user but for whom the session user has
 -- NOT yet decided (no reverse like, no skip / report).
 -- Powers /matches "Liked you" tab.
@@ -259,9 +260,11 @@ WHERE
         WHERE rev.liker_id = %(me_id)s
           AND rev.liked_id = l.liker_id
     )
-    -- Reports/blocks only, either direction. A plain pass must not erase
-    -- someone from the Liked-you tab (migration 0035).
+    -- Reports/blocks, either direction (migration 0035).
     AND NOT is_blocked_pair(%(me_id)s, l.liker_id)
+    -- A pass I made after this like arrived answers it (11 Nov 2026); a
+    -- pass made before it does not hide a later like.
+    AND NOT {passed_after_like_sql('%(me_id)s', 'l.liker_id', 'l.created_at')}
     -- Liker must still be activated (no soft-deleted accounts).
     AND liker.activated = TRUE
     -- Defensive: skip anyone we already share a confirmed match with

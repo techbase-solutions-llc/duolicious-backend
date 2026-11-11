@@ -12,6 +12,7 @@ from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.switches import enabled
 from service.campaigns.weekid import week_campaign_id
 from service.admin.queries.members import member_sql
+from service.decisions.answered import passed_after_like_sql
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded, count_newcomers_since, newcomers_since
 from service.questions.member import e2_question_line
@@ -134,13 +135,14 @@ def recipient_count() -> int:
 # of the Liked you tab (service/decisions Q_LIST_INCOMING_LIKES), unread
 # conversations by the inbox's counters (never the messages), and the
 # member's invite code.
-_Q_PERSONAL = """
+_Q_PERSONAL = f"""
     SELECT
       (SELECT count(*) FROM liked l
          JOIN person liker ON liker.id = l.liker_id AND liker.activated
         WHERE l.liked_id = p.id
           AND NOT EXISTS (SELECT 1 FROM liked rev WHERE rev.liker_id = p.id AND rev.liked_id = l.liker_id)
           AND NOT is_blocked_pair(p.id, l.liker_id)
+          AND NOT {passed_after_like_sql('p.id', 'l.liker_id', 'l.created_at')}
           AND NOT EXISTS (SELECT 1 FROM ahavah_match m
                            WHERE m.user_a_id = LEAST(p.id, l.liker_id)
                              AND m.user_b_id = GREATEST(p.id, l.liker_id))) AS likes,
