@@ -5,8 +5,8 @@ Pass-only + self-only: deletes only the caller's own un-reported skips
 and their own search_cache. Never touches likes, matches, reports/blocks,
 or any peer's rows -- the opposite of the old bidirectional /decisions/reset.
 Caller owns the tx so the debit + deletes commit atomically (rolled back
-together if the debit raises InsufficientTokens). reason='rewind' (a bulk
-pass-undo) is already allowed by migration 0015.
+together if the debit raises InsufficientTokens). Its ledger reason is
+'see_passes' (migration 0098), apart from the single-profile 'rewind'.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def perform(tx, person_uuid: str, person_id: int) -> dict:
     """
     if not tx.execute(_Q_HAS_PASSES, dict(p=person_id)).fetchone():
         raise NothingToSeeAgain()
-    debit(tx, person_uuid, COST, reason='rewind', metadata={'kind': 'see_passes'})
+    debit(tx, person_uuid, COST, reason='see_passes', metadata={'kind': 'see_passes'})
     tx.execute(_Q_CLEAR_SKIPS, dict(p=person_id))
     tx.execute(_Q_CLEAR_CACHE, dict(p=person_id))
     return {'ok': True}

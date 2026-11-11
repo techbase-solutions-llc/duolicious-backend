@@ -1634,3 +1634,24 @@ def otp_request_people_schema():
     for name in OTP_REQUEST_PEOPLE_MIGRATIONS:
         with api_tx() as tx:
             tx.execute((migrations / name).read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# See passes again (11 Nov 2026)
+# ---------------------------------------------------------------------------
+# Migration 0098: the 'see_passes' ledger reason. After 0091, whose reason
+# list lacks it. Idempotent, as the deploy needs. Autouse, since any test
+# that spends on "See passes again" writes the reason.
+
+SEE_PASSES_REASON_MIGRATION = '0098_see_passes_reason.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def see_passes_reason_schema(report_rewards_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / SEE_PASSES_REASON_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
