@@ -15,7 +15,7 @@ Every query binds %(ex)s with service.growth.queries._excluded().
 """
 from __future__ import annotations
 
-from service.admin.queries.engagement import _SENT_MESSAGES
+from service.admin.queries.engagement import member_sent_sql
 from service.admin.queries.members import counted_member_sql
 
 
@@ -34,18 +34,6 @@ def waiting_likes_sql() -> str:
            AND NOT EXISTS (SELECT 1 FROM skipped s
                             WHERE (s.subject_person_id = l.liked_id AND s.object_person_id = l.liker_id)
                                OR (s.subject_person_id = l.liker_id AND s.object_person_id = l.liked_id))
-    """
-
-
-def member_sent_sql(active: bool) -> str:
-    """One row per message sent between counted members (sender_id,
-    recipient_id, lo, hi, sent_at)."""
-    return f"""
-        SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
-          FROM ({_SENT_MESSAGES}) x
-          JOIN person xs ON xs.id = x.sender_id
-          JOIN person xr ON xr.id = x.recipient_id
-         WHERE {counted_member_sql('xs', active=active)} AND {counted_member_sql('xr', active=active)}
     """
 
 

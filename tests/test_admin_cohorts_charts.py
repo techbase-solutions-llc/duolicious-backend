@@ -50,6 +50,20 @@ def test_a_chart_with_one_value_keeps_every_day(client, admin_headers, monkeypat
 
 def test_the_referrals_route_sends_every_inviter_and_the_total(client, admin_headers):
     """The per-inviter table stopped at 50 of 70 with no word (TEC-2150):
-    the route sends every row and how many there are."""
-    body = client.get('/admin/cohorts/referrals', headers=admin_headers).get_json()
-    assert body['per_inviter_total'] == len(body['per_inviter'])
+    70 more inviters raise the total by 70, and every row is sent."""
+    import uuid as _uuid
+    get = lambda: client.get('/admin/cohorts/referrals', headers=admin_headers).get_json()
+    before = get()['per_inviter_total']
+    emails = [f'route-inviter-{_uuid.uuid4().hex[:12]}@example.com' for _ in range(70)]
+    with api_tx() as tx:
+        for e in emails:
+            tx.execute("""INSERT INTO beta_signup (email, referral_code, referral_intro_sent_at)
+                          VALUES (%(e)s, NULL, NOW())""", dict(e=e))
+    try:
+        body = get()
+        assert body['per_inviter_total'] == before + 70
+        assert len(body['per_inviter']) == body['per_inviter_total']
+        assert set(emails) <= {r['inviter'] for r in body['per_inviter']}
+    finally:
+        with api_tx() as tx:
+            tx.execute("DELETE FROM beta_signup WHERE email = ANY(%(e)s)", dict(e=emails))

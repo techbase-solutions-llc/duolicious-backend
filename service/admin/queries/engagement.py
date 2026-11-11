@@ -86,17 +86,23 @@ _MEMBER_LIKES = f"""
      WHERE {counted_member_sql('a', active=False)} AND {counted_member_sql('b', active=False)}
 """
 
-# A message with a counted member on both ends, as the Weekly funnel's.
-_COUNTED_SENT = f"""
-    SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
-      FROM ({_SENT_MESSAGES}) x
-      JOIN person xs ON xs.id = x.sender_id
-      JOIN person xr ON xr.id = x.recipient_id
-     WHERE {counted_member_sql('xs', active=False)} AND {counted_member_sql('xr', active=False)}
-"""
+
+
+def member_sent_sql(active: bool) -> str:
+    """One row per message sent between counted members (sender_id,
+    recipient_id, lo, hi, sent_at). The Weekly funnel and the waiting list
+    (community.py) and the KPIs below share it. It lives here, not in
+    community.py, because community.py imports this module."""
+    return f"""
+        SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
+          FROM ({_SENT_MESSAGES}) x
+          JOIN person xs ON xs.id = x.sender_id
+          JOIN person xr ON xr.id = x.recipient_id
+         WHERE {counted_member_sql('xs', active=active)} AND {counted_member_sql('xr', active=active)}
+    """
 
 Q_ENGAGEMENT_KPIS = f"""
-    WITH sent AS ({_COUNTED_SENT}),
+    WITH sent AS ({member_sent_sql(active=False)}),
     likes AS ({_MEMBER_LIKES}),
     -- One row per conversation, carrying how many distinct people have
     -- written in it. Two means both sides did.
