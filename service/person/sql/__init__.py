@@ -187,8 +187,6 @@ WITH random_otp AS (
     SELECT LPAD(FLOOR(RANDOM() * (10e5 + 1))::TEXT, 6, '0') AS otp
 ), zero_otp AS (
     SELECT '000000' AS otp
-), is_registered AS (
-    SELECT 1 WHERE     EXISTS (SELECT 1 FROM person WHERE normalized_email = %(normalized_email)s)
 ), is_unregistered AS (
     SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM person WHERE normalized_email = %(normalized_email)s)
 ), domain AS (
@@ -198,13 +196,12 @@ WITH random_otp AS (
     SELECT
         CASE
         WHEN
-                EXISTS (SELECT 1 FROM domain WHERE domain = 'example.com')
-            AND
-                EXISTS (SELECT 1 FROM is_registered)
-            OR
-                EXISTS (SELECT 1 FROM domain WHERE domain = 'example.com')
-            AND
+                -- Development only, whatever the address (TEC-2042): a
+                -- registered @example.com account in production gets a
+                -- random code like everyone else.
                 %(is_dev)s
+            AND
+                EXISTS (SELECT 1 FROM domain WHERE domain = 'example.com')
         THEN
             (SELECT otp FROM zero_otp)
         ELSE
