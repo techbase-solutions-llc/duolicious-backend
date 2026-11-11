@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from lxml import etree
 import database
 from service.chat.chatutil import (
+    INBOX_THREAD_HIDDEN_SQL,
     LSERVER,
     build_element,
     format_timestamp,
@@ -19,16 +20,10 @@ FROM
 WHERE
     luser = %(username)s
 AND
-    -- A thread between a tester and a member is hidden from both, never
-    -- deleted (TEC-2135). remote_bare_jid is uuid@domain.
-    NOT EXISTS (
-        SELECT 1
-        FROM person me
-        JOIN person peer
-          ON peer.uuid = uuid_or_null(split_part(inbox.remote_bare_jid, '@', 1))
-        WHERE me.uuid = uuid_or_null(inbox.luser)
-          AND is_tester_split_pair(me.id, peer.id)
-    )
+    -- A reported or blocked pair, a tester and a member (TEC-2135), or a
+    -- peer who is deactivated or waiting to be deleted: hidden, never
+    -- deleted, and so out of the unread badge too.
+    NOT {INBOX_THREAD_HIDDEN_SQL}
 ORDER BY
     timestamp
 """

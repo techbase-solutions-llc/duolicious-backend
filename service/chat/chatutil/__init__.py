@@ -35,6 +35,24 @@ SELECT 1 WHERE is_blocked_pair(%(from_id)s, %(to_id)s)
 """
 
 
+# An inbox thread no one sees: the two are a reported or blocked pair, a
+# tester and a member (is_blocked_pair holds both, TEC-2135), or the other
+# person is deactivated or waiting to be deleted. Hidden, never deleted.
+# Q_GET_INBOX (which the web's unread badge sums) and the unread-message
+# push both read it, so the badge and the push agree with the list.
+# remote_bare_jid is uuid@domain.
+INBOX_THREAD_HIDDEN_SQL = """EXISTS (
+        SELECT 1
+        FROM person me
+        JOIN person peer
+          ON peer.uuid = uuid_or_null(split_part(inbox.remote_bare_jid, '@', 1))
+        WHERE me.uuid = uuid_or_null(inbox.luser)
+          AND (is_blocked_pair(me.id, peer.id)
+               OR NOT peer.activated
+               OR peer.deletion_requested_at IS NOT NULL)
+    )"""
+
+
 Q_FETCH_PERSON_ID = """
 SELECT id FROM person WHERE uuid = uuid_or_null(%(username)s)
 """

@@ -1,4 +1,6 @@
-Q_UNREAD_INBOX = """
+from service.chat.chatutil import INBOX_THREAD_HIDDEN_SQL
+
+Q_UNREAD_INBOX = f"""
 WITH ten_minutes_ago AS (
     SELECT
         EXTRACT(EPOCH FROM (
@@ -21,16 +23,9 @@ WITH ten_minutes_ago AS (
             -- ten days ago as microseconds
             EXTRACT(EPOCH FROM (NOW() - INTERVAL '10 days'))::bigint * 1000000
     AND
-        -- No push about a thread between a tester and a member (TEC-2135),
-        -- as the inbox itself hides it. remote_bare_jid is uuid@domain.
-        NOT EXISTS (
-            SELECT 1
-            FROM person me
-            JOIN person peer
-              ON peer.uuid = uuid_or_null(split_part(inbox.remote_bare_jid, '@', 1))
-            WHERE me.uuid = uuid_or_null(inbox.luser)
-              AND is_tester_split_pair(me.id, peer.id)
-        )
+        -- No push about a thread the inbox hides: a reported pair, a tester
+        -- and a member (TEC-2135), a deactivated or deleting peer.
+        NOT {INBOX_THREAD_HIDDEN_SQL}
     GROUP BY
         luser
 ), inbox_second_pass AS (
