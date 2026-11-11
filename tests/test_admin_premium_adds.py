@@ -87,3 +87,22 @@ def test_a_member_who_has_since_deactivated_stays_an_add(make_person):
     with api_tx() as tx:
         tx.execute("UPDATE person SET activated = FALSE WHERE id = %(i)s", dict(i=p['id']))
     assert _adds_today() == before + 1
+
+
+def test_a_checkout_with_no_resolved_person_is_still_an_add():
+    """The webhook stores app_user_id 'unknown' when it cannot resolve the
+    buyer (service/checkout). It is still a sale (TEC-2150)."""
+    before = _adds_today()
+    _event('unknown', 'checkout.session.completed',
+           {'object': 'checkout.session', 'mode': 'subscription', 'livemode': True})
+    assert _adds_today() == before + 1
+
+
+def test_a_checkout_by_a_since_deleted_account_is_still_an_add(make_person):
+    p = make_person(name='AddsRuleDeleted')
+    before = _adds_today()
+    _event(p['id'], 'checkout.session.completed',
+           {'object': 'checkout.session', 'mode': 'subscription', 'livemode': True})
+    with api_tx() as tx:
+        tx.execute("DELETE FROM person WHERE id = %(i)s", dict(i=p['id']))
+    assert _adds_today() == before + 1
