@@ -195,6 +195,8 @@ def test_a_view_between_a_man_and_a_woman_counts(client, town, pushes, viewer, v
     _open(client, town, town[viewer], town[viewed])
     assert _view_rows(town[viewer], town[viewed]) == (True, True)
     assert [p['person_id'] for p in pushes] == [town[viewed]['id']]
+    # The push opens Views, the list of who viewed you (11 Nov 2026).
+    assert pushes[0]['url'] == '/views'
 
 
 def _not_found(client, town, viewer, viewed):

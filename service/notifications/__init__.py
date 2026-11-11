@@ -470,7 +470,8 @@ def _record_profile_view_blocking(viewer_id: int, viewed_uuid: str):
             person_id=viewed_id,
             title="Someone viewed your profile",
             body="Someone checked out your profile on Ahavah.",
-            url="/discover",
+            # Opens Views, the list of who viewed you, not Discover.
+            url="/views",
             event_kind="profile_view",
         )
     except Exception:
