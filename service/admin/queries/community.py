@@ -59,7 +59,9 @@ _CONVOS = """
 """
 
 # Matches between active counted members that neither has blocked: a block
-# hides the match from both (is_blocked_pair, migration 0035).
+# hides the match from both (is_blocked_pair, migration 0035). The summary's
+# `matches` is "Matches now" in the admin: current matches only, not the
+# Overview's and Growth's "Matches made", every match ever made (TEC-2150).
 _MEMBER_MATCHES = f"""
         SELECT m.user_a_id, m.user_b_id, m.created_at
           FROM ahavah_match m

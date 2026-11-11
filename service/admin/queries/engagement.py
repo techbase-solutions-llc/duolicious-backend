@@ -90,8 +90,11 @@ Q_ENGAGEMENT_KPIS = f"""
         (SELECT COUNT(*) FROM likes
           WHERE created_at > NOW() - INTERVAL '7 days') AS likes_7d,
 
-        -- Both directions of a mutual like are rows, so this guard is what
-        -- stops every match being counted twice.
+        -- "Matches made" in the admin: every mutual like, all time,
+        -- unmatched since or not. Not community.py's `matches`, "Matches
+        -- now", the current ones (TEC-2150). Both directions of a mutual
+        -- like are rows, so this guard is what stops every match being
+        -- counted twice.
         (SELECT COUNT(*) FROM likes a
            JOIN likes b ON a.liker_id = b.liked_id AND a.liked_id = b.liker_id
           WHERE a.liker_id < a.liked_id) AS matches_total,

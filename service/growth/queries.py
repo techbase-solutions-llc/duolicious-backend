@@ -108,7 +108,9 @@ _Q_STATS_BY_GENDER = f"""
 # A match counts once it was made, whether or not it is still current. An
 # unmatch (TEC-1845, migration 0070) deletes the match row and keeps when it
 # was made in unmatched_pair.matched_at, so Matches keeps counting what
-# happened, as the Overview's mutual-like figure does.
+# happened, as the Overview's mutual-like figure does. `matches` and
+# `matches_30d` are "Matches made" in the admin; Users > Waiting on a reply
+# shows "Matches now", the current ones (TEC-2150).
 _MATCHES_MADE = """
     SELECT user_a_id, user_b_id, created_at FROM ahavah_match
     UNION ALL
