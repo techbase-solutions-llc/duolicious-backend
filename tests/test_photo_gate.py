@@ -95,6 +95,9 @@ def _views(client, w):
             """INSERT INTO visited (subject_person_id, object_person_id, updated_at, invisible)
                VALUES (%(s)s, %(o)s, NOW(), FALSE) ON CONFLICT DO NOTHING""",
             dict(s=w['other']['id'], o=w['viewer']['id']))
+        # Who viewed you is Premium (TEC-2070); a free member gets placeholders.
+        tx.execute("UPDATE person SET entitlements = ARRAY['premium'] WHERE id = %(i)s",
+                   dict(i=w['viewer']['id']))
     r = client.get('/visitors', headers=w['headers'])
     assert r.status_code == 200, r.get_data(as_text=True)
     [row] = [v for v in r.get_json()['visited_you'] if v['person_uuid'] == w['other']['uuid']]

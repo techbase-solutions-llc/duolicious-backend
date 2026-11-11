@@ -3571,10 +3571,38 @@ def post_revenuecat(req: t.PostRevenuecat):
             ignored_uuids=sorted(ignored_uuids),
         )
 
+# What a "Viewed you" row keeps for a member without Premium (TEC-2070): the
+# visit, never the visitor. The web's locked card renders these blurred.
+_VISITOR_PLACEHOLDER_KEEPS = ('time', 'is_new', 'photo_blurhash', 'was_invisible')
+
+
+def _visitor_placeholder(row: dict, i: int) -> dict:
+    kept = {k: row.get(k) for k in _VISITOR_PLACEHOLDER_KEEPS}
+    return dict(
+        kept,
+        # An opaque row key, not the visitor's uuid (which opens their profile).
+        person_uuid=f'hidden-{i}',
+        hidden=True,
+        name=None, age=None, gender=None, location=None,
+        photo_uuid=None, is_verified=False, match_percentage=None,
+        verification_required_to_view=None,
+    )
+
+
 def get_visitors(s: t.SessionInfo):
+    """Both Views lists. Who viewed you is Premium (TEC-2070): without it,
+    each "Viewed you" row is a placeholder, so names and photos never
+    leave the server. "You viewed" is the member's own trail, always full."""
+    from service.entitlements import list_entitlements_tx
     with api_tx('READ COMMITTED') as tx:
         tx.execute(Q_VISITORS, dict(person_id=s.person_id, **gate_params()))
-        return tx.fetchone()['j']
+        j = tx.fetchone()['j']
+        premium = 'premium' in list_entitlements_tx(tx, s.person_id)
+    if not premium:
+        j['visited_you'] = [
+            _visitor_placeholder(r, i) for i, r in enumerate(j.get('visited_you') or [])
+        ]
+    return j
 
 def post_mark_visitors_checked(
     req: t.PostMarkVisitorsChecked,

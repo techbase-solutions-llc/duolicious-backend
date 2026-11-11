@@ -24,6 +24,9 @@ def pair(make_person, sign_in):
     with api_tx() as tx:
         tx.execute("UPDATE person SET activated = TRUE WHERE id = ANY(%(i)s)",
                    dict(i=[viewer['id'], other['id']]))
+        # Who viewed you is Premium (TEC-2070); a free member gets placeholders.
+        tx.execute("UPDATE person SET entitlements = ARRAY['premium'] WHERE id = %(i)s",
+                   dict(i=viewer['id']))
     return dict(viewer=viewer, other=other, headers=sign_in(viewer))
 
 

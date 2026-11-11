@@ -301,6 +301,9 @@ def test_existing_views_disappear_from_both_sides(client, world):
                 """INSERT INTO visited (subject_person_id, object_person_id, updated_at, invisible)
                    VALUES (%(a)s, %(b)s, NOW(), FALSE) ON CONFLICT DO NOTHING""",
                 dict(a=world[a]['id'], b=world[b]['id']))
+        # Who viewed you is Premium (TEC-2070); a free member gets placeholders.
+        tx.execute("UPDATE person SET entitlements = ARRAY['premium'] WHERE id = %(i)s",
+                   dict(i=world['jess']['id']))
     visited_you, _ = _visitors(client, world, 'jess')
     assert visited_you == _uuids(world, 'tobit')
     _, you_visited = _visitors(client, world, 'asher')
