@@ -108,6 +108,8 @@ def visible_sql(intro: str) -> str:
       p.activated AND {member_sql('p')} AND NOT p.hide_me_from_strangers
       AND p.id <> {intro}
       AND NOT is_blocked_pair({intro}, p.id)
+      -- Staff are hidden from members (TEC-2040).
+      AND NOT is_staff_hidden({intro}, p.id)
       AND ({ways})
   )"""
 
@@ -369,6 +371,8 @@ _Q_CARDS = """
        AND %(me)s IN (i.a_person_id, i.b_person_id)
        AND o.activated
        AND NOT is_blocked_pair(%(me)s, o.id)
+       -- Staff are hidden from members (TEC-2040).
+       AND NOT is_staff_hidden(%(me)s, o.id)
      ORDER BY i.opened_at DESC NULLS LAST, i.id DESC
 """
 

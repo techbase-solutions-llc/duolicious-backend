@@ -22,6 +22,9 @@ LSERVER = os.environ.get("AHAVAH_XMPP_DOMAIN", "ahavah.app")
 # checked gender must not carry messages.
 Q_IS_SKIPPED = """
 SELECT 1 WHERE is_blocked_pair(%(from_id)s, %(to_id)s)
+    -- Staff are hidden from members, so no message crosses (TEC-2040).
+    OR is_staff_hidden(%(from_id)s, %(to_id)s)
+    OR is_staff_hidden(%(to_id)s, %(from_id)s)
     OR NOT EXISTS (
         SELECT 1
         FROM person mw_x
@@ -48,6 +51,8 @@ INBOX_THREAD_HIDDEN_SQL = """EXISTS (
           ON peer.uuid = uuid_or_null(split_part(inbox.remote_bare_jid, '@', 1))
         WHERE me.uuid = uuid_or_null(inbox.luser)
           AND (is_blocked_pair(me.id, peer.id)
+               -- Staff, to a member (TEC-2040).
+               OR is_staff_hidden(me.id, peer.id)
                OR NOT peer.activated
                OR peer.deletion_requested_at IS NOT NULL)
     )"""

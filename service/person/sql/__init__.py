@@ -1042,6 +1042,12 @@ WITH prospect AS (
         -- Self-view.
         prospect.id = %(person_id)s
     )
+    AND (
+        prospect.id = %(person_id)s
+        -- Staff are hidden from members (TEC-2040, migration 0099). A visitor with no
+        -- session is not staff either.
+        OR NOT is_staff_hidden(%(person_id)s, prospect.id)
+    )
 ), updated_visited AS (
     INSERT INTO visited (
         subject_person_id,
@@ -1338,6 +1344,8 @@ WITH prospect AS (
       )
       -- A same-gender profile is not found; staff open any (TEC-2038).
       AND {profile_shown_sql('%(person_id)s', 'p.id')}
+      -- Staff are hidden from members (TEC-2040, migration 0099).
+      AND NOT is_staff_hidden(%(person_id)s, p.id)
 ), updated_visited AS (
     -- Record the view in `visited` so the hidden member sees it in their
     -- "who viewed me" list, exactly like a full-profile view. The viewer is a
@@ -1469,6 +1477,9 @@ WITH prospect AS (
         AND
             -- A same-gender profile is not found; staff open any (TEC-2038).
             {profile_shown_sql('%(person_id)s', 'person.id')}
+        AND
+            -- Staff are hidden from members (TEC-2040, migration 0099).
+            NOT is_staff_hidden(%(person_id)s, person.id)
         )
         OR
             person.id = %(person_id)s
@@ -1619,10 +1630,13 @@ WITH person_info AS (
         id_table.uuid AS person_uuid,
         -- A tester and a member (TEC-2135) read as a deleted account: no
         -- name or photo, and the thread is archived. Nothing is deleted.
+        -- Staff read the same way to a member (TEC-2040).
         (prospect.id IS NULL
-            OR is_tester_split_pair(%(person_id)s, prospect.id)) AS is_prospect_deleted,
+            OR is_tester_split_pair(%(person_id)s, prospect.id)
+            OR is_staff_hidden(%(person_id)s, prospect.id)) AS is_prospect_deleted,
         (COALESCE(prospect.activated, FALSE)
-            AND NOT is_tester_split_pair(%(person_id)s, prospect.id)) AS is_prospect_activated,
+            AND NOT is_tester_split_pair(%(person_id)s, prospect.id)
+            AND NOT is_staff_hidden(%(person_id)s, prospect.id)) AS is_prospect_activated,
         prospect.name AS name,
         prospect.personality AS personality,
         prospect.verification_level_id > 1 AS verified,
@@ -3755,6 +3769,9 @@ WITH checker AS (
         -- visits and was shown 0, Ehud 11 outgoing views and was shown 2.
         -- Same deck-state-leak class as the map/search_cache coupling.
         NOT is_blocked_pair(prospect.id, %(person_id)s)
+    AND
+        -- Staff are hidden from members (TEC-2040, migration 0099).
+        NOT is_staff_hidden(%(person_id)s, prospect.id)
     AND
         -- The prospect wants to be shown to strangers or isn't a stranger
         (

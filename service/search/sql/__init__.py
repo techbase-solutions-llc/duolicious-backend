@@ -447,6 +447,8 @@ WHERE sc.searcher_person_id = %(searcher_person_id)s
   -- A role granted after the card was cached (TEC-2135): a tester and a
   -- member never see each other, cache or no cache.
   AND NOT is_tester_split_pair(%(searcher_person_id)s, p.id)
+  -- Staff are hidden from members (TEC-2040, migration 0099).
+  AND NOT is_staff_hidden(%(searcher_person_id)s, p.id)
 ORDER BY sc.position
 LIMIT %(n)s OFFSET %(o)s
 """
@@ -504,6 +506,8 @@ Q_MAP_MARKERS = f"""
       -- Reports/blocks hide permanently, either direction. Plain passes
       -- do NOT - they are deck state, not map state.
       AND NOT is_blocked_pair(%(searcher_person_id)s, p.id)
+      -- Staff are hidden from members (TEC-2040, migration 0099).
+      AND NOT is_staff_hidden(%(searcher_person_id)s, p.id)
       -- Matchmaker (TEC-1845, 6.10): as in the deck, a member with a live
       -- shared conversation leaves the map of a searcher who chose not to be
       -- matched with them. An existing match is untouched.

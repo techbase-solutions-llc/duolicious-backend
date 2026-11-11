@@ -34,7 +34,9 @@ class NotAvailable(Exception):
 # and a woman (TEC-2038): neither reaches the other, and nothing is charged.
 _Q_UNMATCHED = f"""
   SELECT is_unmatched_pair(%(a)s, %(b)s) OR is_tester_split_pair(%(a)s, %(b)s)
-         OR NOT {man_woman_pair_sql('%(a)s', '%(b)s')} AS unmatched
+         OR NOT {man_woman_pair_sql('%(a)s', '%(b)s')}
+         -- No like across the staff line, either way (TEC-2040).
+         OR is_staff_hidden(%(a)s, %(b)s) OR is_staff_hidden(%(b)s, %(a)s) AS unmatched
 """
 
 

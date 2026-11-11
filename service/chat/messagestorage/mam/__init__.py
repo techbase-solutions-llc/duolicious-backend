@@ -86,7 +86,9 @@ WITH page AS (
             SELECT 1
             FROM person peer
             WHERE peer.uuid = uuid_or_null(split_part(%(to_username)s, '@', 1))
-              AND is_tester_split_pair(person.id, peer.id)
+              AND (is_tester_split_pair(person.id, peer.id)
+                   -- Nor with staff, for a member (TEC-2040).
+                   OR is_staff_hidden(person.id, peer.id))
         )
     ORDER BY
         mam_message.id DESC

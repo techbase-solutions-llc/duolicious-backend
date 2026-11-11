@@ -241,6 +241,8 @@ def _newcomer_predicate_sql(person_ref: str = '%(pid)s', since_ref: str = '%(sin
        p.activated AND p.id <> {person_ref}
        AND lower(p.email) <> ALL(%(ex)s)
        AND {member_sql('p')}
+       -- Nor a moderator (TEC-2040).
+       AND NOT is_staff_hidden({person_ref}, p.id)
        AND p.sign_up_time > {since_ref}
        AND p.gender_id IN (SELECT gender_id FROM search_preference_gender WHERE person_id = {person_ref})
        AND (
@@ -284,6 +286,8 @@ _Q_COUNT_ANY_NEWCOMERS = f"""
      WHERE p.activated AND p.id <> %(pid)s
        AND lower(p.email) <> ALL(%(ex)s)
        AND {member_sql('p')}
+       -- Nor a moderator (TEC-2040).
+       AND NOT is_staff_hidden(%(pid)s, p.id)
        AND p.sign_up_time > %(since)s
 """
 

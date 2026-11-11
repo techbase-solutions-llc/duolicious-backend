@@ -42,7 +42,10 @@ def guest_shown_sql(guest: str, organiser_member: str) -> str:
           WHEN {organiser_member} IS NULL
           THEN NOT EXISTS (SELECT 1 FROM person gp
                             WHERE gp.id = {guest}.person_id AND {tester_sql('gp')})
+               -- Staff are hidden from members (TEC-2040).
+               AND NOT is_staff_hidden(NULL, {guest}.person_id)
           ELSE NOT is_tester_split_pair({organiser_member}, {guest}.person_id)
+               AND NOT is_staff_hidden({organiser_member}, {guest}.person_id)
       END)"""
 
 

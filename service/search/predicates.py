@@ -119,12 +119,14 @@ def deck_base_sql(p: str, owner: Optional[str]) -> str:
     visitor (owner None) has no pairs, and is never a tester, so testers
     are left out of a visitor's counts (TEC-2135)."""
     pairs = f"""
-      AND NOT {tester_sql(p)}"""
+      AND NOT {tester_sql(p)}
+      AND NOT is_staff_hidden(NULL, {p}.id)"""
     if owner is not None:
         pairs = f"""
       AND {p}.id <> {owner}
       AND NOT is_blocked_pair({owner}, {p}.id)
-      AND NOT is_unmatched_pair({owner}, {p}.id)"""
+      AND NOT is_unmatched_pair({owner}, {p}.id)
+      AND NOT is_staff_hidden({owner}, {p}.id)"""
     return f"""(
       {p}.activated
       AND {member_sql(p)}

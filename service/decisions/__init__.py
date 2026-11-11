@@ -113,6 +113,12 @@ WITH new_like AS (
     AND
         -- A man and a woman only, never fail open (TEC-2038).
         {man_woman_pair_sql('%(me_id)s', 'person.id')}
+    AND
+        -- No like across the staff line, either way (TEC-2040): a member
+        -- never sees staff, so neither could answer the other.
+        NOT is_staff_hidden(%(me_id)s, person.id)
+    AND
+        NOT is_staff_hidden(person.id, %(me_id)s)
     ON CONFLICT DO NOTHING
     RETURNING liker_id, liked_id
 ), prospect AS (
@@ -122,6 +128,8 @@ WITH new_like AS (
       AND NOT is_unmatched_pair(%(me_id)s, person.id)
       AND NOT is_tester_split_pair(%(me_id)s, person.id)
       AND {man_woman_pair_sql('%(me_id)s', 'person.id')}
+      AND NOT is_staff_hidden(%(me_id)s, person.id)
+      AND NOT is_staff_hidden(person.id, %(me_id)s)
 ), reciprocal AS (
     -- Derived from CURRENT state, not from whether new_like won.
     SELECT 1 FROM liked rev, prospect p
@@ -215,6 +223,8 @@ WHERE
     -- Blocks are permanent on every surface (migration 0035); a reported
     -- pair must not keep exchanging presence via match cards.
     AND NOT is_blocked_pair(%(me_id)s, peer.id)
+    -- Staff are hidden from members (TEC-2040, migration 0099).
+    AND NOT is_staff_hidden(%(me_id)s, peer.id)
     -- Deactivated/grace-deleted peers disappear immediately, matching
     -- the delete_or_ban_account docstring's promise.
     AND peer.activated
@@ -262,6 +272,8 @@ WHERE
     )
     -- Reports/blocks, either direction (migration 0035).
     AND NOT is_blocked_pair(%(me_id)s, l.liker_id)
+    -- Staff are hidden from members (TEC-2040, migration 0099).
+    AND NOT is_staff_hidden(%(me_id)s, l.liker_id)
     -- A pass I made after this like arrived answers it (11 Nov 2026); a
     -- pass made before it does not hide a later like.
     AND NOT {passed_after_like_sql('%(me_id)s', 'l.liker_id', 'l.created_at')}
@@ -320,6 +332,8 @@ WHERE
     -- Reports/blocks only, either direction. A plain pass must not erase
     -- someone from the You-liked tab (migration 0035).
     AND NOT is_blocked_pair(%(me_id)s, l.liked_id)
+    -- Staff are hidden from members (TEC-2040, migration 0099).
+    AND NOT is_staff_hidden(%(me_id)s, l.liked_id)
     -- Peer must still be activated (no soft-deleted accounts).
     AND peer.activated = TRUE
     -- Defensive: same match guard as the incoming query.
@@ -439,6 +453,8 @@ AND
     -- Blocks are permanent on every surface (migration 0035); a reported
     -- pair must not keep exchanging presence via match cards.
     AND NOT is_blocked_pair(%(me_id)s, peer.id)
+    -- Staff are hidden from members (TEC-2040, migration 0099).
+    AND NOT is_staff_hidden(%(me_id)s, peer.id)
     -- Deactivated/grace-deleted peers disappear immediately, matching
     -- the delete_or_ban_account docstring's promise.
     AND peer.activated

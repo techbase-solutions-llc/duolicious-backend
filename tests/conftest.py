@@ -1655,3 +1655,25 @@ def see_passes_reason_schema(report_rewards_schema):
     path = Path(__file__).resolve().parent.parent / 'migrations' / SEE_PASSES_REASON_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Staff hidden from members (TEC-2040)
+# ---------------------------------------------------------------------------
+# Migration 0099: is_staff_hidden, which every member-facing surface reads,
+# and is_deck_suppressed re-created with it. After 0095, whose
+# is_deck_suppressed lacks it. Idempotent, as the deploy needs. Autouse,
+# since the deck, profiles, likes and the inbox all call it.
+
+STAFF_HIDDEN_MIGRATION = '0099_staff_hidden.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def staff_hidden_schema(tester_isolation_schema):
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / STAFF_HIDDEN_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

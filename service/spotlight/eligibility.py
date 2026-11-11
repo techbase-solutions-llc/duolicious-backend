@@ -11,6 +11,7 @@ week."""
 from __future__ import annotations
 from typing import Optional
 from service.admin.queries.members import member_sql
+from service.man_woman import staff_sql
 from service.testers import tester_sql
 from service.config import USER_IMAGES_BASE_URL
 
@@ -24,7 +25,8 @@ def _columns(a: str, xrk: str) -> dict[str, str]:
     and `featurable_sql` cannot drift apart."""
     return {
         'activated': f"{a}.activated",
-        'staff': f"(NOT ({member_sql(a)}) OR {tester_sql(a)})",
+        # Admins and moderators (TEC-2040) and testers.
+        'staff': f"(NOT ({member_sql(a)}) OR {staff_sql(a)} OR {tester_sql(a)})",
         'spotlight_opt_in': f"{a}.spotlight_opt_in",
         'verified': (f"({a}.ahavah_verification_tier IS NOT NULL"
                      f" AND {a}.ahavah_verification_tier::text <> 'none')"),

@@ -52,6 +52,8 @@ _Q_CANDIDATES = f"""
      WHERE p.sign_up_time > NOW() - make_interval(days => %(days)s)
        AND lower(p.email) <> ALL(%(ex)s)
        AND {member_sql('p')}
+       -- Moderators are staff too (TEC-2040).
+       AND NOT is_staff_hidden(NULL, p.id)
        AND EXISTS (SELECT 1 FROM publishing_queue q
                     JOIN spotlight_revision r ON r.id = q.current_revision_id
                     JOIN spotlight_revision_consent c
@@ -84,6 +86,8 @@ _Q_TOTALS = f"""
        AND p.sign_up_time <= COALESCE(%(as_of)s::timestamptz, NOW())
        AND lower(p.email) <> ALL(%(ex)s)
        AND {member_sql('p')}
+       -- Moderators are staff too (TEC-2040).
+       AND NOT is_staff_hidden(NULL, p.id)
 """
 
 
