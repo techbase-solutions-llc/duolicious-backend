@@ -405,18 +405,21 @@ def _open_pending_session(tx, params: dict, inviter_code: Optional[str]) -> list
 def post_request_otp(req: t.PostRequestOtp):
     norm = normalize_email(req.email)
 
-    def refused(reason: str, new: bool) -> None:
+    def refused(reason: str, new: Optional[bool] = None) -> None:
         # Admin > System counts every refusal of a code request, the ones
         # answered with an error as well as the quiet ones (TEC-2144).
+        # Best-effort: `new` None looks the address up inside the one
+        # guarded write, so a refusal never fails on the database.
         signupguard.record_refusal(
-            reason, new_address=new, email=req.email, ip=request.remote_addr)
+            reason, new_address=new, email=req.email, ip=request.remote_addr,
+            normalized_email=norm)
 
     # Honeypot: bots that scrape the form and submit every field hit this.
     # Real users never see the field. Return a success-shaped response so
     # the bot can't tell it was rejected.
     from service.antibot import is_honeypot_hit, verify_turnstile
     if is_honeypot_hit(req.website):
-        refused('honeypot', not signupguard.has_account(norm))
+        refused('honeypot')
         return signupguard.decoy()
 
     # Pre-launch gate FIRST: signups closed to the public until launch.
@@ -431,11 +434,12 @@ def post_request_otp(req: t.PostRequestOtp):
     # rollout). Closed-beta allow-listed callers go through above; only
     # public callers reach here, so the verify is gated on launch.
     if not verify_turnstile(req.turnstile_token, request.remote_addr):
-        refused('turnstile', not signupguard.has_account(norm))
+        refused('turnstile')
         return 'Verification failed', 403
 
     if _ip_blocked(req.email):
-        refused('firehol', not signupguard.has_account(norm))
+        # No client address at all is refused too, but it is not a listing.
+        refused('firehol' if request.remote_addr else 'no_address')
         return 'IP address blocked', 460
 
     staff = signupguard.account_staff(norm)
@@ -502,8 +506,9 @@ def post_resend_otp(s: t.SessionInfo):
     norm = normalize_email(s.email)
     if _ip_blocked(s.email):
         signupguard.record_refusal(
-            'firehol', new_address=not signupguard.has_account(norm),
-            email=s.email, ip=request.remote_addr)
+            'firehol' if request.remote_addr else 'no_address',
+            new_address=None, email=s.email, ip=request.remote_addr,
+            normalized_email=norm)
         return 'IP address blocked', 460
 
     # The free bot protection's new-address rules (TEC-1848), as on

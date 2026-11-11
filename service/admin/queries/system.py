@@ -5,13 +5,16 @@ from service.admin.queries.days import (
     barbados_day_of_naive_utc,
     barbados_days,
 )
-from service.admin.queries.members import current_member_sql
+from service.admin.queries.members import (
+    current_member_sql, signed_up_member_sql)
 
+_SIGNED_UP = signed_up_member_sql('person')
 _MEMBER = current_member_sql('person')
 
-# Sign-ups and DAU/WAU/MAU count members as members.current_member_sql
-# defines them: not staff or a tester, activated and not deactivated by an
-# admin, the same rule as Overview's sign-ups and active members (TEC-2144).
+# Sign-ups count everyone who signed up except staff and testers, deactivated
+# since or not, so a past period never changes (signed_up_member_sql);
+# DAU/WAU/MAU leave out deactivated accounts too (current_member_sql). The
+# same rules as Overview's sign-ups and active members (TEC-2144).
 # The `*_total` figures
 # below them are raw table sizes, labelled by table name on the tab, and
 # stay raw. "Today" is the Barbados day, as on every tab (days.py); the 7
@@ -19,10 +22,10 @@ _MEMBER = current_member_sql('person')
 Q_SYSTEM_HEALTH = f"""
     SELECT
         (SELECT COUNT(*) FROM person
-          WHERE {_MEMBER}
+          WHERE {_SIGNED_UP}
             AND {barbados_day_of_naive_utc('sign_up_time')} = {BARBADOS_TODAY}) AS signups_today,
-        (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time > NOW() - INTERVAL '7 days') AS signups_7d,
-        (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND sign_up_time > NOW() - INTERVAL '30 days') AS signups_30d,
+        (SELECT COUNT(*) FROM person WHERE {_SIGNED_UP} AND sign_up_time > NOW() - INTERVAL '7 days') AS signups_7d,
+        (SELECT COUNT(*) FROM person WHERE {_SIGNED_UP} AND sign_up_time > NOW() - INTERVAL '30 days') AS signups_30d,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '24 hours') AS dau,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '7 days') AS wau,
         (SELECT COUNT(*) FROM person WHERE {_MEMBER} AND last_online_time > NOW() - INTERVAL '30 days') AS mau,

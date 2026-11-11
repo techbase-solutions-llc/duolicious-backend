@@ -7,12 +7,15 @@ Overview at 61 persons on 13 Oct 2026 when there were 58 members."""
 from service.admin.queries.days import (
     BARBADOS_TODAY, barbados_day, barbados_day_of_naive_utc, barbados_days)
 from service.admin.queries.members import (
-    counted_member_sql, current_member_sql, member_sql)
+    counted_member_sql, current_member_sql, member_sql, signed_up_member_sql)
 
 _MEMBER = member_sql('person')
 _MEMBER_P = member_sql('p')
-# Sign-ups and active members count as the System tab counts them: not
-# staff or a tester, activated, not deactivated by an admin (TEC-2144).
+# Sign-ups and active members count as the System tab counts them
+# (TEC-2144): a sign-up is anyone but staff and testers, deactivated since or
+# not, so a past day never changes; an active member is also activated and
+# not deactivated by an admin.
+_SIGNED_UP = signed_up_member_sql('person')
 _CURRENT = current_member_sql('person')
 
 # Every date bucket on this tab is a Barbados day (days.py).
@@ -46,11 +49,11 @@ Q_OVERVIEW_KPIS = f"""
         -- Barbados days, not UTC ones, and `person.sign_up_time` is the one
         -- naive column here, so it takes the double conversion (days.py).
         (SELECT COUNT(*) FROM person
-          WHERE {_CURRENT} AND {_JOINED_ON} = {BARBADOS_TODAY}) AS signups_today,
+          WHERE {_SIGNED_UP} AND {_JOINED_ON} = {BARBADOS_TODAY}) AS signups_today,
         -- A real yesterday to compare against. The card printed the literal
         -- string "vs 0 yesterday" every day, because nothing was sent.
         (SELECT COUNT(*) FROM person
-          WHERE {_CURRENT} AND {_JOINED_ON} = {BARBADOS_TODAY} - 1) AS signups_yesterday,
+          WHERE {_SIGNED_UP} AND {_JOINED_ON} = {BARBADOS_TODAY} - 1) AS signups_yesterday,
         (SELECT COUNT(*) FROM person
           WHERE {_CURRENT} AND last_online_time > NOW() - INTERVAL '24 hours') AS active_24h,
         -- Named person_total for the admin build that reads it; it counts
@@ -98,7 +101,7 @@ Q_OVERVIEW_SIGNUPS_30D = f"""
         COALESCE((SELECT COUNT(*) FROM beta_signup
                    WHERE {barbados_day('created_at')} = days.d), 0) AS beta,
         COALESCE((SELECT COUNT(*) FROM person
-                   WHERE {_CURRENT} AND {_JOINED_ON} = days.d), 0) AS person
+                   WHERE {_SIGNED_UP} AND {_JOINED_ON} = days.d), 0) AS person
       FROM days
      ORDER BY days.d
 """

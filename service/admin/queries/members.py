@@ -40,23 +40,32 @@ def non_member_role_sql(alias: str = 'p') -> str:
             f"&& ARRAY[{roles}]::text[])")
 
 
+def signed_up_member_sql(alias: str = 'p') -> str:
+    """Who a SIGN-UP count counts (TEC-2144 ruling, 11 Nov 2026): everyone
+    who signed up except staff and testers, whether or not they have since
+    deactivated, so a past day's sign-ups never change."""
+    return f"(NOT {non_member_role_sql(alias)})"
+
+
 def current_member_sql(alias: str = 'p') -> str:
-    """A member as the System tab and Overview count sign-ups and active
-    users (TEC-2144): not staff or a tester, activated, and not deactivated
-    by an admin. member_sql above left out admins only, so a moderator, a
-    tester or a deactivated account counted, while testers.py promised that
-    member counts leave testers out. Every sign-up and active-user count on
-    those two tabs splices this in; tests/test_admin_system_people.py holds
-    them to it. Overview's member total keeps member_sql and says so."""
-    return (f"(NOT {non_member_role_sql(alias)} AND {alias}.activated "
+    """Who an ACTIVE-USER count or a member total counts (TEC-2144): not
+    staff or a tester, activated, and not deactivated by an admin.
+    member_sql above left out admins only, so a moderator, a tester or a
+    deactivated account counted, while testers.py promised that member
+    counts leave testers out. System and Overview splice this and
+    signed_up_member_sql in; tests/test_admin_system_people.py holds them
+    to it. Overview's person_total keeps member_sql and says so."""
+    return (f"({signed_up_member_sql(alias)} AND {alias}.activated "
             f"AND {alias}.admin_deactivated_at IS NULL)")
 
 
 def counted_member_sql(alias: str = 'p', *, active: bool = True) -> str:
-    """A member the Growth tab counts: the member rule above, not one of the
-    staff or test addresses in service/growth/queries.py EXCLUDED_EMAILS
-    (bind `%(ex)s` with `_excluded()`), and, when `active`, activated.
-    History (the weekly funnel) passes active=False: a member who has since
-    deactivated still liked who they liked."""
-    rule = f"({member_sql(alias)} AND lower({alias}.email) <> ALL(%(ex)s))"
-    return f"({rule} AND {alias}.activated)" if active else rule
+    """A member the Growth tab and Overview's member total count: the rule
+    above (current_member_sql when `active`, signed_up_member_sql when not),
+    and not one of the staff or test addresses in service/growth/queries.py
+    EXCLUDED_EMAILS (bind `%(ex)s` with `_excluded()`). History (the weekly
+    funnel) passes active=False: a member who has since deactivated still
+    liked who they liked. Until TEC-2144 it left out admins only by role,
+    so a moderator counted."""
+    rule = current_member_sql(alias) if active else signed_up_member_sql(alias)
+    return f"({rule} AND lower({alias}.email) <> ALL(%(ex)s))"

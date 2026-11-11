@@ -423,17 +423,41 @@ def record_entered(session_token_hash: str) -> None:
     _write(_Q_ENTERED, dict(session_token_hash=session_token_hash))
 
 
-def record_refusal(reason: str, new_address: bool, email: str,
-                   ip: Optional[str], flow: str = 'sign_in') -> None:
+# A refusal whose caller has not looked the address up: whether it is new
+# is worked out in the same statement, so a refusal costs one transaction.
+_Q_RECORD_LOOKUP = """
+    INSERT INTO otp_request (new_address, refused, session_token_hash, flow, staff)
+    SELECT NOT EXISTS (SELECT 1 FROM person
+                        WHERE normalized_email = %(normalized_email)s),
+           %(refused)s, NULL, %(flow)s, FALSE
+"""
+
+
+def record_refusal(reason: str, new_address: Optional[bool], email: str,
+                   ip: Optional[str], flow: str = 'sign_in',
+                   normalized_email: Optional[str] = None) -> None:
     """Count a refused request: the reason, whether the address was new and
-    which form asked. The address is never stored; the log line masks it."""
-    from emails.base import mask_email
+    which form asked. The address is never stored; the log line masks it.
+
+    Strictly best-effort (TEC-2144 review): the caller's answer is the
+    refusal's own (460, 403, 400 or the decoy), whatever happens here. Any
+    error, a slow or exhausted database during a flood included, is logged
+    once and swallowed. With `new_address=None` the address is looked up
+    by `normalized_email` inside the one write, not before it."""
     if flow not in FLOWS:
         raise ValueError(f'unknown otp_request flow {flow!r}')
-    print(
-        f'signupguard: refused {reason} ({flow}), new_address={new_address}, '
-        f'to {mask_email(email)} from network {network_of(ip) or "<unknown>"}'
-    )
-    _write(_Q_RECORD, dict(
-        new_address=new_address, refused=reason, session_token_hash=None,
-        flow=flow, staff=False))
+    try:
+        from emails.base import mask_email
+        print(
+            f'signupguard: refused {reason} ({flow}), new_address={new_address}, '
+            f'to {mask_email(email)} from network {network_of(ip) or "<unknown>"}'
+        )
+        if new_address is None:
+            _write(_Q_RECORD_LOOKUP, dict(
+                normalized_email=normalized_email or '', refused=reason, flow=flow))
+        else:
+            _write(_Q_RECORD, dict(
+                new_address=new_address, refused=reason, session_token_hash=None,
+                flow=flow, staff=False))
+    except Exception as e:
+        print(f'signupguard: could not record a refusal ({type(e).__name__})')
