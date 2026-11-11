@@ -20,7 +20,7 @@ import pytest
 from service.tokens import credit, get_balance
 
 
-def _insert_person():
+def _insert_person(gender='Man'):
     from database import api_tx
     with api_tx() as tx:
         row = tx.execute(
@@ -33,12 +33,12 @@ def _insert_person():
             VALUES (
                 %(email)s, %(email)s, 'Test', '1990-01-01',
                 ST_SetSRID(ST_MakePoint(0, 0), 4326)::geography,
-                (SELECT id FROM gender LIMIT 1),
+                (SELECT id FROM gender WHERE name = %(gender)s),
                 'about', 'somewhere', 'somewhere, nowhere', (SELECT id FROM unit LIMIT 1), TRUE
             )
             RETURNING uuid::text AS uuid, id
             """,
-            dict(email=f'sl-{uuid4()}@example.com'),
+            dict(email=f'sl-{uuid4()}@example.com', gender=gender),
         ).fetchone()
     return row
 
@@ -54,7 +54,7 @@ def person():
 
 @pytest.fixture
 def candidate():
-    row = _insert_person()
+    row = _insert_person('Woman')
     yield row
     from database import api_tx
     with api_tx() as tx:

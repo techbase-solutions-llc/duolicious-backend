@@ -16,7 +16,7 @@ import pytest
 from service.tokens import credit
 
 
-def _insert_person():
+def _insert_person(gender='Man'):
     from database import api_tx
     with api_tx() as tx:
         row = tx.execute(
@@ -29,12 +29,12 @@ def _insert_person():
             VALUES (
                 %(email)s, %(email)s, 'Test', '1990-01-01',
                 ST_SetSRID(ST_MakePoint(0, 0), 4326)::geography,
-                (SELECT id FROM gender LIMIT 1),
+                (SELECT id FROM gender WHERE name = %(gender)s),
                 'about', 'somewhere', 'somewhere, nowhere', (SELECT id FROM unit LIMIT 1), TRUE
             )
             RETURNING uuid::text AS uuid, id
             """,
-            dict(email=f'inc-{uuid4()}@example.com'),
+            dict(email=f'inc-{uuid4()}@example.com', gender=gender),
         ).fetchone()
     return row
 
@@ -50,7 +50,7 @@ def person():
 
 @pytest.fixture
 def liker():
-    row = _insert_person()
+    row = _insert_person('Woman')
     yield row
     from database import api_tx
     with api_tx() as tx:
@@ -148,7 +148,7 @@ def _make_candidates(n):
     Cleanup happens via the test's manual DELETE at the end (kept inline
     rather than a fixture so each test owns its own candidate pool size).
     """
-    return [_insert_person() for _ in range(n)]
+    return [_insert_person('Woman') for _ in range(n)]
 
 
 def _cleanup_candidates(candidates):
@@ -224,8 +224,8 @@ def test_incoming_likes_super_first_and_flagged(client, person, session_token):
     # MORE RECENT (created_at later), so without the is_super-first
     # ORDER BY it would come first. Phase 6's sort puts super first
     # regardless of recency.
-    liker_plain = _insert_person()
-    liker_super = _insert_person()
+    liker_plain = _insert_person('Woman')
+    liker_super = _insert_person('Woman')
     try:
         # Promote viewer to premium so both likes are visible (avoids
         # the reveal-paywall hiding the plain like and skewing the test).

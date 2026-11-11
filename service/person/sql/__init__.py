@@ -1,7 +1,7 @@
 import constants
 from commonsql import Q_IS_ALLOWED_CLUB_NAME, Q_COMPUTED_FLAIR
 from service.config import USER_IMAGES_BASE_URL
-from service.man_woman import view_counts_sql
+from service.man_woman import profile_shown_sql, view_counts_sql
 
 MAX_CLUB_SEARCH_RESULTS = 20
 
@@ -1027,6 +1027,10 @@ WITH prospect AS (
             -- Only a REPORT/BLOCK hides a profile. A plain pass used to
             -- 404 it permanently; see migration 0035.
             NOT is_blocked_pair(prospect.id, %(person_id)s)
+        AND
+            -- A same-gender profile is not found; staff open any
+            -- (TEC-2038).
+            {profile_shown_sql('%(person_id)s', 'prospect.id')}
         )
         OR
         -- Anonymous viewer: only when the prospect has opted in to
@@ -1335,6 +1339,8 @@ WITH prospect AS (
       AND NOT EXISTS (
           SELECT 1 WHERE is_blocked_pair(p.id, %(person_id)s)
       )
+      -- A same-gender profile is not found; staff open any (TEC-2038).
+      AND {profile_shown_sql('%(person_id)s', 'p.id')}
 ), updated_visited AS (
     -- Record the view in `visited` so the hidden member sees it in their
     -- "who viewed me" list, exactly like a full-profile view. The viewer is a
@@ -1396,7 +1402,7 @@ WHERE EXISTS (SELECT 1 FROM prospect)
 # state) and deliberately does NOT write to `visited` — opening someone's
 # chat is not the same as viewing their profile, so it shouldn't surface them
 # in the prospect's "Visitors" tab.
-Q_SELECT_CONVERSATION_PROSPECT = """
+Q_SELECT_CONVERSATION_PROSPECT = f"""
 WITH prospect AS (
     SELECT
         person.id,
@@ -1463,6 +1469,9 @@ WITH prospect AS (
             -- Reports/blocks only. A pass must not break an existing
             -- conversation surface (migration 0035).
             NOT is_blocked_pair(person.id, %(person_id)s)
+        AND
+            -- A same-gender profile is not found; staff open any (TEC-2038).
+            {profile_shown_sql('%(person_id)s', 'person.id')}
         )
         OR
             person.id = %(person_id)s

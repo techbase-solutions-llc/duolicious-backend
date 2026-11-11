@@ -49,6 +49,33 @@ def opposite_gender_sql(p: str, viewer: str = '%(searcher_person_id)s') -> str:
       )"""
 
 
+def man_woman_pair_sql(a: str, b: str) -> str:
+    """The two person id expressions are a man and a woman, in either
+    order. Anyone else, including a person who is neither, pairs with
+    nobody: a like, a super like, a match or a message needs this
+    (TEC-2038)."""
+    return f"""EXISTS (
+          SELECT 1
+          FROM person mw_x
+          JOIN gender mw_xg ON mw_xg.id = mw_x.gender_id
+          JOIN person mw_y ON mw_y.id = {b}
+          JOIN gender mw_yg ON mw_yg.id = mw_y.gender_id
+          WHERE mw_x.id = {a}
+            AND {_pair('mw_xg', 'mw_yg')}
+      )"""
+
+
+def profile_shown_sql(viewer: str, prospect: str) -> str:
+    """A signed-in viewer may open the prospect's profile: a man and a
+    woman, or a staff viewer (staff still see everyone, TEC-2040). A
+    same-gender profile reads as not found (TEC-2038)."""
+    return f"""(
+          {man_woman_pair_sql(viewer, prospect)}
+          OR EXISTS (SELECT 1 FROM person mw_s
+                      WHERE mw_s.id = {viewer} AND {staff_sql('mw_s')})
+      )"""
+
+
 def view_counts_sql(viewer: str, viewed: str) -> str:
     """Opening `viewed`'s profile counts as a view by `viewer`: a man and a
     woman, and the viewer is not staff. Both are person id expressions."""

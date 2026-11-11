@@ -18,6 +18,7 @@ from datetime import timedelta
 from typing import Optional, Tuple
 from database import api_tx
 from service.photo_gate import gate_params
+from service.man_woman import man_woman_pair_sql
 import duotypes as t
 
 
@@ -89,7 +90,7 @@ def _check_like_quota(
     return (429, {"error": "quota_exceeded", "resets_at": resets_at})
 
 
-Q_RECORD_LIKE = """
+Q_RECORD_LIKE = f"""
 WITH new_like AS (
     INSERT INTO liked (liker_id, liked_id)
     SELECT
@@ -108,14 +109,18 @@ WITH new_like AS (
     AND
         -- A tester and a member never reach each other (TEC-2135).
         NOT is_tester_split_pair(%(me_id)s, person.id)
+    AND
+        -- A man and a woman only, never fail open (TEC-2038).
+        {man_woman_pair_sql('%(me_id)s', 'person.id')}
     ON CONFLICT DO NOTHING
     RETURNING liker_id, liked_id
 ), prospect AS (
-    SELECT id FROM person
-    WHERE uuid = uuid_or_null(%(prospect_uuid)s)
-      AND id <> %(me_id)s
-      AND NOT is_unmatched_pair(%(me_id)s, id)
-      AND NOT is_tester_split_pair(%(me_id)s, id)
+    SELECT person.id FROM person
+    WHERE person.uuid = uuid_or_null(%(prospect_uuid)s)
+      AND person.id <> %(me_id)s
+      AND NOT is_unmatched_pair(%(me_id)s, person.id)
+      AND NOT is_tester_split_pair(%(me_id)s, person.id)
+      AND {man_woman_pair_sql('%(me_id)s', 'person.id')}
 ), reciprocal AS (
     -- Derived from CURRENT state, not from whether new_like won.
     SELECT 1 FROM liked rev, prospect p

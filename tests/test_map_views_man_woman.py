@@ -8,8 +8,9 @@ the two members' genders, and staff browsing members counted as visitors.
 
 Now the map only ever shows the gender opposite the viewer's own, and a
 view counts (a `visited` row, a `profile_view` row, a push) only from a man
-to a woman or a woman to a man, and never from a staff account. The profile
-still opens for every viewer it opened for before.
+to a woman or a woman to a man, and never from a staff account. A
+same-gender profile reads as not found (TEC-2038, 11 Nov 2026); staff still
+open every profile.
 """
 from __future__ import annotations
 
@@ -196,10 +197,18 @@ def test_a_view_between_a_man_and_a_woman_counts(client, town, pushes, viewer, v
     assert [p['person_id'] for p in pushes] == [town[viewed]['id']]
 
 
+def _not_found(client, town, viewer, viewed):
+    # A same-gender profile reads as not found (TEC-2038, 11 Nov 2026).
+    r = client.get(f"/prospect-profile/{viewed['uuid']}",
+                   headers=town['sign_in'](viewer))
+    assert r.status_code == 404, r.get_data(as_text=True)
+    _run_deferred()
+
+
 @pytest.mark.parametrize('viewer,viewed', [('adam', 'boaz'), ('chava', 'dinah')])
 def test_a_same_gender_view_records_nothing(client, town, pushes, viewer, viewed):
     _wants_view_pushes(town[viewed])
-    _open(client, town, town[viewer], town[viewed])
+    _not_found(client, town, town[viewer], town[viewed])
     assert _view_rows(town[viewer], town[viewed]) == (False, False)
     assert pushes == []
 
@@ -228,8 +237,7 @@ def test_a_staff_view_of_a_limited_profile_records_nothing(client, town, pushes)
 def test_a_same_gender_view_of_a_limited_profile_records_nothing(client, town, pushes):
     _hidden(town['boaz'])
     _wants_view_pushes(town['boaz'])
-    body = _open(client, town, town['adam'], town['boaz'])
-    assert body.get('limited') is True
+    _not_found(client, town, town['adam'], town['boaz'])
     assert _view_rows(town['adam'], town['boaz']) == (False, False)
     assert pushes == []
 

@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from service.admin.queries.members import member_sql
+from service.man_woman import man_woman_pair_sql, opposite_gender_sql
 from service.matchmaker import MatchmakerError, first_name, is_uuid
 
 WEEKLY_LIMIT = 5
@@ -415,7 +416,10 @@ def respond(tx, person_id: int, intro_id: int, answer: str, now: Optional[dateti
         return _matched_answer(tx, person_id, other_id)
     if mine == 'declined':
         return dict(state='gone')
-    blocked = tx.execute('SELECT is_blocked_pair(%(a)s, %(b)s) AS b', dict(a=person_id, b=other_id)).fetchone()['b']
+    # A man and a woman only (TEC-2038): an introduction made before the
+    # pair rule closes rather than matching two of the same gender.
+    blocked = tx.execute(f"SELECT is_blocked_pair(%(a)s, %(b)s) OR NOT {man_woman_pair_sql('%(a)s', '%(b)s')} AS b",
+                         dict(a=person_id, b=other_id)).fetchone()['b']
     if row['status'] != 'open' or row['closes_at'] <= now or blocked:
         raise MatchmakerError('closed', 410)
     if mine == 'accepted' and answer == 'accept':

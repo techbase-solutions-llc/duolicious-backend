@@ -17,8 +17,21 @@ LSERVER = os.environ.get("AHAVAH_XMPP_DOMAIN", "ahavah.app")
 # Reports/blocks only (migration 0035). This used to match ANY skipped
 # row, so a plain pass between two MATCHED people silently killed their
 # ability to message each other.
+# A message passes only between a man and a woman (TEC-2038): a match is
+# the only way into a chat, and a same-gender match made before likes
+# checked gender must not carry messages.
 Q_IS_SKIPPED = """
 SELECT 1 WHERE is_blocked_pair(%(from_id)s, %(to_id)s)
+    OR NOT EXISTS (
+        SELECT 1
+        FROM person mw_x
+        JOIN gender mw_xg ON mw_xg.id = mw_x.gender_id
+        JOIN person mw_y ON mw_y.id = %(to_id)s
+        JOIN gender mw_yg ON mw_yg.id = mw_y.gender_id
+        WHERE mw_x.id = %(from_id)s
+          AND ((mw_xg.name = 'Man' AND mw_yg.name = 'Woman')
+            OR (mw_xg.name = 'Woman' AND mw_yg.name = 'Man'))
+    )
 """
 
 
