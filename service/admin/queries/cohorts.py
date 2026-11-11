@@ -203,6 +203,10 @@ Q_REFERRALS_CLICK_STREAM_7D = f"""
 # link has a click or a sign-up. Clicks are well-formed and not bots, as the
 # logger only resolves well-formed codes. Staff accounts are listed like
 # anyone else: this is who shared a link, not a count of members.
+#
+# Every holder is listed. The table stopped at 50 (LIMIT 50) and said
+# nothing, so on 11 Nov 2026 it showed 50 of 70 inviters (TEC-2150). The
+# route sends the total with the rows and the admin pages them.
 Q_REFERRALS_PER_INVITER = f"""
     WITH code_holder AS (
         SELECT lower(p.email) AS email, p.referral_code AS code, 0 AS beta,
@@ -246,5 +250,4 @@ Q_REFERRALS_PER_INVITER = f"""
       FROM counted
      WHERE intro_sent OR clicks > 0 OR signups > 0
      ORDER BY clicks DESC, signups DESC, inviter
-     LIMIT 50
 """

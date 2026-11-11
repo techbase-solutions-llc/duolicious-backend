@@ -46,3 +46,10 @@ def test_a_chart_with_one_value_keeps_every_day(client, admin_headers, monkeypat
                         _ZERO_CLICKS.replace('0 AS bot', 'CASE WHEN d = 3 THEN 1 ELSE 0 END AS bot'))
     assert len(client.get('/admin/cohorts/referrals', headers=admin_headers)
                .get_json()['click_stream_7d']) == 7
+
+
+def test_the_referrals_route_sends_every_inviter_and_the_total(client, admin_headers):
+    """The per-inviter table stopped at 50 of 70 with no word (TEC-2150):
+    the route sends every row and how many there are."""
+    body = client.get('/admin/cohorts/referrals', headers=admin_headers).get_json()
+    assert body['per_inviter_total'] == len(body['per_inviter'])
