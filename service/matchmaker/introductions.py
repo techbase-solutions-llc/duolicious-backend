@@ -78,8 +78,10 @@ def _reach_sql(intro: str) -> dict[str, str]:
                                    WHERE v.subject_person_id = p.id AND v.object_person_id = {intro}
                                      AND NOT v.invisible AND v.updated_at > {_SINCE})""",
         # The map's own predicates (service/search/sql Q_MAP_MARKERS): the
-        # introducer's genders, a real city, an approved photo.
+        # gender opposite the introducer's (TEC-2039: never both), narrowed
+        # by their saved genders, a real city, an approved photo.
         'map': f"""(NOT p.verification_required
+                    AND {opposite_gender_sql('p', intro)}
                     AND (NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = {intro})
                          OR p.gender_id IN (SELECT g.gender_id FROM search_preference_gender g
                                              WHERE g.person_id = {intro}))
@@ -160,8 +162,10 @@ _Q_CANDIDATES = """
       FROM person p
      WHERE {visible}
        AND p.id <> %(for)s
-       -- Someone the first person could be looking for, who could be
-       -- looking for them; an unset preference is open.
+       -- A man for a woman and a woman for a man (TEC-2039), whom the first
+       -- person could be looking for and who could be looking for them; an
+       -- unset preference narrows nothing inside that.
+       AND {pair}
        AND (NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = %(for)s)
             OR p.gender_id IN (SELECT g.gender_id FROM search_preference_gender g WHERE g.person_id = %(for)s))
        AND (NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = p.id)
@@ -180,7 +184,8 @@ def candidates(tx, introducer_id: int, for_uuid: str, q: str = '', limit: int = 
     """5b.2: whom the introducer could suggest for the first person."""
     from service.photo_gate import gate_params
     who = _visible_person(tx, introducer_id, for_uuid)
-    sql = _Q_CANDIDATES.format(reach=reach_case_sql('%(me)s'), visible=visible_sql('%(me)s'))
+    sql = _Q_CANDIDATES.format(reach=reach_case_sql('%(me)s'), visible=visible_sql('%(me)s'),
+                               pair=man_woman_pair_sql('%(for)s', 'p.id'))
     rows = tx.execute(sql, dict(me=introducer_id, **{'for': who['id']}, for_gender=who['gender_id'],
                                 q=_escape_like((q or '').strip()[:40]),
                                 limit=max(1, min(int(limit), 50)), **gate_params())).fetchall()
@@ -253,11 +258,12 @@ def _hidden_refusal(tx, a: dict, b: dict, now: datetime) -> bool:
                   OR ((SELECT no_mentor_shared_matches FROM person WHERE id = %(b)s)
                      AND EXISTS (SELECT 1 FROM shared_conversation s
                                   WHERE s.single_person_id = %(a)s AND s.revoked_at IS NULL)) AS mentor_pref,
-                  ((NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = %(a)s)
+                  -- A man and a woman only, never fail open (TEC-2039).
+                  ({pair} AND (NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = %(a)s)
                     OR %(bg)s IN (SELECT g.gender_id FROM search_preference_gender g WHERE g.person_id = %(a)s))
                    AND (NOT EXISTS (SELECT 1 FROM search_preference_gender g WHERE g.person_id = %(b)s)
                     OR %(ag)s IN (SELECT g.gender_id FROM search_preference_gender g WHERE g.person_id = %(b)s)))
-                  AS could_fit""",
+                  AS could_fit""".replace('{pair}', man_woman_pair_sql('%(a)s', '%(b)s')),
         dict(a=a['id'], b=b['id'], ag=a['gender_id'], bg=b['gender_id'])).fetchone()
     return bool(row['blocked'] or row['matched'] or row['open_intro'] or row['mentor_pref']
                 or not row['could_fit'])

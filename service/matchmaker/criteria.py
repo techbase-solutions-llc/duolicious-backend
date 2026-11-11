@@ -169,7 +169,7 @@ def fits_sql(owner: Optional[str]) -> str:
     inside every criterion. Bind with fit_params."""
     return f"""(
       {pr.deck_base_sql('p', owner)}
-      AND {pr.gender_sql('p')}
+      AND {pr.gender_fit_sql('p', owner)}
       AND {pr.age_bounds_sql('p')}
       AND {pr.countries_sql('p')}
       AND {pr.relocation_sql('p')}

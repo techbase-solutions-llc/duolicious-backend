@@ -17,15 +17,28 @@ from __future__ import annotations
 from typing import Optional
 
 from service.admin.queries.members import member_sql
+from service.man_woman import opposite_gender_sql
 from service.testers import tester_sql
 
 
 def gender_sql(p: str) -> str:
-    """%(gender_preference)s: the searcher's genders; empty = any."""
+    """%(gender_preference)s: the searcher's genders; empty = any. Never
+    used alone: the deck and the map pair it with opposite_gender_sql, and
+    the alerts read gender_fit_sql (TEC-2039)."""
     return f"""(
           cardinality(%(gender_preference)s::SMALLINT[]) = 0
           OR {p}.gender_id = ANY(%(gender_preference)s::SMALLINT[])
       )"""
+
+
+def gender_fit_sql(p: str, owner: Optional[str]) -> str:
+    """The genders an alert counts (TEC-2039): for a member (`owner` an SQL
+    expression for their person id), the gender opposite their own, which
+    a saved preference narrows; for a visitor, only the genders the alert
+    names, so an alert naming none counts nobody. Never both genders."""
+    if owner is None:
+        return f"({p}.gender_id = ANY(%(gender_preference)s::SMALLINT[]))"
+    return f"({gender_sql(p)} AND {opposite_gender_sql(p, owner)})"
 
 
 def torah_level_sql(p: str) -> str:
