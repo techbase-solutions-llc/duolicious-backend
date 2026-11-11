@@ -40,10 +40,21 @@ ANSWER.
 Every figure here is between MEMBERS (members.py). A like, match or message
 with a staff account on either end is the staff account's, not the
 community's; on 13 Oct 2026, 2 of the 127 likes involved one.
+
+The KPIs count members as the Weekly funnel above them on the Overview
+does (community.Q_WEEKLY_FUNNEL): counted_member_sql with active=False, so
+staff (admin, mod), testers and the staff and test addresses are left out,
+and a member who has since deactivated still liked who they liked. They
+used member_sql, which leaves out admins only, so the two panels on one
+screen counted different people (TEC-2150). Q_ENGAGEMENT_KPIS binds
+%(ex)s with service.growth.queries._excluded().
+
+_SENT_MESSAGES keeps member_sql: community.py, Growth and Sources build on
+it and apply their own rule on top.
 """
 from __future__ import annotations
 
-from service.admin.queries.members import member_sql
+from service.admin.queries.members import counted_member_sql, member_sql
 
 # One row per message actually sent between two members, with both ends
 # resolved to person ids and the pair normalised so {a,b} and {b,a} are the
@@ -66,17 +77,26 @@ _SENT_MESSAGES = f"""
        AND {member_sql('p')}
 """
 
-# A like with a member on both ends. `a` liked `b`.
+# A like with a counted member on both ends. `a` liked `b`.
 _MEMBER_LIKES = f"""
     SELECT l.liker_id, l.liked_id, l.created_at
       FROM liked l
       JOIN person a ON a.id = l.liker_id
       JOIN person b ON b.id = l.liked_id
-     WHERE {member_sql('a')} AND {member_sql('b')}
+     WHERE {counted_member_sql('a', active=False)} AND {counted_member_sql('b', active=False)}
+"""
+
+# A message with a counted member on both ends, as the Weekly funnel's.
+_COUNTED_SENT = f"""
+    SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
+      FROM ({_SENT_MESSAGES}) x
+      JOIN person xs ON xs.id = x.sender_id
+      JOIN person xr ON xr.id = x.recipient_id
+     WHERE {counted_member_sql('xs', active=False)} AND {counted_member_sql('xr', active=False)}
 """
 
 Q_ENGAGEMENT_KPIS = f"""
-    WITH sent AS ({_SENT_MESSAGES}),
+    WITH sent AS ({_COUNTED_SENT}),
     likes AS ({_MEMBER_LIKES}),
     -- One row per conversation, carrying how many distinct people have
     -- written in it. Two means both sides did.

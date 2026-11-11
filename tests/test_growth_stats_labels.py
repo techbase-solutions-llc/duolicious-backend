@@ -164,7 +164,9 @@ def test_growth_and_overview_count_messages_the_same_way(make_person):
 
     def both():
         with api_tx('read committed') as tx:
-            return growth_stats(tx)['msgs_7d'], tx.execute(Q_ENGAGEMENT_KPIS).fetchone()['messages_7d']
+            from service.growth.queries import _excluded
+            return (growth_stats(tx)['msgs_7d'],
+                    tx.execute(Q_ENGAGEMENT_KPIS, dict(ex=_excluded())).fetchone()['messages_7d'])
 
     g0, o0 = both()
     _message(a['id'], b['id'])

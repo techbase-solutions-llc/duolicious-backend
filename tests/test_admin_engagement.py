@@ -14,11 +14,12 @@ import pytest
 
 from database import api_tx
 from service.admin.queries.engagement import Q_ENGAGEMENT_KPIS
+from service.growth.queries import _excluded
 
 
 def _kpis() -> dict:
     with api_tx('read committed') as tx:
-        return dict(tx.execute(Q_ENGAGEMENT_KPIS).fetchone())
+        return dict(tx.execute(Q_ENGAGEMENT_KPIS, dict(ex=_excluded())).fetchone())
 
 
 def _like(liker_id: int, liked_id: int) -> None:
@@ -178,3 +179,45 @@ def test_no_engagement_query_touches_message_content():
     for forbidden in ('search_body', 'translations', 'm.message', 'audio_uuid'):
         assert forbidden not in sql, f'engagement SQL references {forbidden}'
     assert 'select' in sql
+
+
+# ---------------------------------------------------------------------------
+# Who counts: the Weekly funnel's rule (TEC-2150)
+# ---------------------------------------------------------------------------
+
+def test_a_moderator_or_tester_is_not_counted_as_the_funnel_leaves_them_out(make_person):
+    """Engagement used member_sql, which leaves out admins only, while the
+    Weekly funnel above it on the Overview uses counted_member_sql. A
+    moderator's or tester's like, match and message now count on neither."""
+    member = make_person(name='EngRuleMember', gender='Woman')
+    for role in ('mod', 'tester'):
+        staff = make_person(name=f'EngRule{role}', gender='Man')
+        with api_tx() as tx:
+            tx.execute("UPDATE person SET roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s",
+                       dict(r=role, i=staff['id']))
+        before = _kpis()
+        _like(staff['id'], member['id'])
+        _like(member['id'], staff['id'])
+        _message(staff, member)
+        _message(member, staff)
+        after = _kpis()
+        moved = {k: (before[k], after[k]) for k in before if before[k] != after[k]}
+        assert moved == {}, f'a {role} moved engagement figures: {moved}'
+
+
+def test_a_member_who_has_since_deactivated_still_counts(make_person):
+    """History, as the funnel counts it (active=False): a like stays a like."""
+    a = make_person(name='EngRuleGone', gender='Man')
+    b = make_person(name='EngRuleStays', gender='Woman')
+    before = _kpis()
+    _like(a['id'], b['id'])
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET activated = FALSE WHERE id = %(i)s", dict(i=a['id']))
+    assert _kpis()['likes_total'] == before['likes_total'] + 1
+
+
+def test_engagement_uses_the_shared_counted_predicate():
+    import service.admin.queries.engagement as eng
+    from service.admin.queries.members import counted_member_sql
+    assert counted_member_sql('a', active=False) in eng.Q_ENGAGEMENT_KPIS
+    assert counted_member_sql('xs', active=False) in eng.Q_ENGAGEMENT_KPIS

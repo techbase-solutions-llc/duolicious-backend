@@ -165,6 +165,12 @@ def _subscription_checkout(e: str) -> str:
             f"AND COALESCE({e}.payload->'data'->'object'->>'mode', "
             f"{e}.payload->>'mode') = 'subscription'")
 
+#
+# Only a counted member's subscription is an add (counted_member_sql,
+# active=False, as the Weekly funnel: a member who has since deactivated
+# still subscribed). The chart had no member filter, so a staff or test
+# account's checkout plotted as a sale (TEC-2150). Binds %(ex)s with
+# service.growth.queries._excluded().
 Q_OVERVIEW_PREMIUM_30D = f"""
     WITH days AS ({barbados_days(30)}
     )
@@ -175,6 +181,9 @@ Q_OVERVIEW_PREMIUM_30D = f"""
              WHERE {_subscription_checkout('e')}
                AND {live_stripe_event('e')}
                AND {barbados_day('e.received_at')} = days.d
+               AND EXISTS (SELECT 1 FROM person pm
+                            WHERE pm.id::text = e.app_user_id
+                              AND {counted_member_sql('pm', active=False)})
         ), 0) AS adds
       FROM days
      ORDER BY days.d

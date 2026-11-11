@@ -25,7 +25,10 @@ def _kpis() -> dict:
 
 def _series(sql: str) -> list[dict]:
     with api_tx('read committed') as tx:
-        return [dict(r) for r in tx.execute(sql).fetchall()]
+        # The Premium series binds %(ex)s (counted_member_sql, TEC-2150).
+        from service.growth.queries import _excluded
+        params = dict(ex=_excluded()) if '%(ex)s' in sql else None
+        return [dict(r) for r in tx.execute(sql, params).fetchall()]
 
 
 def _set_signup(person_id: int, expr: str) -> None:
