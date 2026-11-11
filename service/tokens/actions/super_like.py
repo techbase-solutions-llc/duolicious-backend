@@ -47,6 +47,7 @@ _Q_UPSERT_SUPER_LIKE = """
   INSERT INTO liked (liker_id, liked_id, is_super)
        VALUES (%(liker_id)s, %(liked_id)s, TRUE)
   ON CONFLICT (liker_id, liked_id) DO UPDATE SET is_super = TRUE
+  RETURNING (xmax = 0) AS inserted
 """
 
 
@@ -111,10 +112,13 @@ def perform(tx, viewer_uuid: Union[UUID, str], target_uuid: Union[UUID, str]) ->
         metadata={'super_liked_person_id': str(target_uuid)},
     )
 
-    tx.execute(
+    new_like = bool(tx.execute(
         _Q_UPSERT_SUPER_LIKE,
         dict(liker_id=viewer_id, liked_id=target_id),
-    )
+    ).fetchone()['inserted'])
+    # What the route tells the target once the transaction commits
+    # (TEC-2065). Not part of the response: tell() takes these keys out.
+    told = {"_viewer_id": viewer_id, "_target_id": target_id, "_new_like": new_like}
 
     reciprocal = tx.execute(
         _Q_RECIPROCAL_EXISTS,
@@ -122,14 +126,15 @@ def perform(tx, viewer_uuid: Union[UUID, str], target_uuid: Union[UUID, str]) ->
     ).fetchone()
 
     if not reciprocal:
-        return {"super_liked": True, "match_id": None}
+        return {"super_liked": True, "match_id": None, "_new_match": False, **told}
 
     inserted = tx.execute(
         _Q_UPSERT_MATCH,
         dict(a=viewer_id, b=target_id),
     ).fetchone()
     if inserted and inserted.get('match_id'):
-        return {"super_liked": True, "match_id": inserted['match_id']}
+        return {"super_liked": True, "match_id": inserted['match_id'],
+                "_new_match": True, **told}
 
     # Match row already existed (idempotent re-tap on a mutual we'd
     # previously formed); fetch its id.
@@ -139,4 +144,18 @@ def perform(tx, viewer_uuid: Union[UUID, str], target_uuid: Union[UUID, str]) ->
     return {
         "super_liked": True,
         "match_id": existing['match_id'] if existing else None,
+        "_new_match": False, **told,
     }
+
+
+def tell(result: dict) -> dict:
+    """After the commit, send what a like through /decisions would send
+    (TEC-2065): the match notice on a new match, otherwise the like notice
+    on a new like, nothing on a re-tap. Returns the response without the
+    private keys."""
+    from service.decisions import notify_new_like, notify_new_match
+    if result.get("_new_match") and result.get("match_id"):
+        notify_new_match(result["_viewer_id"], result["_target_id"], result["match_id"])
+    elif result.get("_new_like"):
+        notify_new_like(result["_viewer_id"], result["_target_id"])
+    return {k: v for k, v in result.items() if not k.startswith("_")}

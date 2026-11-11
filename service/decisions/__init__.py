@@ -442,6 +442,63 @@ AND
 """
 
 
+def notify_new_like(liker_id: int, liked_id: int) -> None:
+    """Tell `liked_id` someone likes them (identity-blind; their like
+    switches decide, through notify). A like through /decisions and a super
+    like (TEC-2065) both send exactly this. Never raises: the push stack
+    can never block a like."""
+    try:
+        from service.notifications import notify
+        from emails.notification import new_like_email
+        # Opens Liked you, not the Matches tab (finding 32).
+        notify(
+            liked_id, "like",
+            title="Someone likes you",
+            body="You have a new like on Ahavah",
+            url="/matches?tab=likes",
+            email_subject="Someone likes you on Ahavah",
+            email_html_factory=new_like_email,
+            # One like email per liker, however often they like again
+            # after an undo.
+            email_event_id=f"like-{liker_id}",
+        )
+    except Exception:
+        import traceback
+        print("decisions like-push trigger failed:")
+        print(traceback.format_exc())
+
+
+def notify_new_match(me_id: int, peer_id: int, match_id: str) -> None:
+    """Tell `peer_id` that `me_id`'s like made a match. Only the call that
+    inserted the match sends it; a like through /decisions and a super like
+    (TEC-2065) both send exactly this. Lazy imports and a catch-all, so a
+    missing pywebpush, missing VAPID keys or any other push-stack issue can
+    never block the match response."""
+    try:
+        from service.notifications import notify
+        from emails.notification import new_match_email
+        with api_tx() as tx:
+            me_row = tx.execute(
+                "SELECT name FROM person WHERE id = %(me_id)s",
+                dict(me_id=me_id),
+            ).fetchone()
+        my_name = (me_row or {}).get("name") or "Someone"
+        notify(
+            peer_id, "match",
+            title="It's a match!",
+            body=f"{my_name} likes you back",
+            url="/matches",
+            tag=f"match:{match_id}",
+            email_subject="You have a new match on Ahavah",
+            email_html_factory=new_match_email,
+            email_event_id=f"match-{match_id}",
+        )
+    except Exception:
+        import traceback
+        print("decisions.post_decisions push trigger failed:")
+        print(traceback.format_exc())
+
+
 def post_decisions(req: t.PostDecision, s: t.SessionInfo):
     """
     Record a like or pass on the given prospect.
@@ -502,26 +559,13 @@ def post_decisions(req: t.PostDecision, s: t.SessionInfo):
         # like response.
         if was_new_like:
             try:
-                from service.notifications import notify
-                from emails.notification import new_like_email
                 with api_tx() as tx:
                     liked = tx.execute(
                         "SELECT id FROM person WHERE uuid = %(uuid)s",
                         dict(uuid=req.profile_uuid),
                     ).fetchone()
                 if liked:
-                    # Opens Liked you, not the Matches tab (finding 32).
-                    notify(
-                        liked["id"], "like",
-                        title="Someone likes you",
-                        body="You have a new like on Ahavah",
-                        url="/matches?tab=likes",
-                        email_subject="Someone likes you on Ahavah",
-                        email_html_factory=new_like_email,
-                        # One like email per liker, however often they
-                        # like again after an undo.
-                        email_event_id=f"like-{s.person_id}",
-                    )
+                    notify_new_like(s.person_id, liked["id"])
             except Exception:
                 import traceback
                 print("decisions like-push trigger failed:")
@@ -531,34 +575,7 @@ def post_decisions(req: t.PostDecision, s: t.SessionInfo):
     # Only the transaction that inserted the match sends its notification.
     # A duplicate like that merely reads an existing match stays silent.
     if row and row.get("was_new_match"):
-        # Lazy-import notifications + wrapped in try/except so a missing
-        # pywebpush dependency, missing VAPID env vars, or any other
-        # push-stack issue can never block the match-create response.
-        # send_to_user_safe is itself fire-and-forget but we
-        # belt-and-suspenders the import too.
-        try:
-            from service.notifications import notify
-            from emails.notification import new_match_email
-            with api_tx() as tx:
-                me_row = tx.execute(
-                    "SELECT name FROM person WHERE id = %(me_id)s",
-                    dict(me_id=s.person_id),
-                ).fetchone()
-            my_name = (me_row or {}).get("name") or "Someone"
-            notify(
-                row["peer_id"], "match",
-                title="It's a match!",
-                body=f"{my_name} likes you back",
-                url="/matches",
-                tag=f"match:{row['match_id']}",
-                email_subject="You have a new match on Ahavah",
-                email_html_factory=new_match_email,
-                email_event_id=f"match-{row['match_id']}",
-            )
-        except Exception:
-            import traceback
-            print("decisions.post_decisions push trigger failed:")
-            print(traceback.format_exc())
+        notify_new_match(s.person_id, row["peer_id"], row["match_id"])
 
     return {
         "match": {

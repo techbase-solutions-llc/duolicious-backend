@@ -1145,6 +1145,7 @@ def post_tokens_day_pass(s: t.SessionInfo):
 # so the frontend can navigate straight into the match-celebration view.
 from service.tokens.actions.super_like import (
     perform as _perform_super_like,
+    tell as _tell_super_like,
     NotAvailable as _SuperLikeNotAvailable,
 )
 
@@ -1157,11 +1158,13 @@ def post_tokens_super_like(s: t.SessionInfo):
         return {'error': 'missing_person_id'}, 400
     try:
         with api_tx('READ COMMITTED') as tx:
-            return _perform_super_like(tx, s.person_uuid, target_id)
+            result = _perform_super_like(tx, s.person_uuid, target_id)
     except _InsufficientTokens:
         return {'error': 'insufficient_tokens'}, 402
     except _SuperLikeNotAvailable:
         return {'error': 'not_available'}, 404
+    # Told after the commit, as /decisions does (TEC-2065).
+    return _tell_super_like(result)
 
 
 @apost('/tokens/see-passes')
