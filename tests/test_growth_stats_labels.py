@@ -173,3 +173,45 @@ def test_growth_and_overview_count_messages_the_same_way(make_person):
     _message(b['id'], a['id'])
     g1, o1 = both()
     assert g1 - g0 == o1 - o0 == 2
+
+
+def test_matches_made_count_the_same_people_on_growth_and_overview(make_person):
+    """"Matches made" on Growth and on the Overview leave out the same
+    people (TEC-2150): Growth used member_sql, admins only, so a moderator's
+    or tester's match, like and message counted there and not on the
+    Overview. A member pair, the control, moves both."""
+    from service.admin.queries.engagement import Q_ENGAGEMENT_KPIS
+    from service.growth.queries import _excluded
+
+    def both():
+        with api_tx('read committed') as tx:
+            g = growth_stats(tx)
+            o = tx.execute(Q_ENGAGEMENT_KPIS, dict(ex=_excluded())).fetchone()
+        return dict(g_matches=g['matches'], g_likes=g['likes_total'], g_msgs=g['msgs_7d'],
+                    o_matches=o['matches_total'], o_likes=o['likes_total'], o_msgs=o['messages_7d'])
+
+    def take_part(a, b):
+        with api_tx() as tx:
+            for x, y in ((a, b), (b, a)):
+                tx.execute("""INSERT INTO liked (liker_id, liked_id, created_at)
+                              VALUES (%(x)s, %(y)s, NOW()) ON CONFLICT DO NOTHING""", dict(x=x, y=y))
+            tx.execute("""INSERT INTO ahavah_match (user_a_id, user_b_id)
+                          VALUES (LEAST(%(a)s, %(b)s), GREATEST(%(a)s, %(b)s))""", dict(a=a, b=b))
+        _message(a, b)
+
+    member = make_person(name='MadeMember', gender='Woman')
+    for role in ('mod', 'tester'):
+        staff = make_person(name=f'Made{role}', gender='Man')
+        with api_tx() as tx:
+            tx.execute("UPDATE person SET roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s",
+                       dict(r=role, i=staff['id']))
+        before = both()
+        take_part(staff['id'], member['id'])
+        assert both() == before, f'a {role} moved Growth or Overview'
+
+    other = make_person(name='MadeOther', gender='Man')
+    before = both()
+    take_part(other['id'], member['id'])
+    after = both()
+    assert {k: after[k] - before[k] for k in after} == dict(
+        g_matches=1, g_likes=2, g_msgs=1, o_matches=1, o_likes=2, o_msgs=1)
