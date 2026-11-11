@@ -40,7 +40,7 @@ def _concurrent_likes(pairs, quota=False):
 
 
 def test_simultaneous_first_likes_form_one_match(make_person):
-    a, b = make_person(), make_person()
+    a, b = make_person(), make_person(gender='Woman')
     results = _concurrent_likes([(a, b), (b, a)])
     assert sum(bool(r['was_new_match']) for r in results) == 1
     with api_tx() as tx:
@@ -50,7 +50,7 @@ def test_simultaneous_first_likes_form_one_match(make_person):
 
 def test_simultaneous_likes_cannot_exceed_daily_quota(make_person):
     a = make_person()
-    peers = [make_person() for _ in range(11)]
+    peers = [make_person(gender='Woman') for _ in range(11)]
     with api_tx() as tx:
         for peer in peers[:9]:
             tx.execute('INSERT INTO liked (liker_id, liked_id) VALUES (%(a)s,%(b)s)', dict(a=a['id'], b=peer['id']))
