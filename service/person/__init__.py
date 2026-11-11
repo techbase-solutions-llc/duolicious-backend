@@ -1725,11 +1725,18 @@ def change_email_request(s: t.SessionInfo, new_email: str):
             """,
             dict(e=new_email, person_id=s.person_id),
         ).fetchone()
+        current = tx.execute(
+            "SELECT email FROM person WHERE id = %(person_id)s",
+            dict(person_id=s.person_id),
+        ).fetchone()
     if existing:
         return 'This email is already in use', 409
 
-    # Reject "no-op" change.
-    if s.email and new_email == s.email.strip().lower():
+    # Reject "no-op" change. Against the person row, not the session: a
+    # session opened before an earlier change carried the old address, so
+    # changing back to it answered 400 (11 Nov 2026).
+    current_email = (current or {}).get('email') or s.email or ''
+    if new_email == current_email.strip().lower():
         return 'New email matches your current email', 400
 
     otp = secrets.token_hex(3).upper()[:6]  # 6 hex chars, matches /request-otp UX
@@ -1832,6 +1839,16 @@ def change_email_verify(s: t.SessionInfo, otp: str):
                 person_id=s.person_id,
                 keep_session_token_hash=s.session_token_hash,
             ),
+        )
+        # The kept session moves to the new address, so everything that
+        # reads the session's email (the next change, staff checks) sees
+        # the address the person has now.
+        tx.execute(
+            """
+            UPDATE duo_session SET email = %(new_email)s
+             WHERE person_id = %(person_id)s
+            """,
+            dict(new_email=new_email, person_id=s.person_id),
         )
 
     return dict(email=new_email)
