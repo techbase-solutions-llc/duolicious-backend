@@ -27,6 +27,31 @@ def member_sql(alias: str = 'p') -> str:
 MEMBER_SQL = member_sql('p')
 
 
+# Roles that make a person not a member for a count of members: staff
+# (admin, mod) and test accounts (service/testers.py). Migration 0097 copies
+# this list into its backfill.
+NON_MEMBER_ROLES = ('admin', 'mod', 'tester')
+
+
+def non_member_role_sql(alias: str = 'p') -> str:
+    """The `person` row aliased `alias` is staff or a tester."""
+    roles = ', '.join(f"'{r}'" for r in NON_MEMBER_ROLES)
+    return (f"(COALESCE({alias}.roles, ARRAY[]::text[]) "
+            f"&& ARRAY[{roles}]::text[])")
+
+
+def current_member_sql(alias: str = 'p') -> str:
+    """A member as the System tab and Overview count sign-ups and active
+    users (TEC-2144): not staff or a tester, activated, and not deactivated
+    by an admin. member_sql above left out admins only, so a moderator, a
+    tester or a deactivated account counted, while testers.py promised that
+    member counts leave testers out. Every sign-up and active-user count on
+    those two tabs splices this in; tests/test_admin_system_people.py holds
+    them to it. Overview's member total keeps member_sql and says so."""
+    return (f"(NOT {non_member_role_sql(alias)} AND {alias}.activated "
+            f"AND {alias}.admin_deactivated_at IS NULL)")
+
+
 def counted_member_sql(alias: str = 'p', *, active: bool = True) -> str:
     """A member the Growth tab counts: the member rule above, not one of the
     staff or test addresses in service/growth/queries.py EXCLUDED_EMAILS

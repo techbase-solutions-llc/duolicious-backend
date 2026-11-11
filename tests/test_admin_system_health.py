@@ -177,7 +177,8 @@ def test_a_member_cannot_read_system_health(client, make_person):
 
 
 def test_otp_reports_codes_issued_and_claims_no_delivery():
-    """Q_OTP_24H counts duo_session rows. Nothing in the system knows
+    """Q_OTP_24H counts code requests that sent a code (TEC-2144; it counted
+    duo_session rows until 11 Nov 2026). Nothing in the system knows
     whether an OTP arrived, so this query must never grow a success or
     failure column to feed a rate onto the dashboard."""
     assert 'sent_24h' in Q_OTP_24H

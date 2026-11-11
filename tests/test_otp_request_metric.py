@@ -50,7 +50,7 @@ def test_the_day_list_is_thirty_barbados_days_ending_today(client, admin_headers
     parsed = [date.fromisoformat(d['day']) for d in days]
     assert parsed == sorted(parsed)
     assert set(days[0]) == {
-        'day', 'new_requested', 'new_never_entered',
+        'day', 'measured', 'new_requested', 'new_never_entered',
         'existing_requested', 'existing_never_entered', 'refused'}
 
 

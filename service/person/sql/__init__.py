@@ -532,10 +532,21 @@ SELECT count(*) AS n FROM d
 # `email` column instead; that's enough for the common case (retries
 # from the same client typing the same form) and avoids the 500 storm
 # that hit production for ~1.5h.
+#
+# The requests whose sessions go are marked `superseded` in otp_request
+# (migration 0097): the address asked again, so Admin > System counts it
+# by its latest request and not once per request (TEC-2144).
 Q_PURGE_STALE_UNSIGNED_SESSIONS = """
-DELETE FROM duo_session
- WHERE email = %(email)s
-   AND signed_in = FALSE
+WITH gone AS (
+    DELETE FROM duo_session
+     WHERE email = %(email)s
+       AND signed_in = FALSE
+    RETURNING session_token_hash
+)
+UPDATE otp_request
+   SET superseded = TRUE
+ WHERE session_token_hash IN (SELECT session_token_hash FROM gone)
+   AND entered_at IS NULL
 """
 
 Q_FINISH_ONBOARDING = f"""

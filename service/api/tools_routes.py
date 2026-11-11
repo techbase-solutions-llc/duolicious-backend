@@ -317,7 +317,8 @@ def post_tool_invite_email(req: t.PostToolInviteEmail, s: t.SessionInfo, sid: st
         return _refused(e)
     if refusal:
         signupguard.record_refusal(refusal, new_address=True, email=to_email,
-                                   ip=request.remote_addr)
+                                   ip=request.remote_addr,
+                                   flow='tool_invite')
         return dict(sent=True), 202
     mail.send_invite_later(msg)
     return dict(sent=True), 202

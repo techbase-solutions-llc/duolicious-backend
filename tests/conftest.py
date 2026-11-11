@@ -1611,3 +1611,26 @@ def format_redraw_schema():
     path = Path(__file__).resolve().parent.parent / 'migrations' / FORMAT_REDRAW_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Sign-in code people (TEC-2144)
+# ---------------------------------------------------------------------------
+# Migration 0097: otp_request.flow, .superseded and .staff, which /request-otp
+# writes and Admin > System reads. Applied after 0065, which creates the
+# table; both are idempotent, as the deploy needs. Autouse, since every
+# sign-in writes the new columns.
+
+OTP_REQUEST_PEOPLE_MIGRATIONS = ('0065_otp_request.sql', '0097_otp_request_people.sql')
+
+
+@pytest.fixture(scope='session', autouse=True)
+def otp_request_people_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    migrations = Path(__file__).resolve().parent.parent / 'migrations'
+    for name in OTP_REQUEST_PEOPLE_MIGRATIONS:
+        with api_tx() as tx:
+            tx.execute((migrations / name).read_text(encoding='utf-8'))

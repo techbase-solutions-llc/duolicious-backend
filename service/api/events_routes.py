@@ -392,7 +392,8 @@ def post_event_rsvp(req: t.PostEventRsvp, s: Optional[t.SessionInfo], slug: str)
                                      stamp=req.signup_stamp, website=req.website)
         if refusal:
             signupguard.record_refusal(refusal, new_address=True, email=cleaned[0],
-                                       ip=request.remote_addr)
+                                       ip=request.remote_addr,
+                                       flow='event_rsvp')
             return dict(state='check_email', email=cleaned[0]), 201, _NO_STORE
     try:
         with api_tx() as tx:

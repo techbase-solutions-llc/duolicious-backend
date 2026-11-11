@@ -27,6 +27,7 @@ import traceback
 from typing import Optional, Union
 
 from database import api_tx
+from service.admin.queries.members import non_member_role_sql
 
 
 # The page stamp (item 4). The sign-up page asks GET /signup-stamp for one
@@ -348,9 +349,23 @@ _Q_HAS_ACCOUNT = """
     SELECT 1 FROM person WHERE normalized_email = %(normalized_email)s LIMIT 1
 """
 
+# Whether the address has an account and, if so, whether it belongs to
+# staff or a tester (members.non_member_role_sql), so member sign-ins on
+# Admin > System can leave them out (TEC-2144). NULL `staff` is no account.
+_Q_ACCOUNT_STAFF = f"""
+    SELECT bool_or({non_member_role_sql('person')}) AS staff
+      FROM person
+     WHERE normalized_email = %(normalized_email)s
+"""
+
+# `flow` says which form asked (migration 0097): 'sign_in' for /request-otp
+# and /resend-otp, or the event, visitor alert and tool invite forms, which
+# record refusals only.
+FLOWS = frozenset({'sign_in', 'event_rsvp', 'visitor_alert', 'tool_invite'})
+
 _Q_RECORD = """
-    INSERT INTO otp_request (new_address, refused, session_token_hash)
-    VALUES (%(new_address)s, %(refused)s, %(session_token_hash)s)
+    INSERT INTO otp_request (new_address, refused, session_token_hash, flow, staff)
+    VALUES (%(new_address)s, %(refused)s, %(session_token_hash)s, %(flow)s, %(staff)s)
 """
 
 _Q_ENTERED = """
@@ -371,6 +386,15 @@ def has_account(normalized_email: str) -> bool:
     return row is not None
 
 
+def account_staff(normalized_email: str) -> Optional[bool]:
+    """None when no person holds this address; otherwise whether it is
+    staff or a tester. One read, for /request-otp, which needs both."""
+    with api_tx('read committed') as tx:
+        row = tx.execute(
+            _Q_ACCOUNT_STAFF, dict(normalized_email=normalized_email)).fetchone()
+    return None if row is None or row['staff'] is None else bool(row['staff'])
+
+
 def decoy() -> dict:
     """The answer a refused request gets: the shape of a real send, with a
     token no session holds."""
@@ -388,10 +412,11 @@ def _write(query: str, params: dict) -> None:
         print(traceback.format_exc())
 
 
-def record_issued(session_token_hash: str, new_address: bool) -> None:
+def record_issued(session_token_hash: str, new_address: bool,
+                  staff: bool = False) -> None:
     _write(_Q_RECORD, dict(
         new_address=new_address, refused=None,
-        session_token_hash=session_token_hash))
+        session_token_hash=session_token_hash, flow='sign_in', staff=staff))
 
 
 def record_entered(session_token_hash: str) -> None:
@@ -399,11 +424,16 @@ def record_entered(session_token_hash: str) -> None:
 
 
 def record_refusal(reason: str, new_address: bool, email: str,
-                   ip: Optional[str]) -> None:
+                   ip: Optional[str], flow: str = 'sign_in') -> None:
+    """Count a refused request: the reason, whether the address was new and
+    which form asked. The address is never stored; the log line masks it."""
     from emails.base import mask_email
+    if flow not in FLOWS:
+        raise ValueError(f'unknown otp_request flow {flow!r}')
     print(
-        f'signupguard: refused {reason}, new_address={new_address}, '
+        f'signupguard: refused {reason} ({flow}), new_address={new_address}, '
         f'to {mask_email(email)} from network {network_of(ip) or "<unknown>"}'
     )
     _write(_Q_RECORD, dict(
-        new_address=new_address, refused=reason, session_token_hash=None))
+        new_address=new_address, refused=reason, session_token_hash=None,
+        flow=flow, staff=False))

@@ -5,11 +5,14 @@ from service.admin.queries.days import (
     barbados_day_of_naive_utc,
     barbados_days,
 )
-from service.admin.queries.members import member_sql
+from service.admin.queries.members import current_member_sql
 
-_MEMBER = member_sql('person')
+_MEMBER = current_member_sql('person')
 
-# Sign-ups and DAU/WAU/MAU count members (members.py). The `*_total` figures
+# Sign-ups and DAU/WAU/MAU count members as members.current_member_sql
+# defines them: not staff or a tester, activated and not deactivated by an
+# admin, the same rule as Overview's sign-ups and active members (TEC-2144).
+# The `*_total` figures
 # below them are raw table sizes, labelled by table name on the tab, and
 # stay raw. "Today" is the Barbados day, as on every tab (days.py); the 7
 # and 30 day figures are durations and stay in UTC.
@@ -30,14 +33,22 @@ Q_SYSTEM_HEALTH = f"""
         (SELECT COUNT(*) FROM admin_audit_log) AS admin_actions_total
 """
 
-# Sign-in SESSIONS with recent OTP activity. This counts duo_session rows by
-# otp_expiry, which is bumped on every new code AND zeroed on a successful
-# sign-in, so a member who asks for three codes on one session counts once.
-# It says nothing whatever about whether a code arrived: there is no delivery
-# signal for OTP anywhere in the system.
-# The System tab used to print a hardcoded "100%" success and a hardcoded
-# "0" failures on top of this number. Both are gone. Do not reintroduce a
-# rate here without a real provider log behind it.
+# Sign-in and sign-up code requests that sent a code in the last 24 hours,
+# from otp_request: one row per /request-otp that issued a code, so asking
+# again counts again and a resend on the same request does not. Refused
+# requests sent nothing and are left out, as are the event, visitor alert
+# and tool invite forms (flow). Staff are included: it is a count of codes.
+#
+# Until 11 Nov 2026 this counted duo_session rows by otp_expiry, under a
+# comment that said a sign-in zeroed it (it sets it to the sign-in time)
+# and a card that said three codes on one session counted once (a new
+# request deletes the old session, so it counted again). TEC-2144.
+#
+# It says nothing whatever about whether a code arrived: there is no
+# delivery signal for OTP anywhere in the system. The System tab used to
+# print a hardcoded "100%" success and a hardcoded "0" failures on top of
+# this number. Both are gone. Do not reintroduce a rate here without a real
+# provider log behind it.
 # Member feedback. Until 2026-09-24 no admin route queried this table at
 # all: someone took the trouble to write to the product and nobody had seen
 # it. There was one row.
@@ -60,57 +71,87 @@ Q_FEEDBACK_RECENT = """
 
 Q_OTP_24H = """
     SELECT COUNT(*) AS sent_24h
-      FROM duo_session
-     WHERE otp_expiry > NOW() - INTERVAL '24 hours'
+      FROM otp_request
+     WHERE flow = 'sign_in'
+       AND refused IS NULL
+       AND requested_at > NOW() - INTERVAL '24 hours'
 """
 
-# Sign-in codes requested and never entered, per Barbados day for the last
-# 30 days, split into new addresses (no account when the code was asked
-# for) and existing ones (TEC-1848, item 6). The free bot protection works
-# if `new_never_entered` falls. Read from otp_request (migration 0065): one
+# Sign-in codes per Barbados day for the last 30 days, split into new
+# addresses (no account when the code was asked for) and members signing
+# in (TEC-1848, item 6). Read from otp_request (migrations 0065, 0097): one
 # row per /request-otp that issued a code, marked entered by /check-otp. A
 # resend on the same session is the same row.
 #
-# `refused` is the requests the server answered as though it had sent a
-# code and did not (honeypot, timing stamp, new-address limits,
-# undeliverable domain). They are kept off the never-entered line, which
-# would otherwise rise with every bot the rules stop.
+# The never-finished columns count PEOPLE, not requests (TEC-2144). When an
+# address asks again, /request-otp deletes its pending session and marks
+# the earlier request `superseded`; the address is then counted by its
+# latest request alone. So a request that is neither entered nor superseded
+# is one address that never entered any code since, and each address
+# appears on one day at most: the bars add up to the distinct addresses
+# over the window. Until 11 Nov 2026 these counted every request, and read
+# 65 for 17 addresses.
+#
+# Member columns leave out staff and testers (`staff`, recorded when the
+# code was asked for with members.non_member_role_sql).
+#
+# `refused` is sign-up requests (new addresses, the sign-in form only) the
+# server refused: the quiet refusals answered as a send (honeypot, timing
+# stamp, new-address limits, undeliverable domain) and the ones it answers
+# with an error (FireHOL blocklist, Turnstile, unknown domain). Event RSVP,
+# visitor alert and tool invite refusals share the table under their own
+# `flow` and are not sign-up codes. Refusals are kept off the never-finished
+# line, which would otherwise rise with every bot the rules stop.
+#
+# `measured` is false for a day before the first request on file: the table
+# began on 15 Oct 2026, and an unmeasured day is not a day with no codes.
 #
 # Today's codes may still be entered: a code lives 10 minutes, so the
-# current day's never-entered figure settles shortly after the day ends.
+# current day's figure settles shortly after the day ends.
 Q_OTP_DAILY = f"""
-    WITH days AS ({barbados_days(30)})
+    WITH days AS ({barbados_days(30)}),
+    first AS (
+        SELECT {barbados_day('MIN(requested_at)')} AS d
+          FROM otp_request
+         WHERE flow = 'sign_in'
+    )
     SELECT
         days.d AS day,
+        COALESCE(days.d >= (SELECT d FROM first), FALSE) AS measured,
         COUNT(r.id) FILTER (WHERE r.refused IS NULL AND r.new_address)
             AS new_requested,
         COUNT(r.id) FILTER (WHERE r.refused IS NULL AND r.new_address
-                              AND r.entered_at IS NULL)
+                              AND r.entered_at IS NULL AND NOT r.superseded)
             AS new_never_entered,
-        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND NOT r.new_address)
+        COUNT(r.id) FILTER (WHERE r.refused IS NULL AND NOT r.new_address
+                              AND NOT r.staff)
             AS existing_requested,
         COUNT(r.id) FILTER (WHERE r.refused IS NULL AND NOT r.new_address
-                              AND r.entered_at IS NULL)
+                              AND NOT r.staff
+                              AND r.entered_at IS NULL AND NOT r.superseded)
             AS existing_never_entered,
-        COUNT(r.id) FILTER (WHERE r.refused IS NOT NULL)
+        COUNT(r.id) FILTER (WHERE r.refused IS NOT NULL AND r.new_address)
             AS refused
       FROM days
       LEFT JOIN otp_request r
         ON r.requested_at >= NOW() - INTERVAL '31 days'
+       AND r.flow = 'sign_in'
        AND {barbados_day('r.requested_at')} = days.d
      GROUP BY days.d
      ORDER BY days.d
 """
 
-# Why requests were refused over the same 30 Barbados days as Q_OTP_DAILY,
-# most frequent first. It read a rolling NOW() - 30 days, so a refusal late
-# on the day before the series began counted here and not in the refused
-# total (TEC-1845 admin audit, Minor 14). The requested_at bound only lets
-# the index narrow the scan.
+# Why sign-up requests were refused over the same 30 Barbados days and the
+# same rows as Q_OTP_DAILY's `refused`, most frequent first. It read a
+# rolling NOW() - 30 days, so a refusal late on the day before the series
+# began counted here and not in the refused total (TEC-1845 admin audit,
+# Minor 14). The requested_at bound only lets the index narrow the scan.
 Q_OTP_REFUSALS_30D = f"""
     SELECT refused AS reason, COUNT(*) AS count
       FROM otp_request
      WHERE refused IS NOT NULL
+       AND flow = 'sign_in'
+       AND new_address
        AND requested_at >= NOW() - INTERVAL '31 days'
        AND {barbados_day('requested_at')} >= {BARBADOS_TODAY} - 29
      GROUP BY refused

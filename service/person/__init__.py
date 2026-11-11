@@ -403,17 +403,20 @@ def _open_pending_session(tx, params: dict, inviter_code: Optional[str]) -> list
     return rows
 
 def post_request_otp(req: t.PostRequestOtp):
+    norm = normalize_email(req.email)
+
+    def refused(reason: str, new: bool) -> None:
+        # Admin > System counts every refusal of a code request, the ones
+        # answered with an error as well as the quiet ones (TEC-2144).
+        signupguard.record_refusal(
+            reason, new_address=new, email=req.email, ip=request.remote_addr)
+
     # Honeypot: bots that scrape the form and submit every field hit this.
     # Real users never see the field. Return a success-shaped response so
     # the bot can't tell it was rejected.
     from service.antibot import is_honeypot_hit, verify_turnstile
     if is_honeypot_hit(req.website):
-        signupguard.record_refusal(
-            'honeypot',
-            new_address=not signupguard.has_account(normalize_email(req.email)),
-            email=req.email,
-            ip=request.remote_addr,
-        )
+        refused('honeypot', not signupguard.has_account(norm))
         return signupguard.decoy()
 
     # Pre-launch gate FIRST: signups closed to the public until launch.
@@ -421,7 +424,6 @@ def post_request_otp(req: t.PostRequestOtp):
     # those side-effecting tables and so the response shape is identical
     # for every disallowed (banned/disposable/disallowed-domain) case
     # behind a single 403 (audit Auth #3).
-    norm = normalize_email(req.email)
     if not SIGNUPS_OPEN and norm.rpartition("@")[2] not in SIGNUP_ALLOWED_DOMAINS:
         return 'Signups are not open yet', 403
 
@@ -429,12 +431,15 @@ def post_request_otp(req: t.PostRequestOtp):
     # rollout). Closed-beta allow-listed callers go through above; only
     # public callers reach here, so the verify is gated on launch.
     if not verify_turnstile(req.turnstile_token, request.remote_addr):
+        refused('turnstile', not signupguard.has_account(norm))
         return 'Verification failed', 403
 
     if _ip_blocked(req.email):
+        refused('firehol', not signupguard.has_account(norm))
         return 'IP address blocked', 460
 
-    new_address = not signupguard.has_account(norm)
+    staff = signupguard.account_staff(norm)
+    new_address = staff is None
 
     # The disposable-domain check answers 400 as before, with one change: a
     # NEW address on the bad-domain list is refused quietly below instead,
@@ -444,6 +449,7 @@ def post_request_otp(req: t.PostRequestOtp):
     if not check_and_update_bad_domains(req.email):
         listed_bad = new_address and signupguard.on_bad_domain_list(req.email)
         if not listed_bad:
+            refused('disposable', new_address)
             return 'Disposable email', 400
 
     # Free bot protection for addresses with no account (TEC-1848). An
@@ -458,8 +464,7 @@ def post_request_otp(req: t.PostRequestOtp):
             listed_bad=listed_bad,
         )
         if refusal:
-            signupguard.record_refusal(
-                refusal, new_address=True, email=req.email, ip=request.remote_addr)
+            refused(refusal, True)
             return signupguard.decoy()
 
     session_token = secrets.token_hex(64)
@@ -489,19 +494,22 @@ def post_request_otp(req: t.PostRequestOtp):
         return dict(session_token=session_token)
 
     _send_otp(req.email, otp, kind='sign_in_code')
-    signupguard.record_issued(session_token_hash, new_address)
+    signupguard.record_issued(session_token_hash, new_address, staff=bool(staff))
 
     return dict(session_token=session_token)
 
 def post_resend_otp(s: t.SessionInfo):
+    norm = normalize_email(s.email)
     if _ip_blocked(s.email):
+        signupguard.record_refusal(
+            'firehol', new_address=not signupguard.has_account(norm),
+            email=s.email, ip=request.remote_addr)
         return 'IP address blocked', 460
 
     # The free bot protection's new-address rules (TEC-1848), as on
     # /request-otp. A session for an existing account, admins included,
     # never reaches them. A refusal is answered as a resend that went out
     # is, keeps the code already sent and mails nothing.
-    norm = normalize_email(s.email)
     if not signupguard.has_account(norm):
         refusal = signupguard.resend_refusal(
             normalized_email=norm,
