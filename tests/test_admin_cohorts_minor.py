@@ -86,7 +86,7 @@ def test_the_pending_balance_follows_the_reward(make_person, monkeypatch):
     try:
         monkeypatch.setattr(referrals, 'REFERRAL_REWARD_TOKENS', 7)
         importlib.reload(cohorts)
-        q = cohorts.Q_REFERRALS_PER_INVITER.replace('LIMIT 50', 'LIMIT 1000000')
+        q = cohorts.Q_REFERRALS_PER_INVITER
         with api_tx('read committed') as tx:
             row = next(r for r in tx.execute(q).fetchall() if r['inviter'] == email)
         assert row['pending_token_balance'] == 7

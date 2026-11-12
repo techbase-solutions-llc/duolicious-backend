@@ -165,6 +165,15 @@ def _subscription_checkout(e: str) -> str:
             f"AND COALESCE({e}.payload->'data'->'object'->>'mode', "
             f"{e}.payload->>'mode') = 'subscription'")
 
+#
+# A known staff or test account's subscription is not an add: one whose
+# person fails counted_member_sql (active=False, as the Weekly funnel, so a
+# member who has since deactivated still subscribed). The chart had no
+# member filter, so such a checkout plotted as a sale (TEC-2150). A
+# checkout whose person the webhook could not resolve (app_user_id
+# 'unknown', service/checkout) or whose account was since hard-deleted is
+# still a sale and still counts. Binds %(ex)s with
+# service.growth.queries._excluded().
 Q_OVERVIEW_PREMIUM_30D = f"""
     WITH days AS ({barbados_days(30)}
     )
@@ -175,6 +184,9 @@ Q_OVERVIEW_PREMIUM_30D = f"""
              WHERE {_subscription_checkout('e')}
                AND {live_stripe_event('e')}
                AND {barbados_day('e.received_at')} = days.d
+               AND NOT EXISTS (SELECT 1 FROM person pm
+                                WHERE pm.id::text = e.app_user_id
+                                  AND NOT {counted_member_sql('pm', active=False)})
         ), 0) AS adds
       FROM days
      ORDER BY days.d

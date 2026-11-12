@@ -6,7 +6,7 @@ from typing import Optional
 
 from emails.base import suppressed_sql_pattern
 from service.admin.queries.engagement import _SENT_MESSAGES
-from service.admin.queries.members import member_sql
+from service.admin.queries.members import counted_member_sql, member_sql
 from service.campaigns import (PLATFORMS, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.spotlight.country import display_country
@@ -54,9 +54,13 @@ def last_action_at(tx, person_id: int) -> Optional[datetime]:
 # counted: Members read 60 for 58, and Spotlight opt-ins 2 for 1.
 #
 # A like, match or message counts only when NEITHER end is staff or a test
-# account, the same rule the Overview's engagement figures use.
+# account, the same rule the Overview's engagement figures use:
+# counted_member_sql with active=False, history. It used member_sql, which
+# leaves out admins only, so a moderator's or tester's match was a "Match
+# made" on Growth and not on the Overview (TEC-2150). Members and opt-ins
+# count with counted_member_sql (active), as the Overview's member_total.
 def _not_member_or_test(x: str) -> str:
-    return f"(lower({x}.email) = ANY(%(ex)s) OR NOT ({member_sql(x)}))"
+    return f"(NOT {counted_member_sql(x, active=False)})"
 
 # Each tile measures what its label says (health review, 13 Oct 2026):
 #
@@ -90,7 +94,7 @@ _Q_STATS_BY_GENDER = f"""
              ) AS liked_or_messaged_14d,
              {_last_action_sql('p.id')} AS last_action
         FROM person p JOIN gender g ON g.id = p.gender_id
-       WHERE p.activated AND {member_sql('p')} AND lower(p.email) <> ALL(%(ex)s)
+       WHERE {counted_member_sql('p')}
     )
     SELECT gender,
            count(*)                                                              AS members,
@@ -108,7 +112,9 @@ _Q_STATS_BY_GENDER = f"""
 # A match counts once it was made, whether or not it is still current. An
 # unmatch (TEC-1845, migration 0070) deletes the match row and keeps when it
 # was made in unmatched_pair.matched_at, so Matches keeps counting what
-# happened, as the Overview's mutual-like figure does.
+# happened, as the Overview's mutual-like figure does. `matches` and
+# `matches_30d` are "Matches made" in the admin; Users > Waiting on a reply
+# shows "Matches now", the current ones (TEC-2150).
 _MATCHES_MADE = """
     SELECT user_a_id, user_b_id, created_at FROM ahavah_match
     UNION ALL
@@ -158,8 +164,7 @@ _Q_TOTALS = f"""
           )
       ) AS msgs_30d,
       (SELECT count(*) FROM person p
-        WHERE p.activated AND p.spotlight_opt_in AND {member_sql('p')}
-          AND lower(p.email) <> ALL(%(ex)s)) AS opted_in
+        WHERE p.spotlight_opt_in AND {counted_member_sql('p')}) AS opted_in
 """
 
 def growth_stats(tx) -> dict:

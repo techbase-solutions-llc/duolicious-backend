@@ -159,3 +159,23 @@ def test_no_message_content_is_read_or_returned(client, admin_bearer, make_perso
     a, b = make_person(name='WM'), make_person(name='WN')
     _message(a, b, 'a very private sentence')
     assert 'private sentence' not in str(_waiting(client, admin_bearer))
+
+
+def test_members_waiting_counts_the_list_not_only_likes(client, admin_bearer, make_person):
+    """The Needs you tile counted members with likes (29) and opened a list
+    of everyone waited on (32): a member waited on for an opener or a silent
+    match only was on the list and not in the count (TEC-2150).
+    members_waiting counts the list's own rows."""
+    a, b, c, d, e = (make_person(name=n) for n in ('WWa', 'WWb', 'WWc', 'WWd', 'WWe'))
+    before = _waiting(client, admin_bearer)['summary']
+    _like(a, b)            # b waits on a like
+    _message(c, d)         # d waits on an opener
+    _match(a, e, days_ago=8)  # a and e wait on a silent match
+    body = _waiting(client, admin_bearer)
+    after = body['summary']
+    assert after['members_waiting'] - before['members_waiting'] == 4
+    assert after['members_with_likes'] - before['members_with_likes'] == 1
+    if len(body['members']) < 200:  # the list's LIMIT
+        assert after['members_waiting'] == len(body['members'])
+    assert _row(body, d)['likes_waiting'] == 0 and _row(body, d)['unanswered_openers'] == 1
+    assert _row(body, e)['likes_waiting'] == 0 and _row(body, e)['silent_matches'] == 1

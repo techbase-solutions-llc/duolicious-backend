@@ -71,7 +71,7 @@ def get_admin_overview(s: t.SessionInfo):
         kpis.update(tx.execute(Q_OVERVIEW_MEMBER_TOTAL, dict(ex=_excluded())).fetchone())
         signups_30d = [dict(r) for r in tx.execute(Q_OVERVIEW_SIGNUPS_30D).fetchall()]
         referral_ctr_7d = [dict(r) for r in tx.execute(Q_OVERVIEW_REFERRAL_CTR_7D).fetchall()]
-        premium_30d = [dict(r) for r in tx.execute(Q_OVERVIEW_PREMIUM_30D).fetchall()]
+        premium_30d = [dict(r) for r in tx.execute(Q_OVERVIEW_PREMIUM_30D, dict(ex=_excluded())).fetchall()]
         members_30d = [dict(r) for r in tx.execute(Q_OVERVIEW_MEMBERS_30D).fetchall()]
         recent = [dict(r) for r in tx.execute(Q_OVERVIEW_RECENT_ACTIVITY).fetchall()]
         recent_all = [dict(r) for r in tx.execute(Q_OVERVIEW_RECENT_ACTIVITY_ALL).fetchall()]

@@ -15,7 +15,7 @@ Every query binds %(ex)s with service.growth.queries._excluded().
 """
 from __future__ import annotations
 
-from service.admin.queries.engagement import _SENT_MESSAGES
+from service.admin.queries.engagement import member_sent_sql
 from service.admin.queries.members import counted_member_sql
 
 
@@ -37,18 +37,6 @@ def waiting_likes_sql() -> str:
     """
 
 
-def member_sent_sql(active: bool) -> str:
-    """One row per message sent between counted members (sender_id,
-    recipient_id, lo, hi, sent_at)."""
-    return f"""
-        SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
-          FROM ({_SENT_MESSAGES}) x
-          JOIN person xs ON xs.id = x.sender_id
-          JOIN person xr ON xr.id = x.recipient_id
-         WHERE {counted_member_sql('xs', active=active)} AND {counted_member_sql('xr', active=active)}
-    """
-
-
 # One row per conversation: when it opened, who opened it, and how many
 # people have written in it (2 means both sides did).
 _CONVOS = """
@@ -59,7 +47,9 @@ _CONVOS = """
 """
 
 # Matches between active counted members that neither has blocked: a block
-# hides the match from both (is_blocked_pair, migration 0035).
+# hides the match from both (is_blocked_pair, migration 0035). The summary's
+# `matches` is "Matches now" in the admin: current matches only, not the
+# Overview's and Growth's "Matches made", every match ever made (TEC-2150).
 _MEMBER_MATCHES = f"""
         SELECT m.user_a_id, m.user_b_id, m.created_at
           FROM ahavah_match m
@@ -83,12 +73,28 @@ _WITH = f"""
     member_matches AS ({_MEMBER_MATCHES}),
     silent AS ({_SILENT}),
     per AS (SELECT person_id, count(*) AS n, min(created_at) AS oldest
-              FROM likes GROUP BY person_id)
+              FROM likes GROUP BY person_id),
+    -- Every reason a member is waited on: a like, an opener they have not
+    -- answered, a match where nobody has written. The list below is one row
+    -- per member in here, and members_waiting counts them, so the Needs you
+    -- tile and the list it opens agree. The tile counted members with likes
+    -- only, 29 against a list of 32 on 11 Nov 2026 (TEC-2150).
+    waits AS (
+        SELECT person_id, created_at AS since, 'like' AS kind FROM likes
+        UNION ALL
+        SELECT CASE WHEN opener = lo THEN hi ELSE lo END, opened_at, 'opener'
+          FROM convos WHERE voices = 1
+        UNION ALL
+        SELECT user_a_id, created_at, 'match' FROM silent
+        UNION ALL
+        SELECT user_b_id, created_at, 'match' FROM silent
+    )
 """
 
 Q_WAITING_SUMMARY = f"""
     {_WITH}
     SELECT
+      (SELECT count(DISTINCT person_id) FROM waits)::int                  AS members_waiting,
       (SELECT count(*) FROM likes)::int                                   AS likes_waiting,
       (SELECT count(*) FROM per)::int                                     AS members_with_likes,
       (SELECT min(oldest) FROM per)                                       AS oldest_like_at,
@@ -107,17 +113,7 @@ Q_WAITING_SUMMARY = f"""
 """
 
 Q_WAITING_MEMBERS = f"""
-    {_WITH},
-    waits AS (
-        SELECT person_id, created_at AS since, 'like' AS kind FROM likes
-        UNION ALL
-        SELECT CASE WHEN opener = lo THEN hi ELSE lo END, opened_at, 'opener'
-          FROM convos WHERE voices = 1
-        UNION ALL
-        SELECT user_a_id, created_at, 'match' FROM silent
-        UNION ALL
-        SELECT user_b_id, created_at, 'match' FROM silent
-    )
+    {_WITH}
     SELECT p.uuid::text AS uuid, p.name,
            count(*) FILTER (WHERE w.kind = 'like')::int   AS likes_waiting,
            count(*) FILTER (WHERE w.kind = 'opener')::int AS unanswered_openers,

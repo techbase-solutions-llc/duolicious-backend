@@ -40,10 +40,21 @@ ANSWER.
 Every figure here is between MEMBERS (members.py). A like, match or message
 with a staff account on either end is the staff account's, not the
 community's; on 13 Oct 2026, 2 of the 127 likes involved one.
+
+The KPIs count members as the Weekly funnel above them on the Overview
+does (community.Q_WEEKLY_FUNNEL): counted_member_sql with active=False, so
+staff (admin, mod), testers and the staff and test addresses are left out,
+and a member who has since deactivated still liked who they liked. They
+used member_sql, which leaves out admins only, so the two panels on one
+screen counted different people (TEC-2150). Q_ENGAGEMENT_KPIS binds
+%(ex)s with service.growth.queries._excluded().
+
+_SENT_MESSAGES keeps member_sql: community.py, Growth and Sources build on
+it and apply their own rule on top.
 """
 from __future__ import annotations
 
-from service.admin.queries.members import member_sql
+from service.admin.queries.members import counted_member_sql, member_sql
 
 # One row per message actually sent between two members, with both ends
 # resolved to person ids and the pair normalised so {a,b} and {b,a} are the
@@ -66,17 +77,32 @@ _SENT_MESSAGES = f"""
        AND {member_sql('p')}
 """
 
-# A like with a member on both ends. `a` liked `b`.
+# A like with a counted member on both ends. `a` liked `b`.
 _MEMBER_LIKES = f"""
     SELECT l.liker_id, l.liked_id, l.created_at
       FROM liked l
       JOIN person a ON a.id = l.liker_id
       JOIN person b ON b.id = l.liked_id
-     WHERE {member_sql('a')} AND {member_sql('b')}
+     WHERE {counted_member_sql('a', active=False)} AND {counted_member_sql('b', active=False)}
 """
 
+
+
+def member_sent_sql(active: bool) -> str:
+    """One row per message sent between counted members (sender_id,
+    recipient_id, lo, hi, sent_at). The Weekly funnel and the waiting list
+    (community.py) and the KPIs below share it. It lives here, not in
+    community.py, because community.py imports this module."""
+    return f"""
+        SELECT x.sender_id, x.recipient_id, x.lo, x.hi, x.sent_at
+          FROM ({_SENT_MESSAGES}) x
+          JOIN person xs ON xs.id = x.sender_id
+          JOIN person xr ON xr.id = x.recipient_id
+         WHERE {counted_member_sql('xs', active=active)} AND {counted_member_sql('xr', active=active)}
+    """
+
 Q_ENGAGEMENT_KPIS = f"""
-    WITH sent AS ({_SENT_MESSAGES}),
+    WITH sent AS ({member_sent_sql(active=False)}),
     likes AS ({_MEMBER_LIKES}),
     -- One row per conversation, carrying how many distinct people have
     -- written in it. Two means both sides did.
@@ -90,8 +116,11 @@ Q_ENGAGEMENT_KPIS = f"""
         (SELECT COUNT(*) FROM likes
           WHERE created_at > NOW() - INTERVAL '7 days') AS likes_7d,
 
-        -- Both directions of a mutual like are rows, so this guard is what
-        -- stops every match being counted twice.
+        -- "Matches made" in the admin: every mutual like, all time,
+        -- unmatched since or not. Not community.py's `matches`, "Matches
+        -- now", the current ones (TEC-2150). Both directions of a mutual
+        -- like are rows, so this guard is what stops every match being
+        -- counted twice.
         (SELECT COUNT(*) FROM likes a
            JOIN likes b ON a.liker_id = b.liked_id AND a.liked_id = b.liker_id
           WHERE a.liker_id < a.liked_id) AS matches_total,

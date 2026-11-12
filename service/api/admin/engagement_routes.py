@@ -14,11 +14,12 @@ from database import api_tx
 from service.admin import require_admin
 from service.admin.queries.engagement import Q_ENGAGEMENT_KPIS
 from service.api.decorators import aget
+from service.growth.queries import _excluded
 
 
 @aget('/admin/engagement')
 def get_admin_engagement(s: t.SessionInfo):
     require_admin(s)
     with api_tx('read committed') as tx:
-        kpis = tx.execute(Q_ENGAGEMENT_KPIS).fetchone() or {}
+        kpis = tx.execute(Q_ENGAGEMENT_KPIS, dict(ex=_excluded())).fetchone() or {}
     return dict(kpis=dict(kpis))

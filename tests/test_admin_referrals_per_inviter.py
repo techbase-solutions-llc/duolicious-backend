@@ -188,3 +188,15 @@ def test_total_clicks_leaves_out_bots_as_the_table_does(make_person, made):
     after = _kpis()
     assert after['total_clicks'] == before['total_clicks'] + 1
     assert after['distinct_codes_clicked'] == before['distinct_codes_clicked'] + 1
+
+
+def test_every_inviter_is_listed_past_50(made):
+    """The table stopped at 50 with no word: 50 of 70 inviters on 11 Nov
+    2026 (TEC-2150). 51 more holders than before are all listed."""
+    before = len(_table())
+    mine = [_beta(made)[0] for _ in range(51)]
+    table = _table()
+    assert len(table) == before + 51
+    assert all(e in table for e in mine)
+    assert 'LIMIT' not in Q_REFERRALS_PER_INVITER.upper()
+

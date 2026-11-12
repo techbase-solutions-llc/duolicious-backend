@@ -69,4 +69,7 @@ def get_cohorts_referrals(s: t.SessionInfo):
         'kpis': dict(kpis),
         'click_stream_7d': click_stream,
         'per_inviter': per_inviter,
+        # Every inviter is in per_inviter; the admin shows them a page at a
+        # time and says how many there are (TEC-2150).
+        'per_inviter_total': len(per_inviter),
     }
