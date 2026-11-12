@@ -3,8 +3,8 @@
 GET /visitors returned every visitor's name, uuid and photo to free
 members; only the web blurred them. A member without the 'premium'
 entitlement now gets each "Viewed you" row as a placeholder: the visit's
-time, whether it is new, the photo's blurhash and an opaque row key, and
-no name, age, place, photo or person uuid. The count of rows is the same,
+time, whether it is new and an opaque row key, and no name, age, place,
+photo, blurhash or person uuid. The count of rows is the same,
 so the locked card still says how many people looked. "You viewed" (the
 member's own trail) and Premium members are unchanged.
 """
@@ -45,7 +45,9 @@ def test_a_free_member_gets_placeholders_for_who_viewed_them(client, seen):
     assert (row['name'], row['age'], row['location'], row['photo_uuid'], row['gender']) == \
         (None, None, None, None, None)
     assert row['is_new'] is True and row['time']
-    assert row['photo_blurhash']
+    # The blurhash is drawn from the visitor's own photo; the web's locked
+    # card does not read it, so it stays on the server too.
+    assert row['photo_blurhash'] is None
     assert visitor['uuid'] not in str(body)
     assert 'VisVisitor' not in str(body)
     # Their own trail is theirs to see.

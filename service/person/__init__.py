@@ -3590,7 +3590,8 @@ def post_revenuecat(req: t.PostRevenuecat):
 
 # What a "Viewed you" row keeps for a member without Premium (TEC-2070): the
 # visit, never the visitor. The web's locked card renders these blurred.
-_VISITOR_PLACEHOLDER_KEEPS = ('time', 'is_new', 'photo_blurhash', 'was_invisible')
+# The blurhash is drawn from the visitor's own photo, so it stays too.
+_VISITOR_PLACEHOLDER_KEEPS = ('time', 'is_new', 'was_invisible')
 
 
 def _visitor_placeholder(row: dict, i: int) -> dict:
@@ -3601,7 +3602,7 @@ def _visitor_placeholder(row: dict, i: int) -> dict:
         person_uuid=f'hidden-{i}',
         hidden=True,
         name=None, age=None, gender=None, location=None,
-        photo_uuid=None, is_verified=False, match_percentage=None,
+        photo_uuid=None, photo_blurhash=None, is_verified=False, match_percentage=None,
         verification_required_to_view=None,
     )
 
