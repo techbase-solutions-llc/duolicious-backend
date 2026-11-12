@@ -208,6 +208,24 @@ def test_several_gatherings_are_one_push(host, published, confirmed_guest, sent)
     assert p['body'] == '2 new guests are going to your gatherings.'
 
 
+@pytest.mark.parametrize('role', ['admin', 'mod'])
+def test_a_staff_guest_is_not_news(host, confirmed_guest, sent, make_person, role):
+    """Staff are hidden from members (TEC-2040): a staff guest is not
+    counted, and a host whose only new guest is staff is not pushed."""
+    staff = make_person(name='StaffGuest', gender='Woman')
+    _sql("UPDATE person SET roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s", i=staff['id'], r=role)
+    m, oid, slug = host()
+    confirmed_guest(slug, person_id=staff['id'], party_size=2)
+    _run(ap.queue_new_guests, datetime.now(UTC))
+    assert _to(sent, m) == []
+    other, _, other_slug = host(name='Naomi')
+    confirmed_guest(other_slug, person_id=staff['id'], party_size=2)
+    confirmed_guest(other_slug)
+    _run(ap.queue_new_guests, datetime.now(UTC))
+    (p,) = _to(sent, other)
+    assert p['body'] == '1 new guest is going to Marriage preparation evening.'
+
+
 def test_one_guest_reads_in_the_singular():
     assert ap.new_guests_push(1, ['Lunch'])['body'] == '1 new guest is going to Lunch.'
 

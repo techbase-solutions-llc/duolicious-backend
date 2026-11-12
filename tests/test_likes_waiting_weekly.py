@@ -257,3 +257,43 @@ def test_never_to_staff(make_person, on):
     _like(make_person(name='StaffLiker', gender='Man'), staff)
     _run()
     assert _rows(staff['id']) == []
+
+
+# Staff are hidden from members (TEC-2040): a like from an admin or a
+# moderator is not one waiting, so it is never counted, and a member whose
+# only likes come from staff is not emailed.
+
+def _staff(make_person, name, role='admin'):
+    p = make_person(name=name, gender='Man')
+    with api_tx() as tx:
+        tx.execute('UPDATE person SET activated = TRUE, roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s',
+                   dict(i=p['id'], r=role))
+    return p
+
+
+@pytest.mark.parametrize('role', ['admin', 'mod'])
+def test_a_like_from_staff_is_not_counted(make_person, on, role):
+    only_staff = _person(make_person, 'OnlyStaff')
+    _like(_staff(make_person, 'StaffLiker', role), only_staff)
+    both = _person(make_person, 'StaffAndMember')
+    _like(_staff(make_person, 'StaffLiker2', role), both)
+    _like(make_person(name='MemberLiker', gender='Man'), both)
+    _run()
+    assert _rows(only_staff['id']) == []
+    assert _rows(both['id'])[0]['subject'] == 'Someone likes you on Ahavah'
+
+
+def test_the_one_off_likes_email_does_not_count_staff(make_person):
+    from emails.send_likes_waiting import MIN_LIKES, OFFLINE_DAYS, _Q_TARGETS
+    only_staff = _person(make_person, 'OneOffStaff')
+    _like(_staff(make_person, 'OneOffStaffLiker'), only_staff)
+    both = _person(make_person, 'OneOffBoth')
+    _like(_staff(make_person, 'OneOffStaffLiker2', 'mod'), both)
+    _like(make_person(name='OneOffMember', gender='Man'), both)
+    with api_tx() as tx:
+        emails = {p['id']: tx.execute('SELECT email FROM person WHERE id = %(i)s',
+                                      dict(i=p['id'])).fetchone()['email'] for p in (only_staff, both)}
+        rows = {r['email']: r['likes_waiting'] for r in tx.execute(
+            _Q_TARGETS, dict(offline_days=OFFLINE_DAYS, min_likes=MIN_LIKES)).fetchall()}
+    assert emails[only_staff['id']] not in rows
+    assert rows[emails[both['id']]] == 1

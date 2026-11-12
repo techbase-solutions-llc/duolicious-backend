@@ -53,6 +53,8 @@ _Q_TARGETS = f"""
       AND NOT is_blocked_pair(p.id, l.liker_id)
       -- and not answered with a pass after it arrived (11 Nov 2026)
       AND NOT {passed_after_like_sql('p.id', 'l.liker_id', 'l.created_at')}
+      -- and not from staff, who are hidden from members (TEC-2040)
+      AND NOT is_staff_hidden(p.id, l.liker_id)
       -- the liker still has an account worth answering
       AND EXISTS (
           SELECT 1 FROM person lp WHERE lp.id = l.liker_id AND lp.activated

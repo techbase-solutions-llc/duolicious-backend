@@ -116,3 +116,23 @@ def test_the_invite_button_opens_the_share_page_not_the_members_own_invite():
     _subject, html = e2.preview_personal('owner@ahavah-test.invalid')
     assert f'href="{WEB_BASE_URL}/share/YOURCODE"' in html
     assert '/i/' not in html and f'{WEB_BASE_URL}/invite"' not in html
+
+
+def test_a_like_from_staff_is_not_waiting(make_person, on):
+    """Staff are hidden from members (TEC-2040): an admin's like is not a
+    like waiting, so a member whose only like is from staff gets no likes
+    line, and staff never add to the count."""
+    only_staff = _person(make_person, 'E2OnlyStaff')
+    both = _person(make_person, 'E2StaffAndMember')
+    for i, (liked, role) in enumerate(((only_staff, 'admin'), (both, 'mod'), (both, None))):
+        liker = make_person(name=f'E2Liker{i}', gender='Man')
+        with api_tx() as tx:
+            if role:
+                tx.execute('UPDATE person SET roles = ARRAY[%(r)s]::TEXT[] WHERE id = %(i)s',
+                           dict(i=liker['id'], r=role))
+            tx.execute("INSERT INTO liked (liker_id, liked_id) VALUES (%(a)s, %(b)s)",
+                       dict(a=liker['id'], b=liked['id']))
+    subject, _html = e2.build_for(_row(only_staff))
+    assert 'waiting' not in subject
+    subject, _html = e2.build_for(_row(both))
+    assert subject == 'This week on Ahavah: 1 like is waiting for you'

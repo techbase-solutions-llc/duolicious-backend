@@ -143,6 +143,8 @@ _Q_PERSONAL = f"""
           AND NOT EXISTS (SELECT 1 FROM liked rev WHERE rev.liker_id = p.id AND rev.liked_id = l.liker_id)
           AND NOT is_blocked_pair(p.id, l.liker_id)
           AND NOT {passed_after_like_sql('p.id', 'l.liker_id', 'l.created_at')}
+          -- Staff are hidden from members (TEC-2040).
+          AND NOT is_staff_hidden(p.id, l.liker_id)
           AND NOT EXISTS (SELECT 1 FROM ahavah_match m
                            WHERE m.user_a_id = LEAST(p.id, l.liker_id)
                              AND m.user_b_id = GREATEST(p.id, l.liker_id))) AS likes,

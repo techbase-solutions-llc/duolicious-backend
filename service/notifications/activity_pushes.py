@@ -241,6 +241,8 @@ _Q_NEW_GUESTS = f"""
        AND (r.person_id IS NULL OR r.person_id <> p.id)
        -- A guest across the tester line is not news (TEC-2135).
        AND (r.person_id IS NULL OR NOT is_tester_split_pair(p.id, r.person_id))
+       -- Nor is a staff guest: staff are hidden from members (TEC-2040).
+       AND (r.person_id IS NULL OR NOT is_staff_hidden(p.id, r.person_id))
      GROUP BY p.id, e.id
      ORDER BY p.id, e.starts_at, e.id
 """

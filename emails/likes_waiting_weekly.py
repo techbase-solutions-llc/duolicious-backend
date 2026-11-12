@@ -67,6 +67,8 @@ def _due_sql(only: str) -> str:
            AND NOT is_blocked_pair(l.liked_id, l.liker_id)
            -- Answered with a pass after it arrived (11 Nov 2026).
            AND NOT {passed_after_like_sql('l.liked_id', 'l.liker_id', 'l.created_at')}
+           -- A like from staff is hidden from the member (TEC-2040).
+           AND NOT is_staff_hidden(l.liked_id, l.liker_id)
            AND NOT EXISTS (SELECT 1 FROM ahavah_match m
                             WHERE m.user_a_id = LEAST(l.liker_id, l.liked_id)
                               AND m.user_b_id = GREATEST(l.liker_id, l.liked_id))
