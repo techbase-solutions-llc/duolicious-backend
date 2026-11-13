@@ -58,6 +58,28 @@ def test_the_digests_naming_the_guests_go_with_the_names(published):
     assert left == {ids[recent]}
 
 
+def test_the_notes_of_a_cancelled_place_go_with_the_names(published, confirmed_guest):
+    """TEC-2077: the organiser's note of a cancelled place names the guest."""
+    from service.campaigns.outbox import enqueue_for_organiser
+    old = published(starts_at=NOW - timedelta(days=91, hours=3))
+    recent = published(starts_at=NOW - timedelta(days=89))
+    ids = {}
+    guests = {slug: confirmed_guest(slug) for slug in (old, recent)}
+    with api_tx() as tx:
+        for slug in (old, recent):
+            ev = tx.execute('SELECT id, organiser_id FROM event WHERE slug = %(s)s', dict(s=slug)).fetchone()
+            g = guests[slug]
+            ids[slug] = enqueue_for_organiser(
+                tx, campaign='event_place_cancelled', campaign_id=f"{g['id']}:20260101000000",
+                organiser_id=ev['organiser_id'], email='note@ahavah-test.invalid',
+                subject='Hannah Okafor cancelled', html='<p>Hannah Okafor</p>', from_addr=None)
+    assert _purge()['place_notes'] >= 1
+    with api_tx('read committed') as tx:
+        left = {r['id'] for r in tx.execute('SELECT id FROM email_outbox WHERE id = ANY(%(i)s)',
+                                            dict(i=list(ids.values()))).fetchall()}
+    assert left == {ids[recent]}
+
+
 def test_an_rsvp_never_confirmed_goes_a_day_after_its_window(published, confirmed_guest):
     slug = published()
     lapsed = confirmed_guest(slug)
@@ -150,7 +172,7 @@ def test_a_guest_who_joins_is_linked_and_credited_to_the_gathering(published, co
 def test_purge_counts_each_kind():
     with api_tx() as tx:
         out = retention.purge_event_data(tx)
-    assert set(out) == {'erased', 'digests', 'unconfirmed', 'links', 'requests', 'join_invites'}
+    assert set(out) == {'erased', 'digests', 'place_notes', 'unconfirmed', 'links', 'requests', 'join_invites'}
 
 
 def test_the_invitation_record_goes_with_the_last_lead_row():

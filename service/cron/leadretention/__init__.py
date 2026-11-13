@@ -80,6 +80,8 @@ def _purge_once() -> None:
               f"90 days after their gathering")
     if n_events['digests']:
         print(f"lead_retention: {n_events['digests']} organiser digest(s) naming those guests deleted")
+    if n_events.get('place_notes'):
+        print(f"lead_retention: {n_events['place_notes']} cancelled-place note(s) naming those guests deleted")
     if n_events['unconfirmed']:
         print(f"lead_retention: {n_events['unconfirmed']} RSVP(s) never confirmed deleted")
     if n_events['links']:

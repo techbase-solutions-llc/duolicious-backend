@@ -465,7 +465,8 @@ def place_cancelled_email(event: dict, guest: dict, total_going: int, manage_tok
            f'color:{INK};">{_e(guest["name"])}</td><td class="e-text" align="right" style="padding:8px 0;'
            f'font-family:{SANS};font-size:13px;color:{MUTED};">{_people(int(guest["party_size"]))}</td>'
            f'</tr></table>')
-    body = (_title('refused') + _lead(_e(line) + '.') + _panel(row)
+    stop = '' if line.endswith(('.', '?', '!')) else '.'
+    body = (_title('refused') + _lead(_e(line) + stop) + _panel(row)
             + held.para(f'<b>{total_going} going</b> in total now.')  # NEW LINE
             + button('Manage your gathering', manage_url(manage_token)))
     return subject, _shell(subject, _e(line), body, _footer(PLACE_CANCELLED_WHY, your_ahavah=your_ahavah))
@@ -870,8 +871,9 @@ def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> O
     confirmed and is now cancelled, the gathering was published, is not
     cancelled and has not ended, and the guest is on the organiser's side
     of the tester line (as on the RSVP list and the digest, TEC-2135).
-    Once per confirmed booking: a guest who books again and cancels again
-    is a new one, and the send guard caps the kind per address."""
+    Once per cancellation (campaign id by cancelled_at, set once when the
+    place is given up): a guest who books again and cancels again is a new
+    one, and the send guard caps the kind per address."""
     from service.events.manage import guest_shown_sql
     from service.events.organisers import issue_link
     if not _on(CAMPAIGN_PLACE_CANCELLED):
@@ -881,7 +883,7 @@ def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> O
     def go():
         shown = guest_shown_sql('g', 'o.member_person_id')
         r = tx.execute(
-            f"""SELECT g.id, g.name, g.party_size, g.confirmed_at, e.id AS event_id, e.slug, e.title,
+            f"""SELECT g.id, g.name, g.party_size, g.cancelled_at, e.id AS event_id, e.slug, e.title,
                        e.status AS event_status, e.published_at, e.ends_at, e.organiser_id,
                        o.member_person_id
                   FROM event_rsvp g
@@ -893,7 +895,7 @@ def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> O
         if (r is None or r['event_status'] == 'cancelled' or r['published_at'] is None
                 or r['ends_at'] <= now):
             return None
-        cid = f"{r['id']}:{r['confirmed_at'].astimezone(timezone.utc):%Y%m%d%H%M%S}"
+        cid = f"{r['id']}:{r['cancelled_at'].astimezone(timezone.utc):%Y%m%d%H%M%S}"
         if _already(tx, CAMPAIGN_PLACE_CANCELLED, cid):
             return None
         total = tx.execute(

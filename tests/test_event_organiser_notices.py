@@ -115,3 +115,24 @@ def test_a_publish_that_waits_for_approval_sends_nothing(client, organiser, even
     assert client.post(f'/organiser/events/{slug}/publish', headers=o['headers']).get_json() == \
         {'status': 'pending'}
     assert _rows('event_organiser_note', o['id']) == []
+
+
+def test_each_cancellation_of_a_booking_made_again_is_told(organiser, published, confirmed_guest,
+                                                          make_person):
+    """A member who books again from the app keeps confirmed_at, so the
+    note is keyed on the cancellation, not the booking."""
+    from service.events import rsvp
+    o = organiser()
+    slug = published(organiser_row=o)
+    p = make_person(name='AgainMember')
+    g = confirmed_guest(slug, name='Again Member', person_id=p['id'])
+    with api_tx() as tx:
+        rsvp.member_cancel(tx, p['id'], g['id'])
+    with api_tx() as tx:
+        tx.execute("UPDATE event_rsvp SET status = 'going', cancelled_at = NULL WHERE id = %(i)s",
+                   dict(i=g['id']))
+        # A new cancellation is a new moment (NOW() is the transaction's).
+        tx.execute("SELECT pg_sleep(1.1)")
+    with api_tx() as tx:
+        rsvp.member_cancel(tx, p['id'], g['id'])
+    assert len(_rows('event_place_cancelled', o['id'])) == 2

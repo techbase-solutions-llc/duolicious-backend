@@ -259,7 +259,8 @@ def publish(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> d
                    "WHERE id = %(id)s", dict(r=reason, id=row['id']))
         return dict(status='pending')
     publish_now(tx, row, now)
-    mail.queue_live(tx, row['id'])
+    # Behind its own savepoint: no mail failure undoes the publish.
+    mail._guarded(tx, 'event_publish_live', lambda: mail.queue_live(tx, row['id']))
     return dict(status='published')
 
 
