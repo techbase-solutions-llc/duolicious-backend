@@ -40,6 +40,10 @@ CAMPAIGN_SWITCHES: dict[str, str] = {
     'event_change': 'events_change_email',
     'event_cancelled': 'events_cancel_email',
     'event_digest': 'events_digest_email',
+    # A guest gave up a confirmed place (TEC-2077): the organiser's other
+    # news of their guests, so it shares the digest's switch, as the
+    # organiser notes share the manage email's.
+    'event_place_cancelled': 'events_digest_email',
     'event_manage': 'events_manage_email',
     'event_organiser_note': 'events_manage_email',
     # The one invitation to join, the day after (TEC-1845). The join block

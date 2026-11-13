@@ -6,6 +6,8 @@ durable outbox.
               event_change     a new time, date or place (3.4)
               event_cancelled  the organiser cancelled (3.5)
   organisers  event_digest     once a day, only with new RSVPs (3.6)
+              event_place_cancelled  a guest gave up a confirmed place
+                               (TEC-2077, Labs F34)
               event_manage     the manage link (3.8)
               event_organiser_note  the manage email with a note above
                                the button: approved, or live (plan item 15)
@@ -53,6 +55,7 @@ CAMPAIGN_MANAGE = 'event_manage'
 CAMPAIGN_NOTE = 'event_organiser_note'
 CAMPAIGN_JOIN_INVITE = 'event_join_invite'
 CAMPAIGN_REFUSED = 'event_host_refused'
+CAMPAIGN_PLACE_CANCELLED = 'event_place_cancelled'
 UNSUB_SCOPE = 'notifications'
 FROM_ADDR = f'support@{EMAIL_DOMAIN}'
 
@@ -437,6 +440,35 @@ def digest_email(event: dict, new_rsvps: list[dict], total_going: int,
             + held.para(f'<b>{total_going} going</b> in total.') + again
             + button('Manage your gathering', manage_url(manage_token)))
     return subject, _shell(subject, _e(line), body, _footer(DIGEST_WHY, your_ahavah=your_ahavah))
+
+
+# A guest gave up a confirmed place (TEC-2077, Labs F34). The guest is told
+# "The organiser has been told." (ahavah-web src/lib/events/copy.ts), so the
+# organiser is. NEW LINES. No title of its own: the generic "A note from
+# Ahavah." pair, as the refusal uses.
+PLACE_CANCELLED_WHY = LIVE_WHY
+
+
+def place_cancelled_line(name: str, title: str) -> str:
+    """Plain text: escape it."""
+    return f'{name} cancelled their place at {title}'  # NEW LINE
+
+
+def place_cancelled_email(event: dict, guest: dict, total_going: int, manage_token: str, *,
+                          your_ahavah: bool = False) -> tuple[str, str]:
+    """The guest's name and party size as the digest shows them, never an
+    email address; how many are going now; the manage button."""
+    line = place_cancelled_line(guest['name'], event['title'])
+    subject = line
+    row = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+           f'<td class="e-strong" style="padding:8px 0;font-family:{SANS};font-size:15px;font-weight:700;'
+           f'color:{INK};">{_e(guest["name"])}</td><td class="e-text" align="right" style="padding:8px 0;'
+           f'font-family:{SANS};font-size:13px;color:{MUTED};">{_people(int(guest["party_size"]))}</td>'
+           f'</tr></table>')
+    body = (_title('refused') + _lead(_e(line) + '.') + _panel(row)
+            + held.para(f'<b>{total_going} going</b> in total now.')  # NEW LINE
+            + button('Manage your gathering', manage_url(manage_token)))
+    return subject, _shell(subject, _e(line), body, _footer(PLACE_CANCELLED_WHY, your_ahavah=your_ahavah))
 
 
 def _town(city: Optional[str]) -> str:
@@ -832,6 +864,52 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
     return _guarded(tx, 'event_digest', go)
 
 
+def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> Optional[int]:
+    """The organiser hears that a guest gave up a confirmed place
+    (TEC-2077), with a fresh manage link. None unless the place was
+    confirmed and is now cancelled, the gathering was published, is not
+    cancelled and has not ended, and the guest is on the organiser's side
+    of the tester line (as on the RSVP list and the digest, TEC-2135).
+    Once per confirmed booking: a guest who books again and cancels again
+    is a new one, and the send guard caps the kind per address."""
+    from service.events.manage import guest_shown_sql
+    from service.events.organisers import issue_link
+    if not _on(CAMPAIGN_PLACE_CANCELLED):
+        return None
+    now = now or datetime.now(timezone.utc)
+
+    def go():
+        shown = guest_shown_sql('g', 'o.member_person_id')
+        r = tx.execute(
+            f"""SELECT g.id, g.name, g.party_size, g.confirmed_at, e.id AS event_id, e.slug, e.title,
+                       e.status AS event_status, e.published_at, e.ends_at, e.organiser_id,
+                       o.member_person_id
+                  FROM event_rsvp g
+                  JOIN event e ON e.id = g.event_id
+                  JOIN organiser o ON o.id = e.organiser_id
+                 WHERE g.id = %(i)s AND g.status = 'cancelled' AND g.confirmed_at IS NOT NULL
+                   AND g.erased_at IS NULL AND {shown}""",
+            dict(i=rsvp_id)).fetchone()
+        if (r is None or r['event_status'] == 'cancelled' or r['published_at'] is None
+                or r['ends_at'] <= now):
+            return None
+        cid = f"{r['id']}:{r['confirmed_at'].astimezone(timezone.utc):%Y%m%d%H%M%S}"
+        if _already(tx, CAMPAIGN_PLACE_CANCELLED, cid):
+            return None
+        total = tx.execute(
+            f"""SELECT COALESCE(SUM(party_size), 0)::int AS n FROM event_rsvp g
+                 WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL
+                   AND erased_at IS NULL AND {guest_shown_sql('g', '%(m)s::int')}""",
+            dict(e=r['event_id'], m=r['member_person_id'])).fetchone()['n']
+        oid = r['organiser_id']
+        subject, body = place_cancelled_email(
+            dict(title=r['title'], slug=r['slug']), dict(name=r['name'], party_size=r['party_size']),
+            total, issue_link(tx, oid), your_ahavah=_organiser_line(tx, oid))
+        return _queue_organiser(tx, campaign=CAMPAIGN_PLACE_CANCELLED, campaign_id=cid,
+                                organiser_id=oid, subject=subject, html_=body)
+    return _guarded(tx, 'event_place_cancelled', go)
+
+
 def queue_live(tx, event_id: int) -> Optional[int]:
     """The organiser is told their gathering is live, with a fresh manage
     link: round 2's email with the share kit while the kit is on for them
@@ -1005,6 +1083,10 @@ def preview_digest(to: str) -> tuple[str, str]:
     return digest_email(sample_event(), [dict(name='Hannah Okafor', party_size=2),
                                          dict(name='The Adeyemi family', party_size=4),
                                          dict(name='Lydia Cruz', party_size=1)], 14, _SAMPLE_TOKEN)
+
+
+def preview_place_cancelled(to: str) -> tuple[str, str]:
+    return place_cancelled_email(sample_event(), dict(name='Hannah Okafor', party_size=2), 12, _SAMPLE_TOKEN)
 
 
 def preview_manage(to: str) -> tuple[str, str]:

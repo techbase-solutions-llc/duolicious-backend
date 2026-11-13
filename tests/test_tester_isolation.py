@@ -444,6 +444,28 @@ def test_the_organisers_digest_leaves_out_guests_across_the_line(world, organise
     assert '1 new RSVP' in row['payload']['subject']
 
 
+@pytest.mark.usefixtures('events_schema', 'events_live', 'no_limits', 'mail_allowed')
+def test_a_cancelled_place_across_the_line_tells_no_organiser(world, organiser, published,
+                                                             confirmed_guest):
+    """TEC-2077: the organiser hears of a cancelled place only from a guest
+    on their side of the line, as the digest shows them."""
+    from service.events import rsvp
+    o = organiser()
+    with api_tx() as tx:
+        tx.execute('UPDATE organiser SET member_person_id = %(m)s WHERE id = %(i)s',
+                   dict(m=world['asher']['id'], i=o['id']))
+    slug = published(organiser_row=o)
+    jess = confirmed_guest(slug, name='IsoJess Guest', person_id=world['jess']['id'])
+    miriam = confirmed_guest(slug, name='IsoMiriam Guest', person_id=world['miriam']['id'])
+    for g in (jess, miriam):
+        with api_tx() as tx:
+            rsvp.cancel(tx, g['token'])
+    with api_tx() as tx:
+        rows = tx.execute("SELECT payload FROM email_outbox WHERE campaign = 'event_place_cancelled' "
+                          "AND organiser_id = %(o)s", dict(o=o['id'])).fetchall()
+    assert [('IsoMiriam Guest' in r['payload']['html']) for r in rows] == [True]
+
+
 def test_inbox_info_reads_a_thread_across_the_line_as_a_deleted_account(world):
     from service.person.sql import Q_INBOX_INFO
     converse(world['jess'], world['asher'], 'Shalom')

@@ -78,6 +78,8 @@ def plan() -> list[dict]:
          mail.preview_your_ahavah_organiser),
         ('event_your_ahavah_guest', 'Reminder with the Your Ahavah line (1.8)', mail.preview_your_ahavah_guest),
         ('event_host_refused', 'Request to host refused, with the reason (8.7)', mail.preview_refused),
+        # A guest gave up a confirmed place (TEC-2077, Labs F34).
+        ('event_place_cancelled', 'A guest cancelled their place, to the organiser', mail.preview_place_cancelled),
     ]
     out = []
     for name, label, build in builders:

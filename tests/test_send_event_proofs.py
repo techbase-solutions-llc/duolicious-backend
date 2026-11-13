@@ -16,7 +16,9 @@ ORDER = ['event_confirm', 'event_confirm_online', 'event_reminder', 'event_remin
          'event_reminder_online_join', 'event_join_invite', 'event_join_invite_online',
          # Release 4's follow-ups: the "Your Ahavah" line (1.6, 1.8) and the
          # refusal of a request to host (8.7).
-         'event_your_ahavah_organiser', 'event_your_ahavah_guest', 'event_host_refused']
+         'event_your_ahavah_organiser', 'event_your_ahavah_guest', 'event_host_refused',
+         # A guest gave up a confirmed place (TEC-2077).
+         'event_place_cancelled']
 _TABLES = ('email_outbox', 'email_send_log', 'event_rsvp', 'organiser_link', 'lead')
 
 
@@ -41,7 +43,7 @@ def smtp(monkeypatch, events_schema):
     return s
 
 
-def test_the_plan_lists_the_22_emails_in_order():
+def test_the_plan_lists_the_23_emails_in_order():
     assert [e['name'] for e in ep.plan()] == ORDER
     assert all(e['subject'].startswith('[PROOF] ') for e in ep.plan())
 
@@ -52,7 +54,7 @@ def test_every_proof_goes_to_the_owner_only(smtp, monkeypatch):
             monkeypatch.delenv(env)
     env_before, before = dict(os.environ), _counts()
     ep.main(['--send'])
-    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 22
+    assert {s['to_addr'] for s in smtp.sent} == {'harrigan.tennyson@gmail.com'} and len(smtp.sent) == 23
     assert _counts() == before and dict(os.environ) == env_before
 
 
@@ -84,7 +86,7 @@ def test_no_switch_is_read(monkeypatch, capsys):
     def refuse(name):
         raise AssertionError(f'read the switch {name}')
     monkeypatch.setattr(switches, 'enabled', refuse)
-    assert len(ep.plan()) == 22
+    assert len(ep.plan()) == 23
     ep.main([])
 
 

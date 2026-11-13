@@ -240,7 +240,10 @@ def publish_now(tx, event: dict, now: datetime) -> None:
 
 def publish(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> dict:
     """Published at once when the organiser is approved and nothing is
-    flagged; otherwise it waits for an admin with the reason."""
+    flagged, and the organiser is told it is live, as an admin's approval
+    tells them (TEC-2077, Labs F33); otherwise it waits for an admin with
+    the reason."""
+    from service.events import mail
     now = _now(now)
     row = _event(tx, organiser, slug, lock=True)
     if row['status'] in ('published', 'pending'):
@@ -256,6 +259,7 @@ def publish(tx, organiser: dict, slug: str, now: Optional[datetime] = None) -> d
                    "WHERE id = %(id)s", dict(r=reason, id=row['id']))
         return dict(status='pending')
     publish_now(tx, row, now)
+    mail.queue_live(tx, row['id'])
     return dict(status='published')
 
 

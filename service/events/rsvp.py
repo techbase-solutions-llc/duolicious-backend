@@ -279,12 +279,24 @@ def confirm(tx, token: str, now: Optional[datetime] = None) -> dict:
 
 
 def cancel(tx, token: str, now: Optional[datetime] = None) -> dict:
-    """The guest gives up their place; it is free at once."""
+    """The guest gives up their place; it is free at once, and the
+    organiser is told when the place was confirmed (TEC-2077)."""
     r = _by_token(tx, token, lock=True)
-    if r['status'] != 'cancelled':
-        tx.execute("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(i)s",
-                   dict(i=r['id']))
+    _cancel_row(tx, r)
     return rsvp_view(tx, token, now)
+
+
+def _cancel_row(tx, r: dict) -> None:
+    """Cancel the place once. A confirmed place is one the organiser counts,
+    so they hear it is gone (mail.queue_place_cancelled, which never undoes
+    this: it runs behind a savepoint)."""
+    if r['status'] == 'cancelled':
+        return
+    tx.execute("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(i)s",
+               dict(i=r['id']))
+    if r['confirmed_at'] is not None:
+        from service.events import mail
+        mail.queue_place_cancelled(tx, r['id'])
 
 
 # Your gatherings > Going (TEC-1845, in-app entry plan, release 2): how many
@@ -365,9 +377,7 @@ def member_cancel(tx, person_id: int, rsvp_id: int, now: Optional[datetime] = No
     """Cancel my place from the app (in-app entry design 4.7), as cancel
     does by the emailed link: the place is free at once."""
     r = _member_row(tx, person_id, rsvp_id, lock=True)
-    if r['status'] != 'cancelled':
-        tx.execute("UPDATE event_rsvp SET status = 'cancelled', cancelled_at = NOW() WHERE id = %(i)s",
-                   dict(i=r['id']))
+    _cancel_row(tx, r)
     return _view_of_rsvp(tx, _member_row(tx, person_id, rsvp_id), _now(now))
 
 
