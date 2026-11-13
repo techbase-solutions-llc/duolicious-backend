@@ -467,6 +467,14 @@ def notify_new_like(liker_id: int, liked_id: int) -> None:
     like (TEC-2065) both send exactly this. Never raises: the push stack
     can never block a like."""
     try:
+        # A like from someone the member passed on stays out of Liked you
+        # (TEC-2085 decision 10), so it is not announced either.
+        with api_tx('read committed') as tx:
+            hidden = tx.execute(
+                f"SELECT {passed_on_liker_sql('%(liked)s', '%(liker)s')} AS hidden",
+                dict(liked=liked_id, liker=liker_id)).fetchone()['hidden']
+        if hidden:
+            return
         from service.notifications import notify
         from emails.notification import new_like_email
         # Opens Liked you, not the Matches tab (finding 32).

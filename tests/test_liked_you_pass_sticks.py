@@ -100,3 +100,22 @@ def test_the_likes_waiting_emails_leave_out_an_answered_like(module, name, me, l
     texts = [getattr(mod, name)] if name else [v for v in vars(mod).values() if isinstance(v, str)]
     squash = lambda t: re.sub(r'\s+', ' ', t)
     assert any(squash(passed_on_liker_sql(me, liker)) in squash(t) for t in texts)
+
+
+def test_a_like_from_someone_passed_on_is_not_announced(make_person, monkeypatch):
+    """The card stays hidden, so no "Someone likes you" points at it."""
+    import service.notifications as notifications
+    from service.decisions import notify_new_like
+    me = make_person(name='LyQuiet', gender='Woman')
+    liker = make_person(name='LyQuietLiker', gender='Man')
+    calls = []
+    monkeypatch.setattr(notifications, 'notify', lambda person_id, kind, **kw: calls.append(person_id))
+    with api_tx() as tx:
+        tx.execute('INSERT INTO skipped (subject_person_id, object_person_id, reported) '
+                   'VALUES (%(a)s, %(b)s, FALSE)', dict(a=me['id'], b=liker['id']))
+    notify_new_like(liker['id'], me['id'])
+    assert calls == []
+    with api_tx() as tx:
+        tx.execute('DELETE FROM skipped WHERE subject_person_id = %(a)s', dict(a=me['id']))
+    notify_new_like(liker['id'], me['id'])
+    assert calls == [me['id']]
