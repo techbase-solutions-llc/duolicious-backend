@@ -47,7 +47,7 @@ from service.campaigns.switches import enabled
 from service.growth.queries import _excluded
 from service.questions.pushes import quiet, zone
 from service.questions.schedule import resting
-from service.testers import tester_organiser_sql, tester_sql
+from service.testers import guest_on_side_sql
 
 GATHERING_REMINDER = 'gathering_reminder'
 NEW_GUESTS = 'new_guests'
@@ -196,8 +196,9 @@ _Q_GOING_SOON = f"""
      WHERE e.status = 'published' AND e.paused_at IS NULL
        AND e.starts_at > %(now)s AND e.starts_at <= %(until)s
        AND r.status = 'going' AND r.confirmed_at IS NOT NULL AND r.erased_at IS NULL
-       -- A tester's gathering reminds its testers only (TEC-2085, decision 3).
-       AND (NOT {tester_organiser_sql('e.organiser_id')} OR {tester_sql('p')})
+       -- A place across the tester line is hidden and reminds no one
+       -- (TEC-2085, decision 3, both ways).
+       AND {guest_on_side_sql('r', 'e.organiser_id')}
        AND {_audience('p', 'push_gathering_reminder')}
      ORDER BY e.starts_at, r.id
 """
@@ -242,8 +243,10 @@ _Q_NEW_GUESTS = f"""
              (SELECT max(l.sent_at) FROM push_send_log l
                WHERE l.person_id = p.id AND l.campaign = '{NEW_GUESTS}'), '-infinity'::timestamptz))
        AND (r.person_id IS NULL OR r.person_id <> p.id)
-       -- A guest across the tester line is not news (TEC-2135).
+       -- A guest across the tester line is not news (TEC-2135), from the
+       -- host or from the gathering (TEC-2085, decision 3, both ways).
        AND (r.person_id IS NULL OR NOT is_tester_split_pair(p.id, r.person_id))
+       AND {guest_on_side_sql('r', 'e.organiser_id')}
        -- Nor is a staff guest: staff are hidden from members (TEC-2040).
        AND (r.person_id IS NULL OR NOT is_staff_hidden(p.id, r.person_id))
      GROUP BY p.id, e.id

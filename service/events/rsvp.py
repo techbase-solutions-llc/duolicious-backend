@@ -44,10 +44,14 @@ def _now(now: Optional[datetime]) -> datetime:
 
 
 def _going_others(tx, event_id: int, rsvp_id: Optional[int]) -> int:
+    """The places others hold, on the gathering's side of the tester line
+    only: a place across it is hidden and takes no capacity (TEC-2085,
+    decision 3, both ways; TEC-2135)."""
+    from service.testers import guest_on_side_sql
     row = tx.execute(
-        """SELECT COALESCE(SUM(party_size), 0)::int AS n FROM event_rsvp
-            WHERE event_id = %(e)s AND status = 'going' AND confirmed_at IS NOT NULL
-              AND id IS DISTINCT FROM %(r)s""",
+        f"""SELECT COALESCE(SUM(g.party_size), 0)::int AS n FROM event_rsvp g
+             WHERE g.event_id = %(e)s AND g.status = 'going' AND g.confirmed_at IS NOT NULL
+               AND g.id IS DISTINCT FROM %(r)s AND {guest_on_side_sql('g')}""",
         dict(e=event_id, r=rsvp_id)).fetchone()
     return row['n']
 
@@ -64,7 +68,8 @@ def _check_places(event: dict, taken: int, party_size: int) -> None:
 
 def _open_event(tx, slug: str, now: datetime, *, lock: bool, viewer_tester: bool = False) -> dict:
     """A gathering the guest may find and still RSVP to. A tester's is not
-    found unless the guest is a signed-in tester (public.shown_sql)."""
+    found unless the guest is a signed-in tester, and a member's is not
+    found for a tester (public.shown_sql)."""
     from service.events.public import _VISIBLE, shown_sql
     row = tx.execute(
         f"SELECT e.* FROM event e WHERE e.slug = %(s)s AND {_VISIBLE} AND {shown_sql(viewer_tester)}"
@@ -115,6 +120,13 @@ def rsvp(tx, slug: str, *, name: str, email: Optional[str], party_size: int,
         raise EventError('bad_email', 400)
     address, normalised = cleaned
     event = _open_event(tx, slug, now, lock=False)
+    # Signed out, the guest is a visitor, who finds members' gatherings
+    # only. A tester's address would hold a tester's place on one, which
+    # is hidden; so it is refused as a gathering that is not there
+    # (TEC-2085, decision 3, both ways; TEC-2135).
+    from service.testers import is_tester_address
+    if is_tester_address(tx, normalised):
+        raise EventError('not_found', 404)
     existing = tx.execute(
         """SELECT * FROM event_rsvp WHERE event_id = %(e)s AND normalized_email = %(ne)s FOR UPDATE""",
         dict(e=event['id'], ne=normalised)).fetchone()
@@ -207,10 +219,16 @@ def _member_rsvp(tx, slug: str, *, name: str, party_size: int, share_email: bool
 
 
 def _by_token(tx, token: object, *, lock: bool = False) -> dict:
+    """The RSVP an emailed link holds. A place across the tester line from
+    its gathering is hidden, not deleted, so its link is not found: it
+    shows, confirms, cancels and serves nothing (TEC-2085, decision 3,
+    both ways; TEC-2135)."""
+    from service.testers import guest_on_side_sql
     if not isinstance(token, str) or not _TOKEN_MIN <= len(token) <= _TOKEN_MAX:
         raise EventError('not_found', 404)
     row = tx.execute(
-        f"SELECT * FROM event_rsvp WHERE token_hash = %(h)s AND erased_at IS NULL{' FOR UPDATE' if lock else ''}",
+        f"SELECT r.* FROM event_rsvp r WHERE r.token_hash = %(h)s AND r.erased_at IS NULL"
+        f" AND {guest_on_side_sql('r')}{' FOR UPDATE OF r' if lock else ''}",
         dict(h=token_hash(token))).fetchone()
     if row is None:
         raise EventError('not_found', 404)
@@ -345,11 +363,13 @@ def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
     ended ones, most recent first. Each list is capped, and says when
     there is more."""
     from service.events.public import _VISIBLE, shown_sql
-    from service.testers import is_tester
+    from service.testers import guest_on_side_sql, is_tester
     now = _now(now)
-    # A member's place on a tester's gathering is hidden, not deleted, as
-    # every cross pair is (TEC-2135; TEC-2085, decision 3).
-    visible = f'{_VISIBLE} AND {shown_sql(is_tester(tx, person_id))}'
+    # A place across the tester line is hidden, not deleted, as every cross
+    # pair is (TEC-2135; TEC-2085, decision 3, both ways): a member's on a
+    # tester's gathering, a tester's on a member's.
+    visible = (f"{_VISIBLE} AND {shown_sql(is_tester(tx, person_id))}"
+               f" AND {guest_on_side_sql('r', 'e.organiser_id')}")
     out: dict = {}
     for key, when, order, cap in (
             ('upcoming', 'e.ends_at > %(now)s', 'e.starts_at, r.id', GOING_UPCOMING_MAX),
@@ -364,11 +384,12 @@ def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
 def _member_row(tx, person_id: int, rsvp_id: int, *, lock: bool = False) -> dict:
     """One of the member's own places: confirmed and not erased, as
     member_places lists them. A place never confirmed holds nothing, so it
-    is not found. Never another person's place, and never a member's place
-    on a tester's gathering (hidden, not deleted; TEC-2085, decision 3)."""
+    is not found. Never another person's place, and never a place across
+    the tester line (hidden, not deleted; TEC-2085, decision 3, both ways)."""
     from service.events.public import shown_sql
-    from service.testers import is_tester
-    shown = shown_sql(is_tester(tx, person_id), '(SELECT e.organiser_id FROM event e WHERE e.id = r.event_id)')
+    from service.testers import guest_on_side_sql, is_tester
+    shown = (shown_sql(is_tester(tx, person_id), '(SELECT e.organiser_id FROM event e WHERE e.id = r.event_id)')
+             + f" AND {guest_on_side_sql('r')}")
     row = tx.execute(
         'SELECT r.* FROM event_rsvp r WHERE r.id = %(i)s AND r.person_id = %(p)s AND r.erased_at IS NULL'
         f" AND r.confirmed_at IS NOT NULL AND {shown}{' FOR UPDATE OF r' if lock else ''}",

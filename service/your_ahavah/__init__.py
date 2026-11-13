@@ -45,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from service.campaigns.switches import enabled
+from service.testers import guest_on_side_sql
 
 CODE_TTL = timedelta(minutes=10)
 SESSION_TTL = timedelta(minutes=60)
@@ -216,13 +217,15 @@ _Q_ORGANISER = """
 """
 
 # The organiser's gatherings, every state, with the confirmed going count.
-# Never a guest.
-_Q_HOSTED = """
+# Never a guest, and the count leaves out places across the tester line
+# (TEC-2085, decision 3, both ways).
+_Q_HOSTED = f"""
     SELECT e.slug, e.title, e.starts_at, e.ends_at, e.tz, e.tz_label, e.mode, e.status,
            e.paused_at IS NOT NULL AS paused,
            COALESCE(SUM(r.party_size) FILTER (WHERE r.status = 'going' AND r.confirmed_at IS NOT NULL
                                                AND r.erased_at IS NULL), 0)::int AS going
       FROM event e LEFT JOIN event_rsvp r ON r.event_id = e.id
+                                         AND {guest_on_side_sql('r', 'e.organiser_id')}
      WHERE e.organiser_id = %(o)s
      GROUP BY e.id
      ORDER BY e.starts_at DESC, e.id DESC
@@ -231,13 +234,16 @@ _Q_HOSTED = """
 
 # Places, as the member's own list keeps them (service/events/rsvp.py):
 # confirmed and not erased, on a gathering the public may find or one that
-# was cancelled. Public fields only: never the venue or the call link.
-_Q_PLACES = """
+# was cancelled. Public fields only: never the venue or the call link. A
+# place across the tester line is hidden, not deleted (TEC-2085, decision
+# 3, both ways; TEC-2135).
+_Q_PLACES = f"""
     SELECT r.status, r.party_size, e.slug, e.title, e.starts_at, e.ends_at, e.tz, e.tz_label,
            e.mode, e.city, e.country, e.status AS event_status
       FROM event_rsvp r JOIN event e ON e.id = r.event_id
      WHERE r.normalized_email = %(ne)s AND r.erased_at IS NULL AND r.confirmed_at IS NOT NULL
        AND e.status IN ('published', 'cancelled') AND e.paused_at IS NULL
+       AND {guest_on_side_sql('r', 'e.organiser_id')}
      ORDER BY e.starts_at DESC, r.id DESC
      LIMIT %(n)s
 """

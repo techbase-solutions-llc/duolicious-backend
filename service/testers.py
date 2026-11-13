@@ -45,12 +45,49 @@ def tester_organiser_sql(organiser_id: str) -> str:
     (service.events.organisers.member_organisers).
 
     A tester's gathering shows only to testers: never to members or
-    signed-out visitors, in no list, page, sitemap, email or post."""
+    signed-out visitors, in no list, page, sitemap, email or post. A
+    member's shows to members and visitors only, never to a tester."""
     return f"""EXISTS (
         SELECT 1 FROM organiser t_o
           JOIN person t_p ON t_p.id = t_o.member_person_id
                           OR t_p.normalized_email = t_o.normalized_email
          WHERE t_o.id = {organiser_id} AND {tester_sql('t_p')})"""
+
+
+def tester_guest_sql(guest: str) -> str:
+    """SQL boolean: the RSVP row aliased `guest` is a tester's place. It is
+    when the account it is linked to (person_id) or the account holding its
+    address is a tester's, so a place booked signed out under a tester's
+    address is a tester's too. A visitor's place (no account) is a
+    member's side of the line."""
+    return f"""(EXISTS (SELECT 1 FROM person t_gp
+                     WHERE t_gp.id = {guest}.person_id AND {tester_sql('t_gp')})
+            OR EXISTS (SELECT 1 FROM person t_ge
+                        WHERE t_ge.normalized_email = {guest}.normalized_email
+                          AND {tester_sql('t_ge')}))"""
+
+
+def guest_on_side_sql(guest: str, organiser_id: str | None = None) -> str:
+    """SQL boolean: the RSVP row aliased `guest` is on its gathering's side
+    of the tester line (TEC-2085, decision 3, both ways as decided on 13
+    Nov 2026; TEC-2135): a tester's place on a tester's gathering, or a
+    member's or visitor's place on a member's.
+
+    A place across the line is hidden, not deleted: no count, capacity,
+    list, page, link, email, reminder or push sees it, on either side.
+    Revoking the role brings it back. `organiser_id` is the gathering's
+    organiser id expression; by default it is read from the row's event."""
+    org = organiser_id or f'(SELECT t_ev.organiser_id FROM event t_ev WHERE t_ev.id = {guest}.event_id)'
+    return f'(({tester_guest_sql(guest)}) = ({tester_organiser_sql(org)}))'
+
+
+def is_tester_address(tx, normalized_email) -> bool:
+    """Whether an account holding this address is a tester's."""
+    if not normalized_email:
+        return False
+    row = tx.execute(f"SELECT 1 FROM person p WHERE p.normalized_email = %(ne)s AND {tester_sql('p')} LIMIT 1",
+                     dict(ne=normalized_email)).fetchone()
+    return row is not None
 
 
 def is_tester(tx, person_id) -> bool:

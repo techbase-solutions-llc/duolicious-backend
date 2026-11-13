@@ -201,7 +201,10 @@ def send_member_welcome(email: str) -> bool:
         online = False
         if events_url:
             from service.events import public
-            online = public.online_listed(tx, now=datetime.now(timezone.utc))
+            from service.testers import is_tester
+            # A tester finds testers' gatherings only (TEC-2085, decision 3).
+            online = public.online_listed(tx, now=datetime.now(timezone.utc),
+                                          viewer_tester=is_tester(tx, row['id']))
         row_id = outbox.enqueue(
             tx, campaign='welcome', campaign_id=campaign_id, person_id=row['id'],
             email=email, subject=SUBJECT,

@@ -285,7 +285,7 @@ def test_a_gathering_organiser_member_does_not_see_staff_guests(world):
         with api_tx() as tx:
             return tx.execute(
                 f"SELECT {guest_shown_sql('g', '%(org)s::int')} AS shown "
-                "FROM (SELECT %(guest)s::int AS person_id) g",
+                "FROM (SELECT %(guest)s::int AS person_id, NULL::int AS event_id, NULL::text AS normalized_email) g",
                 dict(org=org, guest=guest)).fetchone()['shown']
 
     assert shown(world['asher']['id'], world['mona']['id']) is False

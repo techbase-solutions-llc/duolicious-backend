@@ -19,9 +19,9 @@ from __future__ import annotations
 import zoneinfo
 from datetime import datetime, timedelta
 
-from service.events import mail, public
+from service.events import mail
 from service.spotlight import restdays
-from service.testers import tester_sql
+from service.testers import guest_on_side_sql
 
 # The reminder goes on the gathering's local day before its start, from
 # 08:00 until 21:00 local time, at the first hourly tick not in a rest period.
@@ -54,16 +54,15 @@ def queue_reminders(tx, now: datetime) -> int:
     for ev in events:
         if not _reminder_due(ev['starts_at'], ev['tz'], now):
             continue
-        # A tester's gathering reminds its testers only: a place a member or
-        # a visitor took on one before it was hidden is hidden, not deleted
-        # (TEC-2085, decision 3; TEC-2135).
+        # A place across the tester line from the gathering is hidden, not
+        # deleted, and gets no reminder: a member's or a visitor's on a
+        # tester's gathering, a tester's on a member's (TEC-2085, decision
+        # 3, both ways; TEC-2135).
         guests = tx.execute(
             f"""SELECT g.* FROM event_rsvp g JOIN event e ON e.id = g.event_id
                  WHERE g.event_id = %(e)s AND g.status = 'going'
                    AND g.confirmed_at IS NOT NULL AND g.erased_at IS NULL
-                   AND ({public.shown_sql(False)}
-                        OR EXISTS (SELECT 1 FROM person gp
-                                    WHERE gp.id = g.person_id AND {tester_sql('gp')}))
+                   AND {guest_on_side_sql('g', 'e.organiser_id')}
                  ORDER BY g.id""",
             dict(e=ev['id'])).fetchall()
         for r in guests:
@@ -113,11 +112,12 @@ def queue_join_invites(tx, now: datetime) -> int:
     for ev in events:
         if not join.invite_due(ev['ends_at'], ev['tz'], now):
             continue
+        # Never a place across the tester line, which is hidden (TEC-2135).
         guests = tx.execute(
-            """SELECT * FROM event_rsvp WHERE event_id = %(e)s AND status = 'going'
-                  AND confirmed_at IS NOT NULL AND erased_at IS NULL AND marketing_consent
-                  AND person_id IS NULL AND lead_id IS NOT NULL
-                ORDER BY id""",
+            f"""SELECT g.* FROM event_rsvp g WHERE g.event_id = %(e)s AND g.status = 'going'
+                  AND g.confirmed_at IS NOT NULL AND g.erased_at IS NULL AND g.marketing_consent
+                  AND g.person_id IS NULL AND g.lead_id IS NOT NULL AND {guest_on_side_sql('g')}
+                ORDER BY g.id""",
             dict(e=ev['id'])).fetchall()
         for r in guests:
             if mail.queue_join_invite(tx, dict(r), dict(ev), now) is not None:

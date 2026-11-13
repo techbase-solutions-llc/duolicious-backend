@@ -37,6 +37,7 @@ from typing import Any, Optional
 from emails.base import is_suppressed_send, mask_email
 from service.campaigns import campaign_unsubscribed, can_send, log_send
 from service.leads import address_unsubscribed, lead_unsubscribed, news_refusal
+from service.testers import guest_on_side_sql
 from smtp import guard
 from smtp.guard import MailGuardRefused, SendDuringDryRun
 
@@ -517,9 +518,12 @@ def _is_member_address(tx, email: str) -> bool:
 _Q_JOIN_INVITE_EVENT = """
     SELECT ends_at, tz, status, paused_at FROM event WHERE id = %(i)s
 """
-_Q_JOIN_INVITE_RSVP = """
-    SELECT status, erased_at FROM event_rsvp WHERE event_id = %(e)s AND lead_id = %(l)s
-     ORDER BY id LIMIT 1
+# A place across the tester line is hidden, so its invitation is
+# withdrawn (TEC-2085, decision 3, both ways; TEC-2135).
+_Q_JOIN_INVITE_RSVP = f"""
+    SELECT g.status, g.erased_at FROM event_rsvp g WHERE g.event_id = %(e)s AND g.lead_id = %(l)s
+       AND {guest_on_side_sql('g')}
+     ORDER BY g.id LIMIT 1
 """
 
 

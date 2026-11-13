@@ -165,15 +165,26 @@ def test_the_online_line_shows_only_while_an_online_gathering_is_listed():
 
 def test_the_send_reads_whether_an_online_gathering_is_listed(make_person, on, monkeypatch):
     from service.events import public
-    monkeypatch.setattr(public, 'online_listed', lambda tx, now: False)
+    asked = []
+
+    def listed(answer):
+        return lambda tx, now, viewer_tester=False: asked.append(viewer_tester) or answer
+    monkeypatch.setattr(public, 'online_listed', listed(False))
     pid, email = _granted(make_person, 'WelGNoOnline', 'US')
     assert mw.send_member_welcome(email) is True
     html = _queued_html(pid)
     assert HEADING in html and ONLINE not in html
-    monkeypatch.setattr(public, 'online_listed', lambda tx, now: True)
+    monkeypatch.setattr(public, 'online_listed', listed(True))
     pid, email = _granted(make_person, 'WelGOnline', 'US')
     assert mw.send_member_welcome(email) is True
     assert ONLINE in _queued_html(pid)
+    # A tester's welcome reads the tester's own side of the line (TEC-2085,
+    # decision 3, both ways): only testers' online gatherings.
+    pid, email = _granted(make_person, 'WelGTester', 'US')
+    with api_tx() as tx:
+        tx.execute("UPDATE person SET roles = ARRAY['tester']::TEXT[] WHERE id = %(i)s", dict(i=pid))
+    assert mw.send_member_welcome(email) is True
+    assert asked == [False, False, True]
 
 
 @pytest.mark.usefixtures('events_schema')

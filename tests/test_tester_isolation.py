@@ -403,19 +403,19 @@ def test_a_gathering_organiser_sees_only_guests_on_their_own_side(world):
     with api_tx() as tx:
         visible = tx.execute(
             f"SELECT {guest_shown_sql('g', '%(org)s')} AS shown "
-            "FROM (SELECT %(guest)s::int AS person_id) g",
+            "FROM (SELECT %(guest)s::int AS person_id, NULL::int AS event_id, NULL::text AS normalized_email) g",
             dict(org=world['asher']['id'], guest=world['jess']['id'])).fetchone()['shown']
         own = tx.execute(
             f"SELECT {guest_shown_sql('g', '%(org)s')} AS shown "
-            "FROM (SELECT %(guest)s::int AS person_id) g",
+            "FROM (SELECT %(guest)s::int AS person_id, NULL::int AS event_id, NULL::text AS normalized_email) g",
             dict(org=world['asher']['id'], guest=world['miriam']['id'])).fetchone()['shown']
         no_member = tx.execute(
             f"SELECT {guest_shown_sql('g', 'NULL::int')} AS shown "
-            "FROM (SELECT %(guest)s::int AS person_id) g",
+            "FROM (SELECT %(guest)s::int AS person_id, NULL::int AS event_id, NULL::text AS normalized_email) g",
             dict(guest=world['jess']['id'])).fetchone()['shown']
         no_account = tx.execute(
             f"SELECT {guest_shown_sql('g', '%(org)s')} AS shown "
-            "FROM (SELECT NULL::int AS person_id) g",
+            "FROM (SELECT NULL::int AS person_id, NULL::int AS event_id, NULL::text AS normalized_email) g",
             dict(org=world['asher']['id'])).fetchone()['shown']
     assert (visible, own, no_member, no_account) == (False, True, False, True)
 
@@ -455,11 +455,18 @@ def test_a_cancelled_place_across_the_line_tells_no_organiser(world, organiser, 
         tx.execute('UPDATE organiser SET member_person_id = %(m)s WHERE id = %(i)s',
                    dict(m=world['asher']['id'], i=o['id']))
     slug = published(organiser_row=o)
+    from service.events import EventError
     jess = confirmed_guest(slug, name='IsoJess Guest', person_id=world['jess']['id'])
     miriam = confirmed_guest(slug, name='IsoMiriam Guest', person_id=world['miriam']['id'])
-    for g in (jess, miriam):
+    # A place across the line is hidden: its link is not found and cancels
+    # nothing (TEC-2085, decision 3, both ways). The row stays.
+    with pytest.raises(EventError, match='not_found'):
         with api_tx() as tx:
-            rsvp.cancel(tx, g['token'])
+            rsvp.cancel(tx, jess['token'])
+    with api_tx() as tx:
+        assert tx.execute('SELECT status FROM event_rsvp WHERE id = %(i)s',
+                          dict(i=jess['id'])).fetchone()['status'] == 'going'
+        rsvp.cancel(tx, miriam['token'])
     with api_tx() as tx:
         rows = tx.execute("SELECT payload FROM email_outbox WHERE campaign = 'event_place_cancelled' "
                           "AND organiser_id = %(o)s", dict(o=o['id'])).fetchall()

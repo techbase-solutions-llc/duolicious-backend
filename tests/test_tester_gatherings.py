@@ -62,10 +62,11 @@ def test_the_list_hides_a_testers_gathering_from_members_and_visitors(client, wo
         slugs = _slugs(client, headers)
         assert theirs in slugs and test not in slugs
         assert test not in _slugs(client, headers, '?region=north-america&limit=50')
-    # A tester sees a member's gathering and a tester's, as a member sees a
-    # member's.
+    # A tester sees a tester's gathering only, never a member's (both ways,
+    # decided 13 Nov 2026).
     slugs = _slugs(client, world['tester'])
-    assert theirs in slugs and test in slugs
+    assert theirs not in slugs and test in slugs
+    assert theirs not in _slugs(client, world['tester'], '?region=north-america&limit=50')
 
 
 def test_a_testers_gathering_page_is_not_found_for_members_and_visitors(client, world, published):

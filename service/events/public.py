@@ -15,16 +15,20 @@ from typing import Optional
 
 from service.events import EventError
 from service.events import fields as f
-from service.testers import tester_organiser_sql
+from service.testers import guest_on_side_sql, tester_organiser_sql
 
 LIST_MAX = 50
 CHANGE_SHOWN = timedelta(days=14)
 
-_SELECT = """
+# going_now counts only places on the gathering's side of the tester line
+# (guest_on_side_sql): a tester's place never fills a member's gathering,
+# nor a member's place a tester's, places held before the rule included.
+_SELECT = f"""
     SELECT e.*, o.name AS organiser_name, o.kind AS organiser_kind,
            COALESCE((SELECT SUM(r.party_size) FROM event_rsvp r
                       WHERE r.event_id = e.id AND r.status = 'going'
-                        AND r.confirmed_at IS NOT NULL), 0)::int AS going_now
+                        AND r.confirmed_at IS NOT NULL
+                        AND {guest_on_side_sql('r', 'e.organiser_id')}), 0)::int AS going_now
       FROM event e JOIN organiser o ON o.id = e.organiser_id
 """
 
@@ -41,15 +45,14 @@ def visible(row: dict) -> bool:
 
 def shown_sql(viewer_tester: bool, organiser_id: str = 'e.organiser_id') -> str:
     """SQL boolean: the gathering whose organiser id is `organiser_id` is
-    one this viewer may find (TEC-2085, decision 3 as revised on 13 Nov
-    2026; TEC-2135). A tester's gathering shows only to testers: a member,
-    a signed-out visitor, a crawler, a member email and a social post never
-    find it, and its page is not found. A tester sees what a member sees
-    and testers' gatherings as well. Staff are no exception here; Admin >
-    Events shows everything."""
-    if viewer_tester:
-        return 'TRUE'
-    return f'NOT {tester_organiser_sql(organiser_id)}'
+    one this viewer may find (TEC-2085, decision 3, both ways as decided on
+    13 Nov 2026; TEC-2135). A tester's gathering shows only to testers: a
+    member, a signed-out visitor, a crawler, a member email and a social
+    post never find it, and its page is not found. A member's gathering
+    never shows to a tester: not listed, its page not found and no RSVP.
+    Staff are no exception here; Admin > Events shows everything."""
+    tester_gathering = tester_organiser_sql(organiser_id)
+    return tester_gathering if viewer_tester else f'NOT {tester_gathering}'
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -174,13 +177,14 @@ def count_view(tx, slug: str, day: date, share: Optional[str] = None, *,
 IN_PERSON = 'in_person_regions'
 
 
-def online_listed(tx, *, now: datetime) -> bool:
-    """Whether /events lists an online gathering now: one the public may
-    find (never a tester's), published and not yet ended. The welcome says
-    "Online gatherings are open to you wherever you live." only while this
-    holds (copy pass, 23 Oct 2026, claim 9)."""
+def online_listed(tx, *, now: datetime, viewer_tester: bool = False) -> bool:
+    """Whether /events lists an online gathering now, for this reader: one
+    they may find (shown_sql: a member never a tester's, a tester only a
+    tester's), published and not yet ended. The welcome says "Online
+    gatherings are open to you wherever you live." only while this holds
+    (copy pass, 23 Oct 2026, claim 9)."""
     row = tx.execute(
-        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND {shown_sql(False)} AND e.status = 'published'
+        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND {shown_sql(viewer_tester)} AND e.status = 'published'
                 AND e.ends_at > %(now)s AND e.region = 'online' LIMIT 1""",
         dict(now=now)).fetchone()
     return row is not None

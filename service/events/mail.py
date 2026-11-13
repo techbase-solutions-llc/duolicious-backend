@@ -644,7 +644,12 @@ def _already(tx, campaign: str, campaign_id: str) -> bool:
 
 
 def _rsvp_row(tx, rsvp_id: int) -> Optional[dict]:
-    row = tx.execute('SELECT * FROM event_rsvp WHERE id = %(i)s AND erased_at IS NULL',
+    """The RSVP an email is about. A place across the tester line from its
+    gathering is hidden, so it is never mailed (TEC-2085, decision 3, both
+    ways; TEC-2135)."""
+    from service.testers import guest_on_side_sql
+    row = tx.execute(f"SELECT r.* FROM event_rsvp r WHERE r.id = %(i)s AND r.erased_at IS NULL"
+                     f" AND {guest_on_side_sql('r')}",
                      dict(i=rsvp_id)).fetchone()
     return dict(row) if row else None
 
@@ -680,9 +685,14 @@ def queue_confirm(tx, rsvp_id: int, token: str) -> Optional[int]:
 
 
 def _confirmed_guests(tx, event_id: int) -> list[dict]:
+    """The guests a change or a cancellation is mailed to. Never a place
+    across the tester line, which is hidden (TEC-2085, decision 3, both
+    ways; TEC-2135)."""
+    from service.testers import guest_on_side_sql
     return [dict(r) for r in tx.execute(
-        """SELECT * FROM event_rsvp WHERE event_id = %(e)s AND status = 'going'
-              AND confirmed_at IS NOT NULL AND erased_at IS NULL ORDER BY id""",
+        f"""SELECT g.* FROM event_rsvp g WHERE g.event_id = %(e)s AND g.status = 'going'
+              AND g.confirmed_at IS NOT NULL AND g.erased_at IS NULL
+              AND {guest_on_side_sql('g')} ORDER BY g.id""",
         dict(e=event_id)).fetchall()]
 
 

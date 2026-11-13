@@ -16,7 +16,7 @@ import psycopg
 
 from service.events import EventError
 from service.events import fields as f
-from service.testers import tester_sql
+from service.testers import guest_on_side_sql
 
 # The fields an organiser sets, in the order the draft has them.
 DRAFT_FIELDS = ('title', 'starts_at', 'ends_at', 'tz', 'tz_label', 'mode', 'city', 'country',
@@ -35,18 +35,21 @@ _Q_EVENT = """
 
 def guest_shown_sql(guest: str, organiser_member: str) -> str:
     """SQL boolean: the RSVP row aliased `guest` is on the organiser's side
-    of the tester line (TEC-2135). A guest with no account always shows.
-    An organiser with a member account sees the guests that account could
-    see; one with none is a member, so sees no testers."""
-    return f"""({guest}.person_id IS NULL OR CASE
+    of the tester line (TEC-2135). An organiser with a member account sees
+    the guests that account could see; one with none is a member, so sees
+    no testers. And the place is on its gathering's side of the line
+    (guest_on_side_sql): a visitor's place, or a tester's by address, on a
+    tester's gathering is hidden too (TEC-2085, decision 3, both ways). An
+    organiser with no member account is on its gathering's side, which
+    guest_on_side_sql already holds to: an organiser under a tester's
+    address sees its testers."""
+    return f"""({guest_on_side_sql(guest)} AND ({guest}.person_id IS NULL OR CASE
           WHEN {organiser_member} IS NULL
-          THEN NOT EXISTS (SELECT 1 FROM person gp
-                            WHERE gp.id = {guest}.person_id AND {tester_sql('gp')})
                -- Staff are hidden from members (TEC-2040).
-               AND NOT is_staff_hidden(NULL, {guest}.person_id)
+          THEN NOT is_staff_hidden(NULL, {guest}.person_id)
           ELSE NOT is_tester_split_pair({organiser_member}, {guest}.person_id)
                AND NOT is_staff_hidden({organiser_member}, {guest}.person_id)
-      END)"""
+      END))"""
 
 
 def _now(now: Optional[datetime]) -> datetime:
