@@ -19,8 +19,9 @@ from __future__ import annotations
 import zoneinfo
 from datetime import datetime, timedelta
 
-from service.events import mail
+from service.events import mail, public
 from service.spotlight import restdays
+from service.testers import tester_sql
 
 # The reminder goes on the gathering's local day before its start, from
 # 08:00 until 21:00 local time, at the first hourly tick not in a rest period.
@@ -53,9 +54,17 @@ def queue_reminders(tx, now: datetime) -> int:
     for ev in events:
         if not _reminder_due(ev['starts_at'], ev['tz'], now):
             continue
+        # A tester's gathering reminds its testers only: a place a member or
+        # a visitor took on one before it was hidden is hidden, not deleted
+        # (TEC-2085, decision 3; TEC-2135).
         guests = tx.execute(
-            """SELECT * FROM event_rsvp WHERE event_id = %(e)s AND status = 'going'
-                  AND confirmed_at IS NOT NULL AND erased_at IS NULL ORDER BY id""",
+            f"""SELECT g.* FROM event_rsvp g JOIN event e ON e.id = g.event_id
+                 WHERE g.event_id = %(e)s AND g.status = 'going'
+                   AND g.confirmed_at IS NOT NULL AND g.erased_at IS NULL
+                   AND ({public.shown_sql(False)}
+                        OR EXISTS (SELECT 1 FROM person gp
+                                    WHERE gp.id = g.person_id AND {tester_sql('gp')}))
+                 ORDER BY g.id""",
             dict(e=ev['id'])).fetchall()
         for r in guests:
             # Check first, so a repeat tick or an unreachable guest retires

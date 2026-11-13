@@ -66,8 +66,8 @@ def test_text_is_cleaned_and_flagged():
     assert f.text_flag('Send me money by Western Union and gift cards, my darling') == 'scam'
 
 def test_the_feasts_are_the_biblical_english_names_in_order():
-    assert list(f.FEASTS.values()) == ['Passover', 'Unleavened Bread', 'Firstfruits', 'Pentecost',
-                                       'Trumpets', 'Day of Atonement', 'Tabernacles', 'Last Great Day']
+    assert list(f.FEASTS.values()) == ['Passover', 'Unleavened Bread', 'Firstfruits', 'Feast of Weeks',
+                                       'Trumpets', 'Day of Atonement', 'Feast of Tabernacles', 'Last Great Day']
 
 def test_time_words_match_the_export():
     s = datetime(2026, 11, 8, 0, 0, tzinfo=timezone.utc)

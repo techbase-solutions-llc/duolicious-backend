@@ -47,6 +47,7 @@ from service.campaigns.switches import enabled
 from service.growth.queries import _excluded
 from service.questions.pushes import quiet, zone
 from service.questions.schedule import resting
+from service.testers import tester_organiser_sql, tester_sql
 
 GATHERING_REMINDER = 'gathering_reminder'
 NEW_GUESTS = 'new_guests'
@@ -195,6 +196,8 @@ _Q_GOING_SOON = f"""
      WHERE e.status = 'published' AND e.paused_at IS NULL
        AND e.starts_at > %(now)s AND e.starts_at <= %(until)s
        AND r.status = 'going' AND r.confirmed_at IS NOT NULL AND r.erased_at IS NULL
+       -- A tester's gathering reminds its testers only (TEC-2085, decision 3).
+       AND (NOT {tester_organiser_sql('e.organiser_id')} OR {tester_sql('p')})
        AND {_audience('p', 'push_gathering_reminder')}
      ORDER BY e.starts_at, r.id
 """

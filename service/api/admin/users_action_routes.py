@@ -325,6 +325,11 @@ def patch_roles(req: t.PatchRoles, s: t.SessionInfo, uuid: str):
             updated = tx.execute(
                 _Q_PATCH_ROLES, dict(uuid=uuid, roles=new),
             ).fetchone()
+            if 'tester' in add and 'tester' not in current:
+                # A tester's gathering is never posted (TEC-2085, decision 3):
+                # any post of one this person hosts that is not yet out stops.
+                from service.spotlight.growthposts import cancel_tester_event_posts
+                cancel_tester_event_posts(tx)
             record_audit(
                 tx, s, 'patch_roles',
                 target_email=target_email, target_uuid=uuid,

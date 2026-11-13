@@ -137,5 +137,5 @@ def test_a_card_carries_the_organiser_and_the_feast_label(client, published):
     slug = published(feast='tabernacles', tags=['singles_welcome', 'marriage_preparation'])
     view = client.get(f'/events/{slug}').get_json()
     assert view['organiser'] == {'name': 'Grace Fellowship', 'kind': 'fellowship_leader'}
-    assert view['feast_label'] == 'Tabernacles' and view['state'] == 'open'
+    assert view['feast_label'] == 'Feast of Tabernacles' and view['state'] == 'open'
     assert view['starts_at'].endswith('+00:00') and view['cover_url'] is None

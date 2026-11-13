@@ -301,6 +301,39 @@ def delete_organiser_event_cover(slug: str):
 # The public read
 # ---------------------------------------------------------------------------
 
+def _viewer_tester(tx) -> bool:
+    """Whether the caller is a signed-in tester, who may find testers'
+    gatherings (service.events.public.shown_sql; TEC-2085, decision 3). A
+    signed-out visitor, a session not yet onboarded or signed in, and a
+    lapsed or unknown token are not.
+
+    The public reads stay plain routes rather than optional-auth ones, so a
+    signed-out visitor is rate limited exactly as before (the auth
+    decorator adds an account limit keyed by IP for anonymous callers,
+    which the web's server-side reads from one address would share). The
+    bearer header is read as service.api.decorators.require_auth reads it."""
+    from duohash import sha512
+    from service.api.decorators import Q_GET_SESSION
+    from service.testers import is_tester
+    parts = (request.headers.get('Authorization') or '').lower().split()
+    if len(parts) != 2 or parts[0] != 'bearer':
+        return False
+    row = tx.execute(Q_GET_SESSION, dict(session_token_hash=sha512(parts[1]))).fetchone()
+    if row is None or not row['signed_in'] or row['person_id'] is None:
+        return False
+    return is_tester(tx, row['person_id'])
+
+
+def _signed_in_header() -> bool:
+    return bool(request.headers.get('Authorization'))
+
+
+# A shared cache may keep the list a signed-out visitor gets, never one
+# that depends on who asked (a tester's list holds testers' gatherings).
+_PUBLIC_LIST = {'Cache-Control': 'public, max-age=60', 'Vary': 'Authorization'}
+_SIGNED_IN_LIST = {'Cache-Control': 'private, no-store', 'Vary': 'Authorization'}
+
+
 @get('/events')
 def get_events():
     from service.events import EventError, live, public, surface_on
@@ -313,10 +346,11 @@ def get_events():
         limit = 20
     try:
         with api_tx('read committed') as tx:
-            events = public.list_events(tx, region=region, limit=limit)
+            events = public.list_events(tx, region=region, limit=limit,
+                                        viewer_tester=_viewer_tester(tx))
     except EventError as e:
         return _refused(e)
-    return dict(events=events), 200, {'Cache-Control': 'public, max-age=60'}
+    return dict(events=events), 200, (_SIGNED_IN_LIST if _signed_in_header() else _PUBLIC_LIST)
 
 
 @get('/events/countries')
@@ -329,12 +363,14 @@ def get_event_countries():
 
 @get('/events/<slug>')
 def get_event(slug: str):
+    """A gathering's page. A tester's is not found unless a signed-in
+    tester asks (TEC-2085, decision 3)."""
     from service.events import EventError, live, public
     if not live():
         return _off()
     try:
         with api_tx('read committed') as tx:
-            view = public.event_view(tx, slug)
+            view = public.event_view(tx, slug, viewer_tester=_viewer_tester(tx))
     except EventError as e:
         return dict(error=e.reason), e.status, {'Cache-Control': 'no-store'}
     return view, 200, {'Cache-Control': 'no-store'}
@@ -359,7 +395,8 @@ def post_event_view(slug: str):
     agent = (request.headers.get('User-Agent') or '').lower()
     if not any(word in agent for word in _NOT_A_READER):
         with api_tx() as tx:
-            public.count_view(tx, slug, datetime.now(timezone.utc).date(), public.share_tag(share))
+            public.count_view(tx, slug, datetime.now(timezone.utc).date(), public.share_tag(share),
+                              viewer_tester=_viewer_tester(tx))
     return '', 204
 
 

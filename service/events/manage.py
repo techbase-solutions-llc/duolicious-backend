@@ -113,7 +113,12 @@ def post_payload(event: dict) -> dict:
 
 
 def _queue_posts(tx, event: dict, now: datetime) -> list[str]:
+    """The gathering's feed posts, none for a tester's: no member or
+    visitor may find it (public.shown_sql; TEC-2085, decision 3)."""
     from service.spotlight.growthposts import queue_event_posts
+    from service.testers import is_tester_organiser
+    if is_tester_organiser(tx, event['organiser_id']):
+        return []
     return queue_event_posts(tx, slug=event['slug'], starts_at=event['starts_at'],
                              caption=post_caption(event), payload=post_payload(event),
                              created_by='events', now=now)

@@ -17,6 +17,7 @@ from typing import Optional
 from service.events import EventError
 from service.events import mail
 from service.events import manage
+from service.testers import tester_organiser_sql
 
 INVITE_STATUSES = ('new', 'contacted', 'planned', 'declined')
 
@@ -26,8 +27,11 @@ _Q_WAITING_ORGANISERS = """
      ORDER BY created_at, id
 """
 
-_Q_WAITING_EVENTS = """
-    SELECT e.slug, e.title, o.name AS organiser, e.starts_at, e.flag_reason, e.created_at
+# `test`: the organiser is a tester's (service.testers.tester_organiser_sql).
+# Staff see testers' gatherings here, labelled; members never find them.
+_Q_WAITING_EVENTS = f"""
+    SELECT e.slug, e.title, o.name AS organiser, e.starts_at, e.flag_reason, e.created_at,
+           {tester_organiser_sql('e.organiser_id')} AS test
       FROM event e JOIN organiser o ON o.id = e.organiser_id
      WHERE e.status = 'pending'
      ORDER BY e.created_at, e.id
@@ -40,8 +44,9 @@ _Q_REQUESTS = """
 
 # One row per gathering, every figure a count. women_members and
 # member_rsvps count confirmed RSVPs from members (decision 2).
-_Q_EVENTS = """
+_Q_EVENTS = f"""
     SELECT e.slug, e.title, e.starts_at, e.status, e.paused_at IS NOT NULL AS paused, e.ahavah_attending,
+           {tester_organiser_sql('e.organiser_id')} AS test,
            COALESCE((SELECT SUM(v.views) FROM event_view_day v WHERE v.event_id = e.id), 0)::int AS views,
            COUNT(r.id)::int AS rsvps,
            COUNT(r.id) FILTER (WHERE r.status = 'going' AND r.confirmed_at IS NOT NULL)::int AS confirmed,
@@ -61,8 +66,9 @@ _Q_EVENTS = """
      ORDER BY e.starts_at DESC, e.id
 """
 
-_Q_ORGANISERS = """
+_Q_ORGANISERS = f"""
     SELECT o.id, o.name, o.kind, o.approved_at, o.revoked_at,
+           {tester_organiser_sql('o.id')} AS test,
            (SELECT COUNT(*) FROM event e WHERE e.organiser_id = o.id AND e.status <> 'draft')::int AS events,
            (SELECT COALESCE(SUM(r.party_size), 0) FROM event_rsvp r JOIN event e ON e.id = r.event_id
              WHERE e.organiser_id = o.id AND r.share_tag = 'host' AND r.status = 'going'
@@ -203,7 +209,12 @@ def _pause_posts(tx, slug: str) -> int:
 
 def _restore_posts(tx, slug: str, starts_at: datetime, now: datetime) -> int:
     """The paused posts back to awaiting_render, to be drawn and approved
-    again, while their slot is still ahead of the gathering."""
+    again, while their slot is still ahead of the gathering. None for a
+    tester's gathering, which is never posted (TEC-2085, decision 3)."""
+    from service.testers import is_tester_organiser
+    ev = tx.execute('SELECT organiser_id FROM event WHERE slug = %(s)s', dict(s=slug)).fetchone()
+    if ev is not None and is_tester_organiser(tx, ev['organiser_id']):
+        return 0
     return tx.execute(
         """UPDATE publishing_queue SET status = 'awaiting_render', error = NULL, updated_at = NOW()
             WHERE kind = 'event' AND request_key LIKE %(p)s

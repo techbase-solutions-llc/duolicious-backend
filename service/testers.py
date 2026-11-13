@@ -36,6 +36,40 @@ def split_pair_sql(a: str, b: str) -> str:
     return f"is_tester_split_pair({a}, {b})"
 
 
+def tester_organiser_sql(organiser_id: str) -> str:
+    """SQL boolean: the gathering organiser whose id is the expression
+    `organiser_id` is a tester's (TEC-2085, decision 3 as revised on 13 Nov
+    2026). An organiser is a tester's when the member who made it in the
+    app (member_person_id) or the account under its address is a tester,
+    the two ways a member's session opens an organiser
+    (service.events.organisers.member_organisers).
+
+    A tester's gathering shows only to testers: never to members or
+    signed-out visitors, in no list, page, sitemap, email or post."""
+    return f"""EXISTS (
+        SELECT 1 FROM organiser t_o
+          JOIN person t_p ON t_p.id = t_o.member_person_id
+                          OR t_p.normalized_email = t_o.normalized_email
+         WHERE t_o.id = {organiser_id} AND {tester_sql('t_p')})"""
+
+
+def is_tester(tx, person_id) -> bool:
+    """Whether the person is a tester. No person (a signed-out visitor, a
+    session not yet onboarded) is not."""
+    if person_id is None:
+        return False
+    row = tx.execute(f"SELECT {tester_sql('p')} AS t FROM person p WHERE p.id = %(i)s",
+                     dict(i=person_id)).fetchone()
+    return bool(row and row['t'])
+
+
+def is_tester_organiser(tx, organiser_id: int) -> bool:
+    """tester_organiser_sql for one organiser."""
+    row = tx.execute(f"SELECT {tester_organiser_sql('%(o)s::int')} AS t",
+                     dict(o=organiser_id)).fetchone()
+    return bool(row and row['t'])
+
+
 # Every caller of _excluded() calls it inside its own api_tx, and api_tx is
 # one shared connection behind a lock that is not re-entrant (database/), and
 # the repo has no other synchronous pool, so the lookup runs on a short-lived

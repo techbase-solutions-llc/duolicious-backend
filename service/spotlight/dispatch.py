@@ -27,7 +27,7 @@ from service.spotlight.revisions import consent_complete
 REASONS = ('not_found', 'not_processing', 'lease_required', 'lease_mismatch', 'lease_expired', 'withdrawn',
            'format_redraw_pending', 'no_revision', 'not_rendered', 'slides_incomplete', 'consent_incomplete', 'subject_missing', 'subject:<reason>',
            'participant:<person_id>:<reason>', 'rest_day', 'calendar_unknown', 'publication_disabled',
-           'external_access_disabled')
+           'external_access_disabled', 'tester_event')
 
 _Q_ROW = """
     SELECT status, lease_token, (lease_until IS NOT NULL AND lease_until > NOW()) AS lease_valid,
@@ -113,6 +113,13 @@ def dispatch_check(tx, queue_id, lease_token: Optional[str]) -> tuple[bool, str]
                                      exclude_request_key=row['request_key'])
             if not ok:
                 return False, f'participant:{person_id}:{reason}'
+    # A tester's gathering is never posted (TEC-2085, decision 3): no member
+    # or visitor may find it. Its posts are cancelled when the role is
+    # granted; this catches one that got through.
+    if row['kind'] == 'event':
+        from service.spotlight.growthposts import is_tester_event_post
+        if is_tester_event_post(tx, row['request_key']):
+            return False, 'tester_event'
     # The last check before anything reaches Meta, whatever way a row came
     # to be due: created before a rest day was entered, approved on an old
     # slot, or rescheduled by hand. The owner's rule is that nothing

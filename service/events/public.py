@@ -15,6 +15,7 @@ from typing import Optional
 
 from service.events import EventError
 from service.events import fields as f
+from service.testers import tester_organiser_sql
 
 LIST_MAX = 50
 CHANGE_SHOWN = timedelta(days=14)
@@ -36,6 +37,19 @@ def visible(row: dict) -> bool:
     """_VISIBLE for a row already read: what the public may find."""
     return (row['published_at'] is not None and row['status'] in ('published', 'cancelled')
             and row['paused_at'] is None)
+
+
+def shown_sql(viewer_tester: bool, organiser_id: str = 'e.organiser_id') -> str:
+    """SQL boolean: the gathering whose organiser id is `organiser_id` is
+    one this viewer may find (TEC-2085, decision 3 as revised on 13 Nov
+    2026; TEC-2135). A tester's gathering shows only to testers: a member,
+    a signed-out visitor, a crawler, a member email and a social post never
+    find it, and its page is not found. A tester sees what a member sees
+    and testers' gatherings as well. Staff are no exception here; Admin >
+    Events shows everything."""
+    if viewer_tester:
+        return 'TRUE'
+    return f'NOT {tester_organiser_sql(organiser_id)}'
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -91,14 +105,15 @@ def view_of(row: dict, now: datetime) -> dict:
 
 
 def list_events(tx, *, region: Optional[str], limit: int = 20,
-                now: Optional[datetime] = None) -> list[dict]:
+                now: Optional[datetime] = None, viewer_tester: bool = False) -> list[dict]:
     """Published, not paused, not ended, by start. A region shows its own
-    and every online gathering (decision 6); no region shows them all."""
+    and every online gathering (decision 6); no region shows them all. A
+    tester's gathering only when the viewer is a tester (shown_sql)."""
     now = now or datetime.now(timezone.utc)
     if region is not None and region not in f.REGIONS:
         raise EventError('bad_region', 400)
     limit = max(1, min(int(limit), LIST_MAX))
-    where = f"{_VISIBLE} AND e.status = 'published' AND e.ends_at > %(now)s"
+    where = f"{_VISIBLE} AND {shown_sql(viewer_tester)} AND e.status = 'published' AND e.ends_at > %(now)s"
     if region is not None:
         where += " AND (e.region = %(r)s OR e.region = 'online')"
     rows = tx.execute(f'{_SELECT} WHERE {where} ORDER BY e.starts_at, e.id LIMIT %(n)s',
@@ -112,9 +127,12 @@ def event_row(tx, slug: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def event_view(tx, slug: str, now: Optional[datetime] = None) -> dict:
+def event_view(tx, slug: str, now: Optional[datetime] = None, *, viewer_tester: bool = False) -> dict:
+    """The page's view. A tester's gathering is not found unless the viewer
+    is a tester (shown_sql)."""
     now = now or datetime.now(timezone.utc)
-    row = tx.execute(f'{_SELECT} WHERE e.slug = %(s)s AND {_VISIBLE}', dict(s=slug)).fetchone()
+    row = tx.execute(f'{_SELECT} WHERE e.slug = %(s)s AND {_VISIBLE} AND {shown_sql(viewer_tester)}',
+                     dict(s=slug)).fetchone()
     if row is None:
         raise EventError('not_found', 404)
     return view_of(dict(row), now)
@@ -131,20 +149,22 @@ def share_tag(value: object) -> Optional[str]:
     return value if isinstance(value, str) and value in SHARE_TAGS else None
 
 
-def count_view(tx, slug: str, day: date, share: Optional[str] = None) -> None:
-    """One page view, on a visible gathering only. A view from a shared
-    link is counted again under its share tag (fix 12); the total in
-    event_view_day is every view, as before."""
+def count_view(tx, slug: str, day: date, share: Optional[str] = None, *,
+               viewer_tester: bool = False) -> None:
+    """One page view, on a gathering this viewer may find only. A view from
+    a shared link is counted again under its share tag (fix 12); the total
+    in event_view_day is every view, as before."""
+    shown = f'{_VISIBLE} AND {shown_sql(viewer_tester)}'
     tx.execute(
         f"""INSERT INTO event_view_day (event_id, day, views)
-            SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
+            SELECT e.id, %(d)s, 1 FROM event e WHERE e.slug = %(s)s AND {shown}
             ON CONFLICT (event_id, day) DO UPDATE SET views = event_view_day.views + 1""",
         dict(s=slug, d=day))
     tag = share_tag(share)
     if tag is not None:
         tx.execute(
             f"""INSERT INTO event_view_share_day (event_id, day, share_tag, views)
-                SELECT e.id, %(d)s, %(t)s, 1 FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}
+                SELECT e.id, %(d)s, %(t)s, 1 FROM event e WHERE e.slug = %(s)s AND {shown}
                 ON CONFLICT (event_id, day, share_tag)
                 DO UPDATE SET views = event_view_share_day.views + 1""",
             dict(s=slug, d=day, t=tag))
@@ -156,11 +176,11 @@ IN_PERSON = 'in_person_regions'
 
 def online_listed(tx, *, now: datetime) -> bool:
     """Whether /events lists an online gathering now: one the public may
-    find, published and not yet ended. The welcome says "Online gatherings
-    are open to you wherever you live." only while this holds (copy pass,
-    23 Oct 2026, claim 9)."""
+    find (never a tester's), published and not yet ended. The welcome says
+    "Online gatherings are open to you wherever you live." only while this
+    holds (copy pass, 23 Oct 2026, claim 9)."""
     row = tx.execute(
-        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND e.status = 'published'
+        f"""SELECT 1 FROM event e WHERE {_VISIBLE} AND {shown_sql(False)} AND e.status = 'published'
                 AND e.ends_at > %(now)s AND e.region = 'online' LIMIT 1""",
         dict(now=now)).fetchone()
     return row is not None
@@ -182,10 +202,13 @@ def gatherings_for_members(tx, *, now: datetime, limit: int = 3) -> dict[Optiona
     Under IN_PERSON the set of regions where /events lists an in-person
     gathering (list_events: published, not paused, not ended, full or
     under way included), so for_member never says "Nothing near you yet"
-    while See all gatherings shows one (reviews of 23 and 24 Oct 2026)."""
+    while See all gatherings shows one (reviews of 23 and 24 Oct 2026).
+
+    Never a tester's gathering: these emails go to members, and testers
+    get none of them (service.growth.queries._excluded)."""
     from service.matchmaker.regions import REGIONS
     rows = tx.execute(
-        f"""{_SELECT} WHERE {_VISIBLE} AND e.status = 'published' AND e.ends_at > %(now)s
+        f"""{_SELECT} WHERE {_VISIBLE} AND {shown_sql(False)} AND e.status = 'published' AND e.ends_at > %(now)s
              ORDER BY e.starts_at, e.id""",
         dict(now=now)).fetchall()
     out: dict[Optional[str], list[dict]] = {r: [] for r in REGIONS}

@@ -31,10 +31,10 @@ FEASTS: dict[str, str] = {
     'passover': 'Passover',
     'unleavened_bread': 'Unleavened Bread',
     'firstfruits': 'Firstfruits',
-    'pentecost': 'Pentecost',
+    'pentecost': 'Feast of Weeks',
     'trumpets': 'Trumpets',
     'atonement': 'Day of Atonement',
-    'tabernacles': 'Tabernacles',
+    'tabernacles': 'Feast of Tabernacles',
     'last_great_day': 'Last Great Day',
 }
 

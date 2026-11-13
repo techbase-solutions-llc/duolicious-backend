@@ -62,10 +62,13 @@ def _check_places(event: dict, taken: int, party_size: int) -> None:
         raise EventError('too_many', 409, places_left=left)
 
 
-def _open_event(tx, slug: str, now: datetime, *, lock: bool) -> dict:
-    from service.events.public import _VISIBLE
+def _open_event(tx, slug: str, now: datetime, *, lock: bool, viewer_tester: bool = False) -> dict:
+    """A gathering the guest may find and still RSVP to. A tester's is not
+    found unless the guest is a signed-in tester (public.shown_sql)."""
+    from service.events.public import _VISIBLE, shown_sql
     row = tx.execute(
-        f"SELECT e.* FROM event e WHERE e.slug = %(s)s AND {_VISIBLE}{' FOR UPDATE' if lock else ''}",
+        f"SELECT e.* FROM event e WHERE e.slug = %(s)s AND {_VISIBLE} AND {shown_sql(viewer_tester)}"
+        f"{' FOR UPDATE OF e' if lock else ''}",
         dict(s=slug)).fetchone()
     if row is None:
         raise EventError('not_found', 404)
@@ -173,7 +176,8 @@ def rsvp(tx, slug: str, *, name: str, email: Optional[str], party_size: int,
 def _member_rsvp(tx, slug: str, *, name: str, party_size: int, share_email: bool, member,
                  now: datetime, share: Optional[str] = None) -> dict:
     """Confirmed at once, under the event row's lock, as a confirm is."""
-    event = _open_event(tx, slug, now, lock=True)
+    from service.testers import is_tester
+    event = _open_event(tx, slug, now, lock=True, viewer_tester=is_tester(tx, member.person_id))
     person = tx.execute('SELECT email, normalized_email FROM person WHERE id = %(i)s',
                         dict(i=member.person_id)).fetchone()
     if person is None:
@@ -340,13 +344,17 @@ def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
     Upcoming is every gathering not yet ended, soonest first; past the
     ended ones, most recent first. Each list is capped, and says when
     there is more."""
-    from service.events.public import _VISIBLE
+    from service.events.public import _VISIBLE, shown_sql
+    from service.testers import is_tester
     now = _now(now)
+    # A member's place on a tester's gathering is hidden, not deleted, as
+    # every cross pair is (TEC-2135; TEC-2085, decision 3).
+    visible = f'{_VISIBLE} AND {shown_sql(is_tester(tx, person_id))}'
     out: dict = {}
     for key, when, order, cap in (
             ('upcoming', 'e.ends_at > %(now)s', 'e.starts_at, r.id', GOING_UPCOMING_MAX),
             ('past', 'e.ends_at <= %(now)s', 'e.starts_at DESC, r.id DESC', GOING_PAST_MAX)):
-        rows = tx.execute(_Q_MEMBER_PLACES.format(visible=_VISIBLE, when=when, order=order),
+        rows = tx.execute(_Q_MEMBER_PLACES.format(visible=visible, when=when, order=order),
                           dict(pid=person_id, now=now, n=cap + 1)).fetchall()
         out[key] = [_place(dict(r), now) for r in rows[:cap]]
         out[f'more_{key}'] = len(rows) > cap
@@ -356,10 +364,14 @@ def member_places(tx, person_id: int, now: Optional[datetime] = None) -> dict:
 def _member_row(tx, person_id: int, rsvp_id: int, *, lock: bool = False) -> dict:
     """One of the member's own places: confirmed and not erased, as
     member_places lists them. A place never confirmed holds nothing, so it
-    is not found. Never another person's place."""
+    is not found. Never another person's place, and never a member's place
+    on a tester's gathering (hidden, not deleted; TEC-2085, decision 3)."""
+    from service.events.public import shown_sql
+    from service.testers import is_tester
+    shown = shown_sql(is_tester(tx, person_id), '(SELECT e.organiser_id FROM event e WHERE e.id = r.event_id)')
     row = tx.execute(
-        'SELECT * FROM event_rsvp WHERE id = %(i)s AND person_id = %(p)s AND erased_at IS NULL'
-        f" AND confirmed_at IS NOT NULL{' FOR UPDATE' if lock else ''}",
+        'SELECT r.* FROM event_rsvp r WHERE r.id = %(i)s AND r.person_id = %(p)s AND r.erased_at IS NULL'
+        f" AND r.confirmed_at IS NOT NULL AND {shown}{' FOR UPDATE OF r' if lock else ''}",
         dict(i=rsvp_id, p=person_id)).fetchone()
     if row is None:
         raise EventError('not_found', 404)

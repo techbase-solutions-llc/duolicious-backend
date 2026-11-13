@@ -146,6 +146,31 @@ def queue_event_posts(tx, *, slug: str, starts_at: datetime, caption: str, paylo
     return made
 
 
+def is_tester_event_post(tx, request_key: str) -> bool:
+    """Whether an event post's gathering is a tester's: one no member or
+    visitor may find, so never posted (TEC-2085, decision 3)."""
+    from service.testers import tester_organiser_sql
+    return tx.execute(
+        f"""SELECT 1 FROM event e
+             WHERE %(rk)s LIKE 'event:' || e.slug || ':%%'
+               AND {tester_organiser_sql('e.organiser_id')} LIMIT 1""",
+        dict(rk=request_key)).fetchone() is not None
+
+
+def cancel_tester_event_posts(tx) -> int:
+    """Every post of a tester's gathering not yet out is cancelled, as when
+    a person who already hosts is made a tester. Returns the platform rows
+    cancelled. Revoking the role brings none back."""
+    from service.testers import tester_organiser_sql
+    return tx.execute(
+        f"""UPDATE publishing_queue q SET status = 'cancelled', error = 'tester_event', updated_at = NOW()
+             WHERE q.kind = 'event'
+               AND q.status IN ('awaiting_render', 'review', 'scheduled', 'failed')
+               AND EXISTS (SELECT 1 FROM event e
+                            WHERE q.request_key LIKE 'event:' || e.slug || ':%%'
+                              AND {tester_organiser_sql('e.organiser_id')})""", {}).rowcount
+
+
 def cancel_event_posts(tx, slug: str) -> int:
     """A gathering moved or was cancelled: every post of it not yet out (or
     on its way out) is cancelled. Returns the platform rows cancelled. A post
