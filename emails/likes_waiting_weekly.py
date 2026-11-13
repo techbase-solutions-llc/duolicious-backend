@@ -23,7 +23,7 @@ from datetime import datetime
 
 from emails.base import button, callout, chip, render, suppressed_sql_pattern, title_image
 from service.admin.queries.members import member_sql
-from service.decisions.answered import passed_after_like_sql
+from service.decisions.answered import passed_on_liker_sql
 from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
 from service.campaigns import held
 from service.campaigns.switches import enabled
@@ -65,8 +65,8 @@ def _due_sql(only: str) -> str:
          WHERE NOT EXISTS (SELECT 1 FROM liked rev
                             WHERE rev.liker_id = l.liked_id AND rev.liked_id = l.liker_id)
            AND NOT is_blocked_pair(l.liked_id, l.liker_id)
-           -- Answered with a pass after it arrived (11 Nov 2026).
-           AND NOT {passed_after_like_sql('l.liked_id', 'l.liker_id', 'l.created_at')}
+           -- Answered with a pass, whenever made (TEC-2085 decision 10).
+           AND NOT {passed_on_liker_sql('l.liked_id', 'l.liker_id')}
            -- A like from staff is hidden from the member (TEC-2040).
            AND NOT is_staff_hidden(l.liked_id, l.liker_id)
            AND NOT EXISTS (SELECT 1 FROM ahavah_match m

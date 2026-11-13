@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 from database import api_tx
 from service.photo_gate import gate_params
 from service.man_woman import man_woman_pair_sql
-from service.decisions.answered import passed_after_like_sql
+from service.decisions.answered import passed_on_liker_sql
 import duotypes as t
 
 
@@ -274,9 +274,9 @@ WHERE
     AND NOT is_blocked_pair(%(me_id)s, l.liker_id)
     -- Staff are hidden from members (TEC-2040, migration 0099).
     AND NOT is_staff_hidden(%(me_id)s, l.liker_id)
-    -- A pass I made after this like arrived answers it (11 Nov 2026); a
-    -- pass made before it does not hide a later like.
-    AND NOT {passed_after_like_sql('%(me_id)s', 'l.liker_id', 'l.created_at')}
+    -- A pass I made, before or after the like, removes them for good, as
+    -- in the deck (TEC-2085 decision 10). Undoing the pass brings it back.
+    AND NOT {passed_on_liker_sql('%(me_id)s', 'l.liker_id')}
     -- Liker must still be activated (no soft-deleted accounts).
     AND liker.activated = TRUE
     -- Defensive: skip anyone we already share a confirmed match with

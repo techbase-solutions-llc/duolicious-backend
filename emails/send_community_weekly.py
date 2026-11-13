@@ -12,7 +12,7 @@ from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.switches import enabled
 from service.campaigns.weekid import week_campaign_id
 from service.admin.queries.members import member_sql
-from service.decisions.answered import passed_after_like_sql
+from service.decisions.answered import passed_on_liker_sql
 from service.config import WEB_BASE_URL
 from service.growth.queries import _excluded, count_newcomers_since, newcomers_since
 from service.questions.member import e2_question_line
@@ -142,7 +142,7 @@ _Q_PERSONAL = f"""
         WHERE l.liked_id = p.id
           AND NOT EXISTS (SELECT 1 FROM liked rev WHERE rev.liker_id = p.id AND rev.liked_id = l.liker_id)
           AND NOT is_blocked_pair(p.id, l.liker_id)
-          AND NOT {passed_after_like_sql('p.id', 'l.liker_id', 'l.created_at')}
+          AND NOT {passed_on_liker_sql('p.id', 'l.liker_id')}
           -- Staff are hidden from members (TEC-2040).
           AND NOT is_staff_hidden(p.id, l.liker_id)
           AND NOT EXISTS (SELECT 1 FROM ahavah_match m
