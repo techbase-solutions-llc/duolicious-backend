@@ -89,3 +89,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS exit_answer_open_person_idx
 3. `kept_at` is set where sign-in clears `deletion_requested_at` (service/person/sql/__init__.py ~388), since deletion wipes every session and a member must sign in to keep the account. Also set it in `cancel_account_deletion`. Both are best-effort: a failure never blocks sign-in. On keep, `person_id` is set to NULL too.
 4. Privacy. `member_days` is replaced by `member_band TEXT` with a CHECK: `under_1_month`, `1_to_6_months`, `over_6_months`. The admin route returns the month of the answer (`2026-11`), never the day. Rows still waiting on the 7 days (person_id set, kept_at NULL) are left out of the counts and the list; the route returns only how many are waiting. States shown are `Deleted` and `Kept`.
 5. The migration is applied before the new code starts (the deploy script already does this); the sign-in change must also tolerate the table being absent only if that is cheap. Premium is `person.has_gold`; gender comes from a join on `gender`; staff and testers are `COALESCE(roles, ARRAY[]::text[]) && ARRAY['admin','mod','tester']::text[]`.
+
+## Changes after the code review (18 Nov)
+
+6. Kept answers are counted only (`kept` in the admin response) and left out of the reason counts and the list. The member is still active, and the waiting count dropping as they cancel would tie the note to them. The counts and the list are answers from members who are gone; every listed state is `deleted`.
+7. Migration 0100 sets `lock_timeout = '5s'` around its work and adds a full index on `person_id` for the key's `ON DELETE SET NULL`.

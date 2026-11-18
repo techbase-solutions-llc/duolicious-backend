@@ -419,16 +419,17 @@ def test_the_admin_view_counts_and_lists_without_naming_anyone(
 
     view = _admin_view(client, admin_bearer)
 
-    assert set(view) == {'waiting', 'counts', 'answers'}
+    assert set(view) == {'waiting', 'kept', 'counts', 'answers'}
     assert [r['reason'] for r in view['counts']] == REASONS, 'every reason, in the app order'
     was, now = _counts(before), _counts(view)
     delta = {k: (now[k][0] - was[k][0], now[k][1] - was[k][1]) for k in REASONS}
     assert delta == {
-        'met_here': (1, 1), 'break': (1, 1), 'few_people': (1, 0),
+        'met_here': (1, 1), 'break': (0, 0), 'few_people': (1, 0),  # kept: counted apart
         'other': (0, 0),  # still waiting on the 7 days
         'met_elsewhere': (0, 0), 'not_expected': (0, 0),
     }
     assert view['waiting'] - before['waiting'] == 1
+    assert view['kept'] - before['kept'] == 1
 
     assert len(view['answers']) <= 50
     by_note = {a['note']: a for a in view['answers']}
@@ -436,13 +437,11 @@ def test_the_admin_view_counts_and_lists_without_naming_anyone(
     assert by_note[notes['gone']] == dict(
         month=month, reason='met_here', note=notes['gone'], gender='Woman',
         member_band='under_1_month', had_premium=False, state='deleted')
-    assert by_note[notes['kept']]['state'] == 'kept'
-    listed = [a['note'] for a in view['answers']]
-    assert listed.index(notes['kept']) < listed.index(notes['gone']), 'newest first'
+    assert notes['kept'] not in by_note, 'a kept answer is only counted'
 
     fields = {'month', 'reason', 'note', 'gender', 'member_band', 'had_premium', 'state'}
     assert all(set(a) == fields for a in view['answers'])
-    assert all(a['state'] in ('deleted', 'kept') for a in view['answers'])
+    assert all(a['state'] == 'deleted' for a in view['answers'])
     assert all(len(a['month']) == 7 for a in view['answers']), 'the month, never the day'
     body = client.get('/admin/exit-answers', headers=admin_bearer).get_data(as_text=True)
     for person in (gone, kept, waiting):

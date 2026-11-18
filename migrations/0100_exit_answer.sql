@@ -21,6 +21,9 @@
 -- Additive and idempotent, as the deploy needs. Never edit once shipped; a
 -- change is the next number.
 
+-- The key on person takes a lock there: give up rather than queue sign-ins.
+SET lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS exit_answer (
   id          BIGSERIAL PRIMARY KEY,
   person_id   INT REFERENCES person(id) ON DELETE SET NULL,
@@ -41,3 +44,9 @@ CREATE INDEX IF NOT EXISTS exit_answer_created_idx
 CREATE UNIQUE INDEX IF NOT EXISTS exit_answer_open_person_idx
   ON exit_answer (person_id)
   WHERE person_id IS NOT NULL AND kept_at IS NULL;
+
+-- Serves the key's ON DELETE SET NULL when a person row is hard-deleted.
+CREATE INDEX IF NOT EXISTS exit_answer_person_idx
+  ON exit_answer (person_id);
+
+RESET lock_timeout;
