@@ -735,7 +735,16 @@ def delete_account(s: t.SessionInfo):
     # the cron worker hard-deletes after grace expires. Required for the
     # "wait, I clicked delete by mistake" recovery path App Store reviewers
     # tend to test.
-    return person.delete_or_ban_account(s=s)
+    #
+    # The exit question (TEC-2158): an optional {reason, note}. Read here
+    # and not through @validate, so that no body, a body that is not JSON
+    # or one of the wrong shape deletes exactly as before.
+    try:
+        body = request.get_json(silent=True)
+    except Exception:
+        body = None
+    return person.delete_or_ban_account(
+        s=s, exit_answer=body if isinstance(body, dict) else None)
 
 
 @apost('/account/cancel-deletion')
@@ -1235,6 +1244,8 @@ import service.api.feedback_routes  # noqa: E402,F401
 # admin's Feedback panel. Sibling modules.
 import service.api.notices_routes  # noqa: E402,F401
 import service.api.admin.feedback_routes  # noqa: E402,F401
+# Why members left (TEC-2158): the exit question's answers.
+import service.api.admin.exit_answers_routes  # noqa: E402,F401
 # Support messages (5 Nov 2026, TEC-2115): the copy of support@ahavah.app.
 import service.api.admin.support_routes  # noqa: E402,F401
 # Beta-tester opt-in (2026-05-26) — onboarding completion screen. Sibling module.

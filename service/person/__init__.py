@@ -620,6 +620,14 @@ def _sign_in_with_code(
             return 'locked'
         return 'wrong'
 
+    if row['person_id'] is not None:
+        # The exit question (TEC-2158): Q_MAYBE_SIGN_IN has just cleared a
+        # pending deletion, if there was one, so an open answer is now a
+        # kept one. In its own savepoint and never raising: it cannot fail
+        # the sign-in, even with the table missing.
+        from service.person import exit_answer as _exit_answer
+        _exit_answer.mark_kept(tx, row['person_id'])
+
     club_params = dict(
         person_id=person_id,
         club_name=pending_club_name,
@@ -1511,6 +1519,7 @@ def post_inbox_info(req: t.PostInboxInfo, s: t.SessionInfo):
 def delete_or_ban_account(
     s: Optional[t.SessionInfo],
     admin_ban_token: Optional[str] = None,
+    exit_answer: Optional[dict] = None,
 ):
     """Soft-delete with 7-day grace (Phase W cutover, migration 0008).
 
@@ -1523,7 +1532,12 @@ def delete_or_ban_account(
     For admin bans (`admin_ban_token` set): we still hard-delete via
     Q_ADMIN_BAN: admins act on policy violations and shouldn't have a
     grace window.
+
+    `exit_answer` is the member's optional answer to why they are leaving
+    (TEC-2158). It is written last and best-effort: it can never fail the
+    deletion.
     """
+    from service.person import exit_answer as _exit_answer
     from service.spotlight.withdrawal import withdraw_member
 
     with api_tx() as tx:
@@ -1586,6 +1600,9 @@ def delete_or_ban_account(
                 Q_DELETE_DUO_SESSIONS_FOR_PERSON,
                 dict(person_id=s.person_id),
             )
+            # The exit question, last so that nothing follows it: it runs
+            # in its own savepoint and swallows every error.
+            _exit_answer.record(tx, s.person_id, exit_answer)
         else:
             raise ValueError('At least one parameter must not be None')
 
@@ -1680,6 +1697,10 @@ def cancel_account_deletion(s: t.SessionInfo):
             dict(person_id=s.person_id),
         )
         rows = cur.fetchall()
+        if rows:
+            # The exit question (TEC-2158): the member stayed. Best-effort.
+            from service.person import exit_answer as _exit_answer
+            _exit_answer.mark_kept(tx, s.person_id)
 
     return {'ok': True, 'restored': len(rows) > 0}
 

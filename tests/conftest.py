@@ -1677,3 +1677,24 @@ def staff_hidden_schema(tester_isolation_schema):
     path = Path(__file__).resolve().parent.parent / 'migrations' / STAFF_HIDDEN_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# The exit question (TEC-2158)
+# ---------------------------------------------------------------------------
+# Migration 0100: exit_answer, where DELETE /account keeps the reason a
+# member gave for leaving. Idempotent, as the deploy needs. Autouse, since
+# every deletion and every sign-in touches the table.
+
+EXIT_ANSWER_MIGRATION = '0100_exit_answer.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def exit_answer_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / EXIT_ANSWER_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
