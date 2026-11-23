@@ -173,6 +173,13 @@ def post_checkout_web(s, req):
     if stripe is None:
         return 'Checkout not configured', 503
 
+    # A member who already pays for Premium must not start a second
+    # subscription: once Stripe is live that charges them twice (TEC-2057).
+    # The web paywall shows a "manage it instead" line on this answer.
+    customer_id = _customer_id_for(s.person_id)
+    if customer_id and _has_live_subscription(stripe, customer_id):
+        return {'error': 'already_subscribed'}, 409
+
     tier_key = req.tier_key
     price_id = _price_for_tier(tier_key)
     if not price_id:
@@ -320,6 +327,28 @@ def _active_subscription_id(stripe, customer_id):
             return sid
         chosen = chosen or sid
     return chosen
+
+
+_LIVE_SUBSCRIPTION_STATUSES = frozenset({
+    'active', 'trialing', 'past_due', 'unpaid', 'paused', 'incomplete',
+})
+
+
+def _has_live_subscription(stripe, customer_id) -> bool:
+    """True when the customer has a subscription that is not over yet.
+
+    A failed Stripe lookup answers False: the member can still reach
+    checkout, which is the behaviour before this guard existed, rather
+    than being locked out of paying by a Stripe hiccup."""
+    try:
+        subs = stripe.Subscription.list(customer=customer_id, status='all', limit=10)
+    except Exception as e:
+        logger.warning(f'Stripe subscription list (checkout guard) failed: {e}')
+        return False
+    for sub in _g(subs, 'data') or []:
+        if _g(sub, 'status') in _LIVE_SUBSCRIPTION_STATUSES:
+            return True
+    return False
 
 
 def get_billing_portal(s, flow=None):

@@ -30,9 +30,9 @@ VENUE_VISIBILITY = ('public', 'confirmed')
 FEASTS: dict[str, str] = {
     'passover': 'Passover',
     'unleavened_bread': 'Unleavened Bread',
-    'firstfruits': 'Firstfruits',
+    'firstfruits': 'First Fruits',
     'pentecost': 'Feast of Weeks',
-    'trumpets': 'Trumpets',
+    'trumpets': 'Feast of Trumpets',
     'atonement': 'Day of Atonement',
     'tabernacles': 'Feast of Tabernacles',
     'last_great_day': 'Last Great Day',

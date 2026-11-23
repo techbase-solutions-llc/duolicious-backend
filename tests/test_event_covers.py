@@ -102,3 +102,17 @@ def test_replacing_a_cover_deletes_the_old_one(client, _draft, fake_bucket, monk
     assert fake_bucket.deletes == [first] and _row(slug)['cover_key'] == fake_bucket.puts[-1][0]
     assert client.delete(f'/organiser/events/{slug}/cover', headers=o['headers']).status_code == 204
     assert _row(slug)['cover_key'] is None and fake_bucket.deletes[-1] == fake_bucket.puts[-1][0]
+
+
+def test_a_cancelled_gathering_keeps_its_cover(client, _draft, fake_bucket, monkeypatch):
+    """TEC-2084 (Labs F36): a cancelled gathering takes no change, and
+    removing its cover is refused like adding one."""
+    monkeypatch.setattr('service.photo_moderation.moderate_image_bytes', lambda b: Verdict('approved'))
+    monkeypatch.setattr('service.events.mail.queue_cancelled', lambda tx, eid: 0)
+    o, slug = _draft()
+    _upload(client, o, slug)
+    key = _row(slug)['cover_key']
+    assert client.post(f'/organiser/events/{slug}/cancel', headers=o['headers'], json=dict(note='')).status_code == 200
+    r = client.delete(f'/organiser/events/{slug}/cover', headers=o['headers'])
+    assert (r.status_code, r.get_json()) == (409, {'error': 'cancelled'})
+    assert _row(slug)['cover_key'] == key and fake_bucket.deletes == []
