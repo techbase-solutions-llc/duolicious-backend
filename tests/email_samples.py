@@ -392,7 +392,10 @@ for _name, _src, _aud, _switch, _build in (
         ('event_your_ahavah_guest', 'reminder_email (Your Ahavah line)', 'lead', 'AHAVAH_YOUR_AHAVAH_EMAIL_LINE_ENABLED', EV.preview_your_ahavah_guest),
         ('event_host_refused', 'refusal_email', 'organiser', 'AHAVAH_EVENTS_HOST_REFUSAL_EMAIL_ENABLED', EV.preview_refused),
         # A guest gave up a confirmed place (TEC-2077), on the digest's switch.
-        ('event_place_cancelled', 'place_cancelled_email', 'organiser', 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', EV.preview_place_cancelled)):
+        ('event_place_cancelled', 'place_cancelled_email', 'organiser', 'AHAVAH_EVENTS_DIGEST_EMAIL_ENABLED', EV.preview_place_cancelled),
+        # The same as the design draws it (TEC-2056 round), behind its own switch too.
+        ('event_guest_cancelled', 'guest_cancelled_email', 'organiser', 'AHAVAH_EVENTS_GUEST_CANCELLED_EMAIL_ENABLED', EV.preview_guest_cancelled),
+        ('event_guest_cancelled_none', 'guest_cancelled_email (no one going)', 'organiser', 'AHAVAH_EVENTS_GUEST_CANCELLED_EMAIL_ENABLED', EV.preview_guest_cancelled_none)):
     add(_name, f'service/events/mail.py {_src}', _aud, _EV_HELD.format(_switch),
         (lambda b: lambda: b(TO))(_build), EV.FROM_ADDR)
 

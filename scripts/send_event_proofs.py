@@ -80,6 +80,12 @@ def plan() -> list[dict]:
         ('event_host_refused', 'Request to host refused, with the reason (8.7)', mail.preview_refused),
         # A guest gave up a confirmed place (TEC-2077, Labs F34).
         ('event_place_cancelled', 'A guest cancelled their place, to the organiser', mail.preview_place_cancelled),
+        # The same, as the design draws it (TEC-2056 round, 2.1 and 2.2),
+        # behind events_guest_cancelled_email.
+        ('event_guest_cancelled', 'A guest cancelled their RSVP, to the organiser (2.1)',
+         mail.preview_guest_cancelled),
+        ('event_guest_cancelled_none', 'A guest cancelled, no one going now (2.2)',
+         mail.preview_guest_cancelled_none),
     ]
     out = []
     for name, label, build in builders:
