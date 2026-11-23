@@ -254,3 +254,60 @@ These rules apply to all 3:
 **Tests for each:** who gets it and who does not (each exclusion), the once-per-period key, the quiet hours and rest-day skips, the switch off, the dry run writing nothing, the counts and pluralisation, tester isolation, and no name in the payload.
 
 **Growth tab:** the push and tiers card gains one row per automatic push, showing whether it is on or off, sent in the last 7 days and tapped. The rows are counts only.
+
+## API contract for the admin card
+
+Built on branch `feat/push-composer` (22 Nov 2026). Everything ships dark: `AHAVAH_PUSH_COMPOSER_ENABLED`, `AHAVAH_PUSH_LIKES_WAITING_ENABLED`, `AHAVAH_PUSH_NEWCOMERS_ENABLED` and `AHAVAH_PUSH_US_GAME_ENABLED` are all off by default and passed to the api and cron containers as `${VAR:-0}`. `AHAVAH_PUSH_COMPOSER_MAX_AUDIENCE` can only lower the cap of 500.
+
+### Answers to the plan's "confirm" points
+
+- Premium: the app reads Premium as `'premium' = ANY(person.entitlements)` with `subscription_expires_at` null or in the future (`service/entitlements.has_entitlement`, enforced by the entitlements cron). `has_gold` is not used, because nothing in Ahavah grants it. The filter uses the entitlements rule.
+- Photo: the filter means an approved photo, as the deck requires, not `has_profile_picture_id`, which also counts photos still in review.
+- Onboarded is not a filter: every member in the audience is activated by definition.
+- Tap targets, checked against ahavah-web origin/master 9953a4d: `/discover`, `/matches`, `/matches?tab=likes`, `/inbox`, `/profile`, `/verify`, `/settings/notifications`, `/settings/privacy`, `/events`, `/host` and `/together`. `/chat` and `/likes` are not pages on the web (the conversation list is `/inbox` and likes are a tab of `/matches`), so the list uses those instead. `/your-ahavah` is left out: it is the light sign-in for people with no account, and it answers 404 while `light_sign_in` is off. `/verify` is the verification page, for the "Get verified" push. `/events` needs `events_list`, `/host` needs `events_hosting` and `/together` needs `together_live`; while its switch is off a target is offered with `available: false` and refused with `url_not_open`. The API adds `?src=apush&send=<id>` (or `&src=...` after an existing query).
+- Us game toggle: the matches toggle (`push_matches`, event `match`). The push is about a match, the toggle is always shown in Settings, and a member who turned match pushes off does not want match nudges. `push_match_played` was the other candidate, but it is hidden from Settings while its own push is dark, so a member could not turn it off.
+- Us game tap: `/chat/<the match's uuid>?src=uspush`. The chat's More menu starts the Us game with that match ("Play the game together", `chat-more-menu.tsx`) and is offered only once Together is live, so the push also needs `together_live`.
+- Likes waiting tap: `/matches?tab=likes&src=lwpush`, where the existing like push opens. That is what a free member already sees for a like.
+
+### Composer routes
+
+All are admin only (`require_admin`, 403 otherwise). While `AHAVAH_PUSH_COMPOSER_ENABLED` is off, send, cancel, the list and the read answer 404; config, drafts, the audience count, the test send and the dry run still answer, because a test send needs a draft. This is wider than the plan's "except test and dry run", for that reason. A refusal answers `{error: <code>, ...}` with 400 (bad input) or 409 (a rule), and 404 for an unknown id.
+
+- `GET /admin/growth/push/composer` gives `{enabled, urls: [{url, label, available}], limits: {title: 50, body: 120, max_audience, member_72h: 1, member_7d: 2, sends_per_day: 2, pushes_per_day: 1000, hold_hours: 48, test_valid_hours: 24}, filters: {keys, gender, tiers, online_days, joined_days}, known_through}`.
+- `POST /admin/growth/push/drafts` with `{title, body, url, filters, testers_only}` answers 201 with a send object (below). `PATCH /admin/growth/push/<id>` takes the same body for a draft in `draft` or `tested`, and any change clears the test. Both are audited as `push_composer_draft`.
+- `POST /admin/growth/push/audience` with `{filters, testers_only}` gives `{count, held_now: {quiet, resting}, by_country: [{country, count}], max_audience, over_cap}`.
+- `POST /admin/growth/push/test` with `{draft_id}` gives `{delivered, reason, send_id}`. `reason` is null, `not_delivered`, `no_push_subscription`, `vapid_missing` or `error`. Audited as `push_composer_test`.
+- `POST /admin/growth/push/dry-run` with `{draft_id}` or the draft's fields gives `{dry_run: true, audience, would_send_now, held: {quiet, resting}, capped, over_day_cap, over_send_cap, max_audience, switch_on}`. It writes nothing and runs inside `guard.no_send()`.
+- `POST /admin/growth/push/send` with `{draft_id, when: 'now' | 'YYYY-MM-DDTHH:MM', mode: 'barbados' | 'member_local'}` gives the send object plus `repeat`. A time without an offset is a wall-clock time in Barbados, or in each member's zone for `member_local`. `now` takes `barbados` only and starts a pass on a thread after the commit. A second press with the same content answers the first send with `repeat: true`. Refusals: `test_required`, `not_a_draft`, `past`, `rest_day`, `unknown` (after `KNOWN_THROUGH`), `day_limit`, `empty_audience`, `over_cap`, `invalid_when`, `invalid_mode` and `url_not_open`. Audited as `push_composer_send` (now) or `push_composer_schedule`.
+- `POST /admin/growth/push/<id>/cancel` cancels a `scheduled` or `sending` send. Members already sent stay sent and the rest are released. Refused with `not_cancellable` otherwise. Audited as `push_composer_cancel`.
+- `GET /admin/growth/push/sends` gives `{sends: [...]}`, the newest 50. `GET /admin/growth/push/<id>` gives one send.
+
+Draft refusals for text are `invalid_text` with `problems: [{field, problem}]`, where `problem` is `required`, `too_long` (with `most` and `length`), `line_break`, `dash` or `exclamation`. Filters are refused with `invalid_filters` (with `unknown` or `conflict` when that is the reason), a testers-only draft that carries a filter with `testers_only_with_filters`, and urls with `invalid_url` or `url_not_open`.
+
+Filters are all optional and combine with AND: `gender` (`Man` or `Woman`), `countries` (alpha-2 codes), `regions` (free text, matched case-blind), `online_within_days` or `offline_for_days` (7, 14 or 30, never both), `joined_within_days` (1 to 365), `has_photo`, `tiers` (`none`, `bronze`, `silver`, `gold`), `premium` and `spotlight` (booleans). An unknown key is refused, so a typo never widens a send.
+
+The send object is `{id, title, body, url, filters, testers_only, state, mode, scheduled_for, local_at, hold_until, test_delivered_at, test_result, halt_reason, created_at, updated_at, started_at, finished_at, cancelled_at, tested, can_send, results: {audience, sent, held, capped, failed, expired, released, skipped, tapped}, held_by: {<reason>: n}, tap_url}`. `state` is `draft`, `tested`, `scheduled`, `sending`, `sent` or `cancelled`. `halt_reason` is `day_cap` or `vapid_missing` while a send waits for one of those. The reasons in `held_by` are `quiet`, `resting`, `not_yet` (the member's local time not reached), `day_cap`, `in_flight` and `retry`. No route returns a name or an address, and no audit row carries one: audit metadata holds the send id, a hash of the filters, the audience count, the title and the url.
+
+### Automatic push routes and rows
+
+- `GET /admin/growth/push` (the push and tiers card) gains `auto_pushes: [{name, label, switch, enabled, sent_7d, tapped_7d}]`, one row each for `likes_waiting_push`, `newcomers_push` and `us_game_push`. `GET /admin/growth/push/auto` gives the same rows as `{rows}`.
+- `POST /admin/growth/push/auto/<name>/dry-run` gives `{dry_run, name, switch_on, due, would_send_now, held: {quiet, resting, outside_window}}`. It writes nothing, runs inside `guard.no_send()` and works while the switch is off.
+- `POST /admin/growth/push/auto/<name>/test` sends the sample to the signed-in admin's own devices and gives `{delivered, reason, name}`. It works while the switch is off. Audited as `push_auto_test`.
+
+### Where the build differs from the plan
+
+- Migration 0101 adds `push_composer_recipient` (one row per member per send, with its state), which the plan did not list. It lets every member be counted as sent, held, capped, failed, expired, released or skipped across passes, and it freezes the audience at the first pass, so one send row is one pass over one audience. The send table also keeps `content_hash`, `tested_hash`, `test_result`, `halt_reason`, `local_at`, `started_at`, `finished_at`, `released` and `skipped`.
+- The composer's cron is its own module, `service/cron/pushcomposer`, every 10 minutes, listed in `send_registry.py` behind `push_composer`. The automatic pushes run in the hourly returnmail cron.
+- The news and suggestions toggle (`push_announcements`) is left out of GET preferences, and ignored in a PATCH, while both the composer and the newcomers push are off, as the release 4 toggles are. The web must read a missing key as "toggle not offered".
+- The automatic pushes also leave out members who left campaign email, as the composer does. The plan's list for them did not name it; we suggest keeping it, since all 3 are nudges.
+- Likes waiting tells a member only about likes newer than their last likes-waiting push, so a member who stays away is not told every week about the same like.
+- A member's composer cap counts delivered and in-flight composer pushes from other sends.
+
+### Known gaps
+
+- The admin card and the web changes (the Settings toggle, the landing footer line, and `push-tap.ts` accepting `apush` with `send` and the 3 new sources) are not built here.
+- The copy check refuses any "!" and any em or en dash. There is no fuller copy linter in the API, so sentence case and British spelling are not checked.
+- A member_local slot is checked against the rest calendar in Barbados time and at both ends of its range (UTC+14 and UTC-12), not at every zone in between. Members reached inside a rest period are held whatever the slot.
+- A send now runs on a thread in the api container. If the container restarts before it runs, the next cron tick (within 10 minutes) carries the send.
+- The day cap of 1,000 composer pushes counts by the Barbados day of each push_send_log row.
+- Nothing here has run against production data or a real device.
