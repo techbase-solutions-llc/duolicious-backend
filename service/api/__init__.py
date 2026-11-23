@@ -747,6 +747,23 @@ def delete_account(s: t.SessionInfo):
         s=s, exit_answer=body if isinstance(body, dict) else None)
 
 
+@app.after_request
+def _log_delete_account_answer(response):
+    """One log line per DELETE /account (TEC-2158 follow-up, 22 Nov): did
+    an exit answer come with it, and what was the answer's status. Runs for
+    every such request, signed in or not, so a request with no valid
+    session still shows whether the body reached the server through the
+    proxies. Says yes or no only: never the reason, the note or who."""
+    try:
+        if request.method == 'DELETE' and request.path == '/account':
+            body = request.get_json(silent=True)
+            answer = 'yes' if isinstance(body, dict) and body.get('reason') else 'no'
+            print(f'delete_account: answer={answer} status={response.status_code}', flush=True)
+    except Exception:
+        pass
+    return response
+
+
 @apost('/account/cancel-deletion')
 def post_account_cancel_deletion(s: t.SessionInfo):
     """Phase W cutover (2026-05-15): self-service undo of a pending

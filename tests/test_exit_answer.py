@@ -463,3 +463,24 @@ def test_the_admin_view_lists_the_latest_50(client, admin_bearer):
 
     assert len(answers) == 50
     assert [a['note'] for a in answers] == [f'{tag}-{n}' for n in range(55, 5, -1)]
+
+
+def test_each_delete_logs_whether_an_answer_came_and_nothing_else(
+        client, sign_in, make_person, capsys):
+    secret = f'private-{uuid4()}'
+    p = make_person(name='Logged')
+    r = client.delete('/account', headers=sign_in(p),
+                      json=dict(reason='break', note=secret))
+    assert r.status_code == 200
+    out = capsys.readouterr().out
+    assert 'delete_account: answer=yes status=200' in out
+    assert secret not in out and 'break' not in out.split('delete_account:')[1]
+
+    # No valid session: the line still shows the body arrived.
+    client.delete('/account', json=dict(reason='other'))
+    out = capsys.readouterr().out
+    assert 'delete_account: answer=yes status=4' in out
+
+    q = make_person(name='LoggedNoAnswer')
+    assert client.delete('/account', headers=sign_in(q)).status_code == 200
+    assert 'delete_account: answer=no status=200' in capsys.readouterr().out
