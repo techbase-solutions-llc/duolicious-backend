@@ -191,6 +191,19 @@ SWITCHES = {
     # until that address (AHAVAH_SUPPORT_INBOUND_ADDRESS) is set up. The api
     # reads it too, to show on Admin > Support whether the copying is on.
     'support_inbox': 'AHAVAH_SUPPORT_INBOX_ENABLED',
+    # The push composer on the Growth tab (TEC-2182,
+    # service/notifications/composer.py). While it is off nothing composed
+    # is sent and the send, cancel and list routes answer 404; drafts, the
+    # audience count, the dry run and the test send to the admin's own
+    # devices still work, so the owner can try it out.
+    'push_composer': 'AHAVAH_PUSH_COMPOSER_ENABLED',
+    # The 3 automatic pushes of the same plan (service/notifications/
+    # auto_pushes.py), each off until the owner has seen it on a test
+    # device and approved its words: likes waiting, new members near you
+    # and the Us game with a match (which needs together_live as well).
+    'push_likes_waiting': 'AHAVAH_PUSH_LIKES_WAITING_ENABLED',
+    'push_newcomers': 'AHAVAH_PUSH_NEWCOMERS_ENABLED',
+    'push_us_game': 'AHAVAH_PUSH_US_GAME_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})

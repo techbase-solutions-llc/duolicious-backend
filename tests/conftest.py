@@ -1698,3 +1698,26 @@ def exit_answer_schema():
     path = Path(__file__).resolve().parent.parent / 'migrations' / EXIT_ANSWER_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# The push composer and the automatic pushes (TEC-2182)
+# ---------------------------------------------------------------------------
+# Migration 0101: notification_preference.push_announcements, the composer's
+# send and recipient tables, and push_tap's new sources and send_id. After
+# 0067 and 0077, which make push_tap and its check. Idempotent, as the
+# deploy needs. Autouse, since every preference read and every push tap
+# touches the new columns.
+
+PUSH_COMPOSER_MIGRATION = '0101_push_composer.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def push_composer_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / PUSH_COMPOSER_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))
