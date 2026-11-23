@@ -21,6 +21,9 @@ from database import api_tx
 from service.notifications import composer
 from service.notifications.composer import Refused
 
+# Flask-Limiter off: the route tests call the same routes many times.
+pytestmark = pytest.mark.usefixtures('no_limits')
+
 NOON = datetime(2026, 11, 23, 16, 0, tzinfo=timezone.utc)   # Monday, 12:00 Barbados, 11:00 New York
 COUNTRY = 'QZ'
 
@@ -476,6 +479,18 @@ def test_an_audience_over_the_cap_is_refused(member, admin, pushes, monkeypatch)
     # A setting above the Spotlight cap cannot raise it.
     monkeypatch.setenv('AHAVAH_PUSH_COMPOSER_MAX_AUDIENCE', '5000')
     assert composer.max_audience() == composer.PUSH_CAP == 500
+
+
+def test_the_cap_holds_again_when_the_send_goes(member, admin, pushes, monkeypatch):
+    a = member('LateCapA')
+    sid = _tested(admin['id'])
+    _send(sid)
+    member('LateCapB')
+    monkeypatch.setenv('AHAVAH_PUSH_COMPOSER_MAX_AUDIENCE', '1')
+    assert composer.run_send(sid, NOON)['halted'] == 'over_cap'
+    row = _row(sid)
+    assert row['state'] == 'failed' and row['halt_reason'] == 'over_cap' and row['audience'] == 2
+    assert not _to(pushes, a['id']) and _recipients(sid) == {}
 
 
 def test_an_empty_audience_is_refused(admin, pushes):

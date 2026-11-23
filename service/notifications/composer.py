@@ -819,6 +819,14 @@ def _claim_pass(send_id: str, now: datetime) -> tuple[list[dict], Optional[str]]
         if row['state'] == 'scheduled':
             # The freeze: one pass over this audience, never a second.
             ids = [r['person_id'] for r in audience(tx, row['filters'], row['testers_only'])]
+            if len(ids) > max_audience():
+                # More joined the audience between the schedule and the
+                # send: the cap holds at the send too, and nobody is pushed.
+                tx.execute("""UPDATE push_composer_send
+                                 SET state = 'failed', halt_reason = 'over_cap', audience = %(n)s,
+                                     finished_at = %(now)s, updated_at = NOW()
+                               WHERE id = %(i)s::uuid""", dict(i=send_id, n=len(ids), now=now))
+                return [], 'over_cap'
             tx.execute("""INSERT INTO push_composer_recipient (send_id, person_id)
                           SELECT %(i)s::uuid, unnest(%(ids)s::int[]) ON CONFLICT DO NOTHING""",
                        dict(i=send_id, ids=ids))

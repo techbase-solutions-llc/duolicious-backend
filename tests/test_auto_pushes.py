@@ -23,7 +23,7 @@ from database import api_tx
 from service.campaigns import held
 from service.notifications import auto_pushes as ap
 
-pytestmark = pytest.mark.usefixtures('together_schema', 'together_live', 'switches_on')
+pytestmark = pytest.mark.usefixtures('together_schema', 'together_live', 'switches_on', 'no_limits')
 
 UTC = timezone.utc
 COUNTRY = 'QZ'
