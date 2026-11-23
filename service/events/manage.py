@@ -480,6 +480,9 @@ def set_cover(tx, organiser: dict, slug: str, data: bytes, content_type: str) ->
 
 def remove_cover(tx, organiser: dict, slug: str) -> None:
     row = _event(tx, organiser, slug, lock=True)
+    # A cancelled gathering takes no change, its cover included (TEC-2084).
+    if row['status'] == 'cancelled':
+        raise EventError('cancelled', 409)
     tx.execute(
         """UPDATE event SET cover_key = NULL, updated_at = NOW(),
                             flag_reason = CASE WHEN flag_reason = 'cover_review' THEN NULL ELSE flag_reason END
