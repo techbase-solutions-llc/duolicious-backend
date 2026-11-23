@@ -594,10 +594,14 @@ def _sign_in_with_code(
     written either way. Shared with Your Ahavah's start-a-profile
     (sign_up_proved_address), so both sign in the same way.
     """
+    from service.campaigns.switches import enabled as _switch_on
     params = dict(
         otp=otp,
         session_token_hash=session_token_hash,
         pending_club_name=pending_club_name,
+        # TEC-2056: with the switch on, a deletion date survives the
+        # sign-in and the answer below names it, so the app can ask.
+        keep_pending_deletion=_switch_on('keep_account_ask'),
     )
 
     tx.execute(Q_MAYBE_DELETE_ONBOARDEE, params)
@@ -620,11 +624,13 @@ def _sign_in_with_code(
             return 'locked'
         return 'wrong'
 
-    if row['person_id'] is not None:
+    if row['person_id'] is not None and row['deletion_requested_at'] is None:
         # The exit question (TEC-2158): Q_MAYBE_SIGN_IN has just cleared a
         # pending deletion, if there was one, so an open answer is now a
         # kept one. In its own savepoint and never raising: it cannot fail
-        # the sign-in, even with the table missing.
+        # the sign-in, even with the table missing. A deletion the sign-in
+        # kept (keep_account_ask, TEC-2056) keeps its answer open until the
+        # member chooses: cancel-deletion marks it kept.
         from service.person import exit_answer as _exit_answer
         _exit_answer.mark_kept(tx, row['person_id'])
 
@@ -678,9 +684,17 @@ def _sign_in_with_code(
             if lead_id is not None:
                 confirm_lead(tx, lead_id, 'otp')
 
+    # The deletion date the sign-in kept, as GET /profile-info gives it
+    # ("2026-11-11T09:30:00Z"), or None: the app asks the member to keep the
+    # account or carry on deleting when it is set (TEC-2056).
+    pending = row['deletion_requested_at']
+    deletion_requested_at = (
+        pending.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if pending is not None else None)
+
     return dict(
         onboarded=row['person_id'] is not None,
-        **row,
+        **{**row, 'deletion_requested_at': deletion_requested_at},
         **clubs,
     )
 
@@ -1689,7 +1703,11 @@ def cancel_account_deletion(s: t.SessionInfo):
             """
             UPDATE person
                SET activated = TRUE,
-                   deletion_requested_at = NULL
+                   deletion_requested_at = NULL,
+                   -- A sign-in that kept the deletion (keep_account_ask,
+                   -- TEC-2056) left sign_in_time alone; keeping the account
+                   -- is when that sign-in counts.
+                   sign_in_time = NOW()
              WHERE id = %(person_id)s
                AND deletion_requested_at IS NOT NULL
             RETURNING id
