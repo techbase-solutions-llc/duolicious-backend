@@ -36,8 +36,10 @@ _NOT_SESSION_ROUTES = {
 }
 
 
-def _args(admin_uuid: str) -> dict[str, dict]:
+def _args(admin_uuid: str, composer_send: str = '') -> dict[str, dict]:
     return {
+        # One composed push (TEC-2182); an unknown id answers 404.
+        '/admin/growth/push/<send_id>': dict(send_id=composer_send),
         '/admin/users/<uuid>': dict(uuid=admin_uuid),
         '/admin/users/<uuid>/activity': dict(uuid=admin_uuid),
         # An unknown run answers a row of zero counts, not a 404.
@@ -71,6 +73,20 @@ def admin(make_person):
 
 
 @pytest.fixture
+def composer_draft(monkeypatch):
+    """The push composer switched on, with one draft to read (TEC-2182):
+    while the switch is off its list and read routes answer 404."""
+    from service.notifications import composer
+    monkeypatch.setenv('AHAVAH_PUSH_COMPOSER_ENABLED', '1')
+    fields = composer.clean_draft(dict(title='A title', body='A body.', url='/discover', filters={}))
+    with api_tx() as tx:
+        sid = composer.create_draft(tx, fields, None)['id']
+    yield sid
+    with api_tx() as tx:
+        tx.execute("DELETE FROM push_composer_send WHERE id = %(i)s::uuid", dict(i=sid))
+
+
+@pytest.fixture
 def premium_member(make_person):
     """A member whose Premium runs out in five days: the row that made the
     entitlements route fail, since every such row carried a timedelta."""
@@ -91,8 +107,8 @@ def _admin_get_rules(app) -> list[str]:
                    if r.rule.startswith('/admin') and 'GET' in r.methods})
 
 
-def test_every_admin_get_route_answers_200_with_json(app, client, admin, premium_member):
-    args = _args(admin['uuid'])
+def test_every_admin_get_route_answers_200_with_json(app, client, admin, premium_member, composer_draft):
+    args = _args(admin['uuid'], composer_draft)
     failures = []
     for rule in _admin_get_rules(app):
         if rule in _NOT_SESSION_ROUTES:
