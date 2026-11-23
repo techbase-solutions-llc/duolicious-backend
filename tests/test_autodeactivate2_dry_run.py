@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import pathlib
+import re
 import sys
 import types
 from contextlib import asynccontextmanager
@@ -56,7 +57,7 @@ def _load_job(monkeypatch, tx, sent):
         ),
         'smtp': types.SimpleNamespace(aws_smtp=types.SimpleNamespace(send=lambda **kw: sent.append(kw))),
         'smtp.guard': _real_guard,
-        'emails.base': types.SimpleNamespace(mask_email=lambda e: e),
+        'emails.base': types.SimpleNamespace(mask_email=lambda e: e[0] + '***'),
     }
     for name, mod in stubs.items():
         monkeypatch.setitem(sys.modules, name, mod)
@@ -69,7 +70,7 @@ def _load_job(monkeypatch, tx, sent):
 
 def _run_once(monkeypatch, dry_run: bool):
     sent = []
-    tx = _Tx([{'email': 'member@gmail.com'}, {'email': 'other@yahoo.com'}])
+    tx = _Tx([{'id': 7, 'email': 'member@gmail.com'}, {'id': 9, 'email': 'other@yahoo.com'}])
     job = _load_job(monkeypatch, tx, sent)
     monkeypatch.setattr(job, 'DRY_RUN', dry_run)
     asyncio.run(job.autodeactivate2_once())
@@ -99,3 +100,22 @@ def test_a_dry_run_runs_inside_the_send_guards_tripwire(monkeypatch):
 def test_a_real_run_is_not(monkeypatch):
     _, tx = _run_once(monkeypatch, dry_run=False)
     assert tx.in_no_send is False
+
+
+def test_the_log_carries_ids_never_addresses(monkeypatch, capsys):
+    """A dry run logged every caught member's address on each 5-minute
+    tick (1,436 lines in 48 hours on 23 Nov 2026). Ids only, either way."""
+    for dry in (True, False):
+        _run_once(monkeypatch, dry_run=dry)
+        out = capsys.readouterr().out
+        assert 'member@gmail.com' not in out and 'other@yahoo.com' not in out, out
+        assert '7' in out and '9' in out
+
+
+def test_a_real_run_still_wipes_sessions_in_the_query():
+    """The fault is recorded, not fixed: a real run deletes every session of
+    each member it hides (reported 16 Nov 2026). If this changes, the module
+    docstring and the reactivation path must change with it."""
+    sql = (JOB.parent / 'sql' / '__init__.py').read_text()
+    assert re.search(r'DELETE FROM\s+duo_session', sql)
+    assert 'NOT %(dry_run)s' in sql
