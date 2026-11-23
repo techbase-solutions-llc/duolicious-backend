@@ -22,7 +22,8 @@ import pytest
 
 from database import api_tx
 from service.admin.queries import Q_OVERVIEW_KPIS, Q_SYSTEM_HEALTH
-from service.admin.queries.overview import Q_OVERVIEW_MEMBER_TOTAL
+from service.admin.queries.overview import (
+    Q_OVERVIEW_MEMBER_TOTAL, Q_OVERVIEW_MEMBERS_30D)
 
 
 @pytest.fixture
@@ -67,7 +68,9 @@ def _enter(client, email: str, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 _SIGN_UPS = ('system_today', 'system_7d', 'system_30d', 'overview_today')
-_ACTIVE = ('dau', 'wau', 'mau', 'overview_active', 'member_total')
+# members_spark is the last point of the Members sparkline, so every case
+# below holds it to the card beside it (TEC-1832).
+_ACTIVE = ('dau', 'wau', 'mau', 'overview_active', 'member_total', 'members_spark')
 
 
 def _counts() -> dict:
@@ -76,6 +79,7 @@ def _counts() -> dict:
         system = dict(tx.execute(Q_SYSTEM_HEALTH).fetchone())
         overview = dict(tx.execute(Q_OVERVIEW_KPIS).fetchone())
         total = tx.execute(Q_OVERVIEW_MEMBER_TOTAL, dict(ex=_excluded())).fetchone()
+        spark = tx.execute(Q_OVERVIEW_MEMBERS_30D, dict(ex=_excluded())).fetchall()
     return dict(
         system_today=int(system['signups_today']),
         system_7d=int(system['signups_7d']),
@@ -84,6 +88,7 @@ def _counts() -> dict:
         overview_today=int(overview['signups_today']),
         overview_active=int(overview['active_24h']),
         member_total=int(total['member_total']),
+        members_spark=int(spark[-1]['total']),
     )
 
 
@@ -158,6 +163,22 @@ def test_a_deactivated_account_stays_a_sign_up_but_is_not_active(who, make_perso
     again = _counts()
     for k in _ACTIVE:
         assert again[k] == before[k] + 1, k
+
+
+def test_the_members_sparkline_ends_at_the_members_card(make_person):
+    """The Members card and its sparkline count the same people (reported
+    16 Nov 2026; on 23 Nov the line ended at 106 beside a card of 102, as
+    it counted moderators, testers, unactivated accounts and test
+    addresses). One of each, plus an ordinary member, and the line's last
+    point is still the card's figure."""
+    for sql in (*_STAFF_OR_TESTER.values(), *_DEACTIVATED.values(), None):
+        p = make_person(name='SparkTie')
+        _joined_and_online(p['id'])
+        if sql:
+            with api_tx() as tx:
+                tx.execute(sql, dict(i=p['id']))
+    c = _counts()
+    assert c['members_spark'] == c['member_total']
 
 
 def test_system_and_overview_count_the_same_people(make_person):

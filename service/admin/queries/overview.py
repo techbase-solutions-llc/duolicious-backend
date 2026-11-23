@@ -87,8 +87,12 @@ Q_OVERVIEW_KPIS = f"""
 # every non-staff person, which the admin labels as including deactivated
 # and test accounts (TEC-1845 admin audit). A separate query because the
 # KPI query takes no parameters and is run bare elsewhere.
+# The Members card and its sparkline count the same people: one predicate,
+# so the line's last point is the figure printed beside it (TEC-1832).
+_COUNTED = counted_member_sql('person')
+
 Q_OVERVIEW_MEMBER_TOTAL = f"""
-    SELECT COUNT(*)::int AS member_total FROM person p WHERE {counted_member_sql('p')}
+    SELECT COUNT(*)::int AS member_total FROM person WHERE {_COUNTED}
 """
 
 Q_OVERVIEW_SIGNUPS_30D = f"""
@@ -106,18 +110,21 @@ Q_OVERVIEW_SIGNUPS_30D = f"""
      ORDER BY days.d
 """
 
-# The Total persons sparkline: how many members there were by the end of
-# each Barbados day. It used to borrow the daily sign-ups series, which
-# measures something else. Accounts that have since been deleted are gone
-# from `person`, so an earlier day shows the members still here who had
-# joined by then.
+# The Members sparkline: how many of today's members had joined by the end
+# of each Barbados day. It used to borrow the daily sign-ups series, which
+# measures something else, and then counted every non-admin account, so it
+# ended at 106 beside a card reading 102 on 23 Nov 2026 (moderators, testers,
+# unactivated and test addresses). It now uses the card's predicate, so its
+# last point is the card's figure. Accounts since deleted or deactivated are
+# not in it, so an earlier day shows the members still here who had joined
+# by then. Bind %(ex)s with service.growth.queries._excluded().
 Q_OVERVIEW_MEMBERS_30D = f"""
     WITH days AS ({barbados_days(30)}
     )
     SELECT
         days.d::text AS day,
         (SELECT COUNT(*) FROM person
-          WHERE {_MEMBER} AND {_JOINED_ON} <= days.d) AS total
+          WHERE {_COUNTED} AND {_JOINED_ON} <= days.d) AS total
       FROM days
      ORDER BY days.d
 """
