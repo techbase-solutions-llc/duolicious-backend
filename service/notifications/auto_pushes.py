@@ -74,6 +74,21 @@ LIKES_HOURS = (10, 20)
 NEWCOMER_WEEKDAY, NEWCOMER_FROM = 4, 10      # Thursday, from 10:00
 NEWCOMER_DAYS = 7
 MATCH_AGE = timedelta(days=2)
+# The most pushes one job sends in one tick. The rest are due again next
+# hour, inside the same period.
+RUN_CAP = 200
+
+
+def missed(name: str) -> str:
+    '''push_send_log's campaign for a push of `name` that reached no device
+    once in a period: it is tried once more, on a later tick.'''
+    return f'{name}:missed'
+
+
+def failed(name: str) -> str:
+    '''... and for one that reached no device twice: not tried again in
+    that period.'''
+    return f'{name}:failed'
 
 
 def push_on(name: str) -> bool:
@@ -169,7 +184,8 @@ _Q_LIKES_WAITING = f"""
      WHERE {_audience('p', 'push_likes')}
        AND NOT {_sent_within_sql('p', LIKES_WAITING, 7)}
        AND NOT EXISTS (SELECT 1 FROM push_send_log x WHERE x.person_id = p.id
-                          AND x.campaign = '{LIKES_WAITING}' AND x.campaign_id = %(week)s)
+                          AND x.campaign IN ('{LIKES_WAITING}', '{LIKES_WAITING}:failed')
+                          AND x.campaign_id = %(week)s)
        AND EXISTS (
            SELECT 1 FROM liked l JOIN person liker ON liker.id = l.liker_id
             WHERE l.liked_id = p.id
@@ -213,7 +229,8 @@ _Q_NEWCOMERS = f"""
          WHERE {_audience('p', 'push_announcements')}
            AND p.country IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM push_send_log x WHERE x.person_id = p.id
-                              AND x.campaign = '{NEWCOMERS}' AND x.campaign_id = %(week)s)
+                              AND x.campaign IN ('{NEWCOMERS}', '{NEWCOMERS}:failed')
+                              AND x.campaign_id = %(week)s)
     ) c
      WHERE c.newcomers > 0
      ORDER BY c.person_id
@@ -247,7 +264,8 @@ _Q_US_GAME = f"""
        AND NOT is_staff_hidden(p.id, o.id)
        AND NOT {_sent_within_sql('p', US_GAME, 7)}
        AND NOT EXISTS (SELECT 1 FROM push_send_log x WHERE x.person_id = p.id
-                          AND x.campaign = '{US_GAME}' AND x.campaign_id = s.match_id)
+                          AND x.campaign IN ('{US_GAME}', '{US_GAME}:failed')
+                          AND x.campaign_id = s.match_id)
      ORDER BY p.id, s.match_id
 """
 
@@ -313,11 +331,20 @@ def _push(person_id: int, push: dict, name: str) -> int:
 
 
 def _unlog(person_id: int, campaign: str, cid: str) -> None:
+    '''A push that reached no device gives its row back. The first time in
+    a period it is noted as missed and tried again on a later tick; the
+    second time it is noted as failed and not tried again that period.'''
     from database import api_tx
     with api_tx() as tx:
         tx.execute("""DELETE FROM push_send_log
                        WHERE person_id = %(p)s AND campaign = %(c)s AND campaign_id = %(cid)s""",
                    dict(p=person_id, c=campaign, cid=cid))
+        again = tx.execute("""DELETE FROM push_send_log
+                                WHERE person_id = %(p)s AND campaign = %(m)s AND campaign_id = %(cid)s
+                            RETURNING 1""", dict(p=person_id, m=missed(campaign), cid=cid)).fetchone()
+        tx.execute("""INSERT INTO push_send_log (person_id, campaign, campaign_id)
+                       VALUES (%(p)s, %(c)s, %(cid)s) ON CONFLICT DO NOTHING""",
+                   dict(p=person_id, c=failed(campaign) if again else missed(campaign), cid=cid))
 
 
 def _deliver(tx, person_id: int, name: str, cid: str, push: dict) -> bool:
@@ -340,6 +367,8 @@ def _queue(name: str) -> Callable:
             return 0
         n = 0
         for c in candidates(tx, name, now):
+            if n >= RUN_CAP:
+                break
             local = _local(now, c['tz'])
             if quiet(local) or not _in_window(name, local):
                 continue

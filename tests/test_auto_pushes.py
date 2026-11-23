@@ -415,3 +415,23 @@ def test_the_return_mail_cron_runs_the_3_jobs():
     from service.cron import returnmail
     names = [n for n, _ in returnmail.JOBS]
     assert {'push_likes_waiting', 'push_newcomers', 'push_us_game'} <= set(names)
+
+
+
+def test_a_job_sends_at_most_its_run_cap_a_tick(match, sent, monkeypatch):
+    match()
+    match()
+    monkeypatch.setattr(ap, 'RUN_CAP', 1)
+    assert _run(ap.queue_us_game, _at(15)) == 1
+    assert len(sent) == 1
+
+
+def test_a_push_no_device_took_is_retried_once_a_period(match, monkeypatch):
+    a, b, mid = match()
+    tries = []
+    monkeypatch.setattr(ap, '_push', lambda person_id, push, name: tries.append(person_id) and 0)
+    monkeypatch.setattr(ap, 'PUSH_READY', lambda: True)
+    for hour in (13, 14, 15, 16):
+        _run(ap.queue_us_game, _at(hour))
+    assert tries.count(a['id']) == 2 and tries.count(b['id']) == 2
+    assert _logged(a, ap.US_GAME) == [] and _logged(a, ap.failed(ap.US_GAME)) == [mid]
