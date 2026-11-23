@@ -1303,6 +1303,8 @@ import service.api.send_stats_routes  # noqa: E402,F401
 import service.api.admin.engagement_routes  # noqa: E402,F401
 import service.api.admin.audit_routes  # noqa: E402,F401
 import service.api.admin.growth_routes  # noqa: E402,F401
+# The push composer and the automatic pushes' rows (TEC-2182).
+import service.api.admin.push_composer_routes  # noqa: E402,F401
 # Community Spotlight publishing queue (2026-09-13) -- admin-or-cron
 # /admin/growth/* queue, settings, candidates and token health (spec 3.6).
 import service.api.admin.spotlight_routes  # noqa: E402,F401

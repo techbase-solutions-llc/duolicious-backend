@@ -37,7 +37,13 @@ _MUTATING = {'POST', 'PUT', 'PATCH', 'DELETE'}
 # Mutating /admin routes allowed to write no audit row, each with the reason.
 # Empty on 4 Nov 2026: every one of them changes something. A route belongs
 # here only if it changes nothing at all, not because auditing it is awkward.
-_CHANGES_NOTHING: dict[str, str] = {}
+_CHANGES_NOTHING: dict[str, str] = {
+    # The push composer (TEC-2182): counts and a dry run, both read only.
+    # The dry runs run inside the send guard's no_send().
+    '/admin/growth/push/audience': 'counts an audience; reads only',
+    '/admin/growth/push/dry-run': 'a dry run; writes nothing and sends nothing',
+    '/admin/growth/push/auto/<name>/dry-run': 'a dry run; writes nothing and sends nothing',
+}
 
 # How far to follow calls from a route into helpers. The deepest path on
 # 4 Nov is the emailed ban link: route, person.post_admin_ban,

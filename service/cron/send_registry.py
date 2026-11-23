@@ -69,8 +69,14 @@ SENDING_CRONS = {
                 'match_question_push', 'questions_launch_push', 'questions_launch_email',
                 'events_reminder_email', 'events_digest_email', 'events_join_invite_email',
                 'push_gathering_reminder', 'push_new_guests', 'push_match_played',
-                'unfinished_signup_reminder'),
+                'unfinished_signup_reminder', 'push_likes_waiting', 'push_newcomers', 'push_us_game'),
         'note': 'every job behind its own switch'},
+    'service.cron.pushcomposer': {
+        'channel': 'push',
+        'dedupe': "push_send_log (person_id, 'composer', '<send id>') claimed before the send; "
+                  'push_composer_recipient per member per send',
+        'switch': 'push_composer',
+        'note': 'the pushes composed on the Growth tab; one pass per send row, capped at 500 a send'},
     'service.cron.sendguard': {
         'channel': 'email+push', 'dedupe': 'sg:events trimmed only after Postgres has them; 20 alerts a day',
         'switch': None, 'note': 'the send guard alert, to the owner only'},

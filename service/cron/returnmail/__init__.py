@@ -34,7 +34,7 @@ from service.campaigns.runner import audit_send
 from service.events import jobs as event_jobs
 from service.matchmaker import introductions as mm_introductions
 from service.matchmaker import notices as mm_notices
-from service.notifications import activity_pushes
+from service.notifications import activity_pushes, auto_pushes
 from service.cron.cronutil import MAX_RANDOM_START_DELAY, env_int, print_stacktrace
 
 RETURN_MAIL_POLL_SECONDS = env_int('DUO_CRON_RETURN_MAIL_POLL_SECONDS', 60 * 60)
@@ -78,6 +78,12 @@ JOBS = [
     ('push_gathering_reminder', activity_pushes.queue_gathering_reminders),
     ('push_new_guests', activity_pushes.queue_new_guests),
     ('push_match_played', activity_pushes.queue_match_played),
+    # The 3 automatic pushes of the push composer plan (TEC-2182), each
+    # behind its own switch: likes waiting, new members near you and the Us
+    # game with a match (which needs together_live as well).
+    ('push_likes_waiting', auto_pushes.queue_likes_waiting),
+    ('push_newcomers', auto_pushes.queue_newcomers),
+    ('push_us_game', auto_pushes.queue_us_game),
     # The one reminder to someone who started sign-up and stopped before an
     # account was made (TEC-2107): once per address ever, at most 20 a
     # Barbados day, behind its own switch.

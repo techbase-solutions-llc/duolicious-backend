@@ -53,9 +53,13 @@ def get_admin_growth_push(s: t.SessionInfo):
         date.fromisoformat(since)
     except ValueError:
         abort(400)
+    from service.notifications import auto_pushes
     with api_tx('read committed') as tx:
         row = tx.execute(Q_PUSH, dict(ex=_excluded(), since=since)).fetchone()
-    return dict(row, since=since)
+        # One row per automatic push (TEC-2182): on or off, sent and tapped
+        # in the last 7 days. Counts only.
+        auto = auto_pushes.growth_rows(tx)
+    return dict(row, since=since, auto_pushes=auto)
 
 
 @aget('/admin/growth/tiers')

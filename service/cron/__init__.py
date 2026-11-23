@@ -19,6 +19,7 @@ from service.cron.referralintro import referral_intro_forever
 from service.cron.leadretention import lead_retention_forever
 from service.cron.questionofweek import question_of_week_forever
 from service.cron.returnmail import return_mail_forever
+from service.cron.pushcomposer import push_composer_forever
 from service.cron.adminalerts import admin_alerts_forever
 from service.cron.sendguard import sendguard_forever
 from service.cron.supportinbox import support_inbox_forever
@@ -130,6 +131,11 @@ async def main():
         # is behind its own switch, all off by default
         # (service/campaigns/switches.py). Hourly.
         return_mail_forever(),
+
+        # The pushes composed on the Growth tab (TEC-2182): one pass of each
+        # due send every 10 minutes. Does nothing unless
+        # AHAVAH_PUSH_COMPOSER_ENABLED=1.
+        push_composer_forever(),
 
         # Owner alerts (TEC-1897): the daily stale-post email, and the error
         # tally and online days kept to 30 and 120 days. Hourly. Does
