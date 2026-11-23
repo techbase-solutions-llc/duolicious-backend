@@ -204,6 +204,17 @@ SWITCHES = {
     'push_likes_waiting': 'AHAVAH_PUSH_LIKES_WAITING_ENABLED',
     'push_newcomers': 'AHAVAH_PUSH_NEWCOMERS_ENABLED',
     'push_us_game': 'AHAVAH_PUSH_US_GAME_ENABLED',
+    # Keep my account or continue deleting (TEC-2056, design "Ahavah
+    # Deletion and Organiser Emails", section 1). On: a member who signs in
+    # while their account is set to be deleted keeps the deletion date, and
+    # /check-otp tells the app, which asks before anything changes. Off:
+    # signing in cancels the deletion without a word, as before.
+    'keep_account_ask': 'AHAVAH_KEEP_ACCOUNT_ASK_ENABLED',
+    # The organiser's "A guest cancelled" email as the same design draws it
+    # (section 2): its own title image, the day, "No one is going now." at
+    # 0. Off: the earlier wording (TEC-2077) goes, as before. Either way it
+    # sends only while events_live and events_digest_email are on.
+    'events_guest_cancelled_email': 'AHAVAH_EVENTS_GUEST_CANCELLED_EMAIL_ENABLED',
 }
 
 _ON = frozenset({'1', 'true', 'yes', 'on'})
