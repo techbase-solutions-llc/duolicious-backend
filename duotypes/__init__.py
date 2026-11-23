@@ -1037,6 +1037,9 @@ class PatchNotificationPreferences(BaseModel):
     push_gathering_reminder: Optional[bool] = None
     push_new_guests: Optional[bool] = None
     push_match_played: Optional[bool] = None
+    # Ahavah news and suggestions (TEC-2182, migration 0101): the push
+    # composer and the weekly new-members push. Ignored while both are dark.
+    push_announcements: Optional[bool] = None
 
 
 class PutAnswer(BaseModel):
@@ -1097,8 +1100,12 @@ class PostToolInviteEmail(BaseModel):
 class PostPushTap(BaseModel):
     """POST /push-taps (TEC-1845): the web app landed on a ?src= URL. The
     question pushes' qpush, mpush and lpush, and the matchmaker's alert,
-    introduction and both-said-yes pushes (plan 2026-10-22, fix 11)."""
-    src: Literal['qpush', 'mpush', 'lpush', 'mmalert', 'mmintro', 'mmtold']
+    introduction and both-said-yes pushes (plan 2026-10-22, fix 11). The
+    push composer's apush, which carries the send's id in `send`, and the
+    automatic pushes' lwpush, nnpush and uspush (TEC-2182)."""
+    src: Literal['qpush', 'mpush', 'lpush', 'mmalert', 'mmintro', 'mmtold',
+                 'apush', 'lwpush', 'nnpush', 'uspush']
+    send: Optional[str] = None
 
 
 class PatchAdminQuestion(BaseModel):

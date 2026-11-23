@@ -92,6 +92,17 @@ _Q_TAP = """
 """
 
 
+# A composer tap (TEC-2182): once per member per send, and only for a send
+# that exists.
+_Q_SEND_TAP = """
+    INSERT INTO push_tap (person_id, src, send_id)
+    SELECT %(p)s, 'apush', %(send)s::uuid
+     WHERE EXISTS (SELECT 1 FROM push_composer_send WHERE id = %(send)s::uuid)
+       AND NOT EXISTS (SELECT 1 FROM push_tap
+                        WHERE person_id = %(p)s AND src = 'apush' AND send_id = %(send)s::uuid)
+"""
+
+
 @apost('/push-taps')
 @validate(t.PostPushTap)
 def post_push_tap(req: t.PostPushTap, s: t.SessionInfo):
@@ -99,6 +110,17 @@ def post_push_tap(req: t.PostPushTap, s: t.SessionInfo):
     web reads only utm keys and sw.js only opens the URL."""
     if s.person_id is None:
         return 'Not signed in', 401
+    if req.src == 'apush':
+        # A composer tap counts once per member per send (TEC-2182). A tap
+        # without a readable send id is not a composer tap anyone can count.
+        import uuid as _uuid
+        try:
+            send_id = str(_uuid.UUID(str(req.send)))
+        except (ValueError, TypeError):
+            return '', 204
+        with api_tx() as tx:
+            tx.execute(_Q_SEND_TAP, dict(p=s.person_id, send=send_id))
+        return '', 204
     with api_tx() as tx:
         tx.execute(_Q_TAP, dict(p=s.person_id, s=req.src))
     return '', 204

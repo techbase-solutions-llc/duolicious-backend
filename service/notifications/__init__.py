@@ -34,7 +34,7 @@ from typing import Any, Dict, Literal, Optional
 
 EventKind = Literal[
     "match", "message", "like", "weekly", "verification", "profile_view", "questions",
-    "gathering_reminder", "new_guests", "match_played",
+    "gathering_reminder", "new_guests", "match_played", "announcement",
 ]
 
 # Map each event kind to the column on notification_preference that
@@ -52,6 +52,9 @@ _EVENT_COLUMN: Dict[EventKind, str] = {
     "gathering_reminder": "push_gathering_reminder",
     "new_guests":         "push_new_guests",
     "match_played":       "push_match_played",
+    # Ahavah news and suggestions (TEC-2182, migration 0101): the push
+    # composer and the weekly new-members push.
+    "announcement":       "push_announcements",
 }
 
 # Defaults that apply when notification_preference has no row for the
@@ -67,6 +70,7 @@ _EVENT_DEFAULTS: Dict[EventKind, bool] = {
     "gathering_reminder": True,
     "new_guests":         True,
     "match_played":       True,
+    "announcement":       True,
 }
 
 # Release 4's toggles (TEC-1845): each exists for the member only while its
@@ -82,7 +86,19 @@ RELEASE_4_TOGGLES: Dict[str, str] = {
 
 def _dark_toggles() -> set:
     from service.notifications.activity_pushes import push_on
-    return {col for col, switch in RELEASE_4_TOGGLES.items() if not push_on(switch)}
+    dark = {col for col, switch in RELEASE_4_TOGGLES.items() if not push_on(switch)}
+    if not announcements_on():
+        dark.add('push_announcements')
+    return dark
+
+
+def announcements_on() -> bool:
+    """The news and suggestions toggle exists for the member only while
+    something it governs can be sent (TEC-2182): the push composer or the
+    weekly new-members push. While both are dark, GET leaves it out and a
+    PATCH that carries it changes nothing, as for the release 4 toggles."""
+    from service.campaigns.switches import enabled
+    return enabled('push_composer') or enabled('push_newcomers')
 
 
 # Like alerts follow push (health review, 13 Oct 2026, findings 32, 58).
@@ -702,6 +718,8 @@ def get_notification_preferences(s):
         push_gathering_reminder=True,
         push_new_guests=True,
         push_match_played=True,
+        # TEC-2182 (migration 0101), shown only while announcements_on().
+        push_announcements=True,
     )
     dark = _dark_toggles()
     for col in dark:
@@ -761,6 +779,13 @@ def patch_notification_preferences(req, s):
                        'ELSE COALESCE(notification_preference.push_questions_off_at, NOW()) END')
         insert_cols += ', push_questions_off_at'
         insert_vals += ', CASE WHEN %(push_questions)s::boolean THEN NULL ELSE NOW() END'
+    # The same for news and suggestions (TEC-2182), so switch-offs per
+    # send can be counted.
+    if 'push_announcements' in updates:
+        set_clause += (', push_announcements_off_at = CASE WHEN %(push_announcements)s::boolean THEN NULL '
+                       'ELSE COALESCE(notification_preference.push_announcements_off_at, NOW()) END')
+        insert_cols += ', push_announcements_off_at'
+        insert_vals += ', CASE WHEN %(push_announcements)s::boolean THEN NULL ELSE NOW() END'
     q = f"""
     INSERT INTO notification_preference ({insert_cols}, updated_at)
     VALUES ({insert_vals}, NOW())
