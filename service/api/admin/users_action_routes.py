@@ -33,6 +33,7 @@ from service.tokens import (
 from database import api_tx
 from antiabuse.antispam.signupemail import normalize_email
 from service.spotlight.withdrawal import withdraw_member
+from service.person import exit_answer
 from service.hard_delete import (
     Q_DELETE_BETA_SIGNUP_OF,
     Q_DELETE_EVENT_DATA_OF,
@@ -92,12 +93,17 @@ _Q_SOFT_DELETE = """
 
 _Q_REACTIVATE = """
     WITH before_state AS (
-        SELECT id, activated FROM person WHERE uuid = %(uuid)s::uuid
+        SELECT id, activated, deletion_requested_at
+          FROM person WHERE uuid = %(uuid)s::uuid
     ),
     reactivated AS (
         UPDATE person SET
             activated = TRUE,
             admin_deactivated_at = NULL,
+            -- A reactivated member keeps the account: clear a pending
+            -- deletion, or the pendingdeletion cron still hard-deletes
+            -- them once the 7 days run out (TEC-2170).
+            deletion_requested_at = NULL,
             -- Pull them out of autodeactivate2's 30-50 day window, or the
             -- cron reverts this within one 300s poll (F14).
             last_online_time = NOW()
@@ -120,7 +126,10 @@ _Q_REACTIVATE = """
         FROM club_to_increment
         WHERE club_to_increment.club_name = club.name
     )
-    SELECT email FROM reactivated
+    SELECT reactivated.id, reactivated.email,
+           before_state.deletion_requested_at IS NOT NULL AS had_pending_deletion
+      FROM reactivated
+      JOIN before_state ON before_state.id = reactivated.id
 """
 
 # The club decrement reads person_club as it was before the cascade, as
@@ -384,10 +393,15 @@ def post_reactivate(req: t.PostLifecycle, s: t.SessionInfo, uuid: str):
         row = tx.execute(_Q_REACTIVATE, dict(uuid=uuid)).fetchone()
         if row is None:
             abort(404)
+        if row['had_pending_deletion']:
+            # The member stays, as with their own cancel-deletion: close
+            # the open exit answer (TEC-2158). Best-effort, never raises.
+            exit_answer.mark_kept(tx, int(row['id']))
         record_audit(
             tx, s, 'reactivate',
             target_email=row['email'], target_uuid=uuid,
-            metadata={'reason': req.reason},
+            metadata={'reason': req.reason,
+                      'cancelled_deletion': bool(row['had_pending_deletion'])},
         )
     return {'ok': True}
 
