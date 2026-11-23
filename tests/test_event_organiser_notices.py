@@ -136,3 +136,79 @@ def test_each_cancellation_of_a_booking_made_again_is_told(organiser, published,
     with api_tx() as tx:
         rsvp.member_cancel(tx, p['id'], g['id'])
     assert len(_rows('event_place_cancelled', o['id'])) == 2
+
+
+# --- the design's version (TEC-2056 round; design "Ahavah Deletion and
+# Organiser Emails", 2.1 and 2.2), behind events_guest_cancelled_email -------
+
+GUEST_CANCELLED_ENV = 'AHAVAH_EVENTS_GUEST_CANCELLED_EMAIL_ENABLED'
+
+
+def test_the_redesign_is_off_by_default_and_the_earlier_email_goes(client, organiser, published,
+                                                                    confirmed_guest, monkeypatch):
+    from service.campaigns.switches import SWITCHES, enabled
+    monkeypatch.delenv(GUEST_CANCELLED_ENV, raising=False)
+    assert SWITCHES['events_guest_cancelled_email'] == GUEST_CANCELLED_ENV
+    assert enabled('events_guest_cancelled_email') is False
+    o = organiser()
+    slug = published(organiser_row=o)
+    g = confirmed_guest(slug, name='Hannah Okafor', party_size=2)
+    client.post(f"/rsvp/{g['token']}/cancel")
+    [row] = _rows('event_place_cancelled', o['id'])
+    assert row['payload']['subject'].startswith('Hannah Okafor cancelled their place at ')
+    assert 'title-event-guest-cancelled' not in row['payload']['html']
+
+
+def test_the_switch_and_the_compose_file():
+    import pathlib
+    text = pathlib.Path('/app/docker-compose.production.yml').read_text()
+    assert text.count(f'{GUEST_CANCELLED_ENV}: ${{{GUEST_CANCELLED_ENV}:-0}}') == 2
+
+
+def test_with_the_switch_on_the_organiser_gets_the_design(client, organiser, published,
+                                                         confirmed_guest, monkeypatch):
+    from service.events import mail
+    monkeypatch.setenv(GUEST_CANCELLED_ENV, '1')
+    o = organiser()
+    slug = published(organiser_row=o)
+    g = confirmed_guest(slug, name='Hannah Okafor', party_size=2, share=True,
+                        email='hannah-d@ahavah-test.invalid')
+    confirmed_guest(slug, name='Lydia Cruz', party_size=3)
+    with api_tx('read committed') as tx:
+        ev = tx.execute('SELECT title, starts_at, tz FROM event WHERE slug = %(s)s',
+                        dict(s=slug)).fetchone()
+    from service.events.fields import _day
+    import zoneinfo
+    day = _day(ev['starts_at'].astimezone(zoneinfo.ZoneInfo(ev['tz'])), year=False)
+    assert client.post(f"/rsvp/{g['token']}/cancel").status_code == 200
+    [row] = _rows('event_place_cancelled', o['id'])
+    html = row['payload']['html']
+    assert row['payload']['subject'] == f"A guest cancelled their RSVP for {ev['title']}"
+    line = f"Hannah Okafor cancelled their RSVP for {ev['title']} on {day}."
+    assert line in html
+    # The preheader is the body line.
+    assert html.count(line) >= 2
+    assert 'alt="A guest cancelled."' in html and 'title-event-guest-cancelled.png' in html
+    assert 'title-event-guest-cancelled-wht.png' in html
+    assert '2 people' in html and '<b>3 going</b> in total.' in html
+    assert 'in total now' not in html
+    assert 'Manage your gathering' in html and '/host/gatherings?t=' in html
+    assert mail.LIVE_WHY in html and 'hannah-d@' not in html
+    assert 'class="e-chip"' not in html, 'no chip above the title, as drawn'
+
+
+def test_the_count_at_0_says_no_one_is_going_now():
+    from service.events import mail
+    _, html = mail.preview_guest_cancelled_none('x')
+    assert 'No one is going now.' in html and 'going</b> in total' not in html
+    assert 'Lydia Cruz cancelled their RSVP for Marriage preparation evening on ' in html
+    assert '1 person' in html
+
+
+def test_the_design_builder_escapes_what_people_typed():
+    from service.events import mail
+    evil = '<script>x</script>'
+    ev = mail.sample_event(title=evil)
+    subject, html = mail.guest_cancelled_email(ev, dict(name=evil, party_size=1), 4, 'tok')
+    assert '<script>' not in html
+    assert subject == f'A guest cancelled their RSVP for {evil}', 'the subject is plain text'

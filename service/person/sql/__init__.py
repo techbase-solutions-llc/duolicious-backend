@@ -384,16 +384,35 @@ WITH valid_session AS (
     UPDATE
         person
     SET
-        activated = TRUE,
-        deletion_requested_at = NULL,  -- signing in IS regret; a member
-                                        -- must never be purged mid-use
+        -- With keep_pending_deletion (the keep_account_ask switch,
+        -- TEC-2056) a member whose account is set to be deleted signs in
+        -- with the deletion as it was: still hidden, the date unchanged and
+        -- sign_in_time untouched, so the pendingdeletion cron still deletes
+        -- on the day. The app asks them to keep the account or carry on
+        -- (POST /account/cancel-deletion). Without it, signing in cancels
+        -- the deletion, as before.
+        activated = CASE
+            WHEN %(keep_pending_deletion)s AND person.deletion_requested_at IS NOT NULL
+            THEN person.activated
+            ELSE TRUE
+        END,
+        deletion_requested_at = CASE
+            WHEN %(keep_pending_deletion)s THEN person.deletion_requested_at
+            ELSE NULL
+        END,
         sign_in_count = sign_in_count + 1,
-        sign_in_time = NOW()
+        sign_in_time = CASE
+            WHEN %(keep_pending_deletion)s AND person.deletion_requested_at IS NOT NULL
+            THEN person.sign_in_time
+            ELSE NOW()
+        END
     FROM
         valid_session
     WHERE
         person.id = person_id
     RETURNING
+        person.activated,
+        person.deletion_requested_at,
         person.id,
         person.uuid AS person_uuid,
         person.unit_id,
@@ -426,6 +445,8 @@ WITH valid_session AS (
         existing_person_before_update.id = existing_person.id
     WHERE
         NOT existing_person_before_update.activated
+    AND
+        existing_person.activated
 ), increment_club_count_if_not_activated AS (
     UPDATE
         club
@@ -443,7 +464,8 @@ SELECT
     (SELECT name FROM unit WHERE id = existing_person.unit_id) AS units,
     {_Q_DO_SHOW_DONATION_NAG.format(table='existing_person')},
     {_Q_ESTIMATED_END_DATE},
-    existing_person.name AS name
+    existing_person.name AS name,
+    existing_person.deletion_requested_at AS deletion_requested_at
 FROM
     valid_session
 LEFT JOIN

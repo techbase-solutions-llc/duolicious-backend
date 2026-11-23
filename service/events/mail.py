@@ -82,6 +82,9 @@ TITLES: dict[str, tuple[str, str, int]] = {
     # The refusal (8.7) has no title of its own: the generic "A note from
     # Ahavah." pair, as the member note uses (emails/member_note.py).
     'refused': ('title-note', 'A note from Ahavah.', 281),
+    # A guest cancelled their RSVP (design "Ahavah Deletion and Organiser
+    # Emails", 2.1), "A guest / cancelled.", 484 x 138 at 2x.
+    'guest_cancelled': ('title-event-guest-cancelled', 'A guest cancelled.', 242),
 }
 
 GUEST_WHY = 'You are getting this because you RSVPed to a gathering on Ahavah.'
@@ -470,6 +473,47 @@ def place_cancelled_email(event: dict, guest: dict, total_going: int, manage_tok
             + held.para(f'<b>{total_going} going</b> in total now.')  # NEW LINE
             + button('Manage your gathering', manage_url(manage_token)))
     return subject, _shell(subject, _e(line), body, _footer(PLACE_CANCELLED_WHY, your_ahavah=your_ahavah))
+
+
+# The same email as the design "Ahavah Deletion and Organiser Emails" draws
+# it (owner decisions, 11 Nov 2026; handoff copy deletion-and-organiser-
+# emails.md, section 2), behind events_guest_cancelled_email. Laid out like
+# the digest: the title image, who and which gathering as a body line, the
+# party size, how many are going now and the manage button.
+GUEST_CANCELLED_NONE = 'No one is going now.'
+
+
+def guest_cancelled_subject(title: str) -> str:
+    """Plain text: escape it."""
+    return f'A guest cancelled their RSVP for {title}'
+
+
+def guest_cancelled_line(name: str, title: str, day: str) -> str:
+    """Plain text: escape it."""
+    return f'{name} cancelled their RSVP for {title} on {day}.'
+
+
+def guest_cancelled_email(event: dict, guest: dict, total_going: int, manage_token: str, *,
+                          your_ahavah: bool = False) -> tuple[str, str]:
+    """2.1 and 2.2: the guest's name and party size as the digest shows
+    them, never an email address; the day is the gathering's, in its own
+    zone, without the year."""
+    import zoneinfo
+
+    from service.events.fields import _day
+    day = _day(_start(event).astimezone(zoneinfo.ZoneInfo(event['tz'])), year=False)
+    subject = guest_cancelled_subject(event['title'])
+    line = guest_cancelled_line(guest['name'], event['title'], day)
+    row = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+           f'<td class="e-strong" style="padding:8px 0;font-family:{SANS};font-size:15px;font-weight:700;'
+           f'color:{INK};">{_e(guest["name"])}</td><td class="e-text" align="right" style="padding:8px 0;'
+           f'font-family:{SANS};font-size:13px;color:{MUTED};">{_people(int(guest["party_size"]))}</td>'
+           f'</tr></table>')
+    count = (held.para(f'<b>{total_going} going</b> in total.') if total_going > 0
+             else held.para(GUEST_CANCELLED_NONE))
+    body = (_title('guest_cancelled') + _lead(_e(line)) + _panel(row) + count
+            + button('Manage your gathering', manage_url(manage_token)))
+    return subject, _shell(subject, _e(line), body, _footer(LIVE_WHY, your_ahavah=your_ahavah))
 
 
 def _town(city: Optional[str]) -> str:
@@ -875,6 +919,13 @@ def queue_digest(tx, event_id: int, day: date) -> Optional[int]:
     return _guarded(tx, 'event_digest', go)
 
 
+def _guest_cancelled_on() -> bool:
+    """The redesigned "A guest cancelled" email (events_guest_cancelled_email),
+    which counts only once events_live is on."""
+    from service.events import switch_on
+    return switch_on('events_guest_cancelled_email')
+
+
 def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> Optional[int]:
     """The organiser hears that a guest gave up a confirmed place
     (TEC-2077), with a fresh manage link. None unless the place was
@@ -894,8 +945,8 @@ def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> O
         shown = guest_shown_sql('g', 'o.member_person_id')
         r = tx.execute(
             f"""SELECT g.id, g.name, g.party_size, g.cancelled_at, e.id AS event_id, e.slug, e.title,
-                       e.status AS event_status, e.published_at, e.ends_at, e.organiser_id,
-                       o.member_person_id
+                       e.status AS event_status, e.published_at, e.starts_at, e.ends_at, e.tz,
+                       e.organiser_id, o.member_person_id
                   FROM event_rsvp g
                   JOIN event e ON e.id = g.event_id
                   JOIN organiser o ON o.id = e.organiser_id
@@ -914,8 +965,12 @@ def queue_place_cancelled(tx, rsvp_id: int, now: Optional[datetime] = None) -> O
                    AND erased_at IS NULL AND {guest_shown_sql('g', '%(m)s::int')}""",
             dict(e=r['event_id'], m=r['member_person_id'])).fetchone()['n']
         oid = r['organiser_id']
-        subject, body = place_cancelled_email(
-            dict(title=r['title'], slug=r['slug']), dict(name=r['name'], party_size=r['party_size']),
+        # The design's version (TEC-2056 round) while its switch is on, else
+        # the earlier wording (TEC-2077) as before.
+        build = guest_cancelled_email if _guest_cancelled_on() else place_cancelled_email
+        subject, body = build(
+            dict(title=r['title'], slug=r['slug'], starts_at=r['starts_at'], tz=r['tz']),
+            dict(name=r['name'], party_size=r['party_size']),
             total, issue_link(tx, oid), your_ahavah=_organiser_line(tx, oid))
         return _queue_organiser(tx, campaign=CAMPAIGN_PLACE_CANCELLED, campaign_id=cid,
                                 organiser_id=oid, subject=subject, html_=body)
@@ -1099,6 +1154,14 @@ def preview_digest(to: str) -> tuple[str, str]:
 
 def preview_place_cancelled(to: str) -> tuple[str, str]:
     return place_cancelled_email(sample_event(), dict(name='Hannah Okafor', party_size=2), 12, _SAMPLE_TOKEN)
+
+
+def preview_guest_cancelled(to: str) -> tuple[str, str]:
+    return guest_cancelled_email(sample_event(), dict(name='Hannah Okafor', party_size=2), 12, _SAMPLE_TOKEN)
+
+
+def preview_guest_cancelled_none(to: str) -> tuple[str, str]:
+    return guest_cancelled_email(sample_event(), dict(name='Lydia Cruz', party_size=1), 0, _SAMPLE_TOKEN)
 
 
 def preview_manage(to: str) -> tuple[str, str]:
