@@ -130,6 +130,11 @@ VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT', 'mailto:admin@ahavah.app')
 
 PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
 
+# The most one device's push service may take to answer (TEC-2182). Without
+# it one stalled endpoint holds a whole send, and the push composer's pass
+# lease (service/notifications/composer.py) relies on every push ending.
+PUSH_TIMEOUT_SECONDS = 10
+
 if not PUSH_ENABLED:
     print('service.notifications: VAPID keys missing; push notifications disabled')
 
@@ -231,6 +236,7 @@ def _send_one(endpoint: str, p256dh: str, auth: str, payload: Dict[str, Any],
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims={'sub': VAPID_SUBJECT},
             ttl=60 * 60 * 24,
+            timeout=PUSH_TIMEOUT_SECONDS,
         )
         guard.record_push(_kind, 'sent')
         return None

@@ -141,7 +141,7 @@ def _tested(admin_id, **over):
 
 
 def _send(sid, when='now', mode='barbados', now=NOON):
-    with api_tx() as tx:
+    with api_tx('read committed') as tx:
         return composer.send(tx, sid, when, mode, now=now)
 
 
@@ -724,7 +724,12 @@ def test_the_routes_send_schedule_cancel_and_audit_without_addresses(client, mem
 
 def test_a_composer_tap_counts_once_per_member_per_send(client, member, admin, pushes):
     a = member('TapA')
+    outsider = member('TapOutsider', country='QY')     # not in the send's audience
     sid = _tested(admin['id'])
+    _send(sid)
+    composer.run_send(sid, NOON)
+    assert client.post('/push-taps', json=dict(src='apush', send=sid),
+                       headers=_bearer(outsider['id'])).status_code == 204
     h = _bearer(a['id'])
     for _ in range(3):
         assert client.post('/push-taps', json=dict(src='apush', send=sid), headers=h).status_code == 204
@@ -774,3 +779,165 @@ def test_the_send_goes_through_send_to_user_counted_as_an_announcement(monkeypat
     assert seen == dict(person_id=7, event_kind='announcement', kind='composer:abc')
     assert notifications._EVENT_COLUMN['announcement'] == 'push_announcements'
     assert notifications._EVENT_DEFAULTS['announcement'] is True
+
+
+
+# ---------------------------------------------------------------------------
+# review fixes (22 Nov 2026)
+# ---------------------------------------------------------------------------
+
+def _age(sid, minutes):
+    """Make a pass's lease, claims and pending rows look `minutes` old, as a
+    pass that has been running that long leaves them."""
+    with api_tx() as tx:
+        tx.execute("UPDATE push_composer_send SET pass_heartbeat_at = NOW() - make_interval(mins => %(m)s) "
+                   "WHERE id = %(i)s::uuid", dict(m=minutes, i=sid))
+        tx.execute("UPDATE push_composer_recipient SET updated_at = NOW() - make_interval(mins => %(m)s) "
+                   "WHERE send_id = %(i)s::uuid", dict(m=minutes, i=sid))
+        tx.execute("UPDATE push_send_log SET sent_at = NOW() - make_interval(mins => %(m)s) "
+                   "WHERE campaign = 'composer' AND campaign_id = %(c)s", dict(m=minutes, c=f'{sid}:pending'))
+
+
+def test_a_tick_during_a_long_live_pass_sends_nobody_twice(member, admin, pushes):
+    a = member('LiveA')
+    b = member('LiveB')
+    sid = _tested(admin['id'])
+    _send(sid)
+    # The send-now pass has claimed both and is still pushing 11 minutes on.
+    claimed, _, token = composer._claim_pass(sid, NOON)
+    assert token and {c['person_id'] for c in claimed} == {a['id'], b['id']}
+    _age(sid, 11)
+    out = composer.run_send(sid, NOON + timedelta(minutes=11))
+    assert out['halted'] == 'pass_running' and out['handed'] == 0
+    assert not _to(pushes, a['id']) and not _to(pushes, b['id'])
+    # The first pass carries on and finishes.
+    went, lost = composer._deliver(sid, token, claimed)
+    composer._finish(sid, token)
+    assert (went, lost) == (2, False)
+    composer.run_send(sid, NOON + timedelta(minutes=20))
+    assert len(_to(pushes, a['id'])) == 1 and len(_to(pushes, b['id'])) == 1
+    assert _row(sid)['state'] == 'sent' and _row(sid)['sent'] == 2
+
+
+def test_a_dead_pass_is_taken_over_and_stops_if_it_wakes(member, admin, pushes):
+    a = member('DeadA')
+    b = member('DeadB')
+    sid = _tested(admin['id'])
+    _send(sid)
+    claimed, _, token = composer._claim_pass(sid, NOON)
+    _age(sid, composer.LEASE_STALE_MINUTES + 1)       # silent past the lease
+    composer.run_send(sid, NOON + timedelta(minutes=20))
+    assert len(_to(pushes, a['id'])) == 1 and len(_to(pushes, b['id'])) == 1
+    # The old pass wakes: it has lost the lease and pushes nothing more.
+    assert composer._deliver(sid, token, claimed) == (0, True)
+    assert len(_to(pushes, a['id'])) == 1 and len(_to(pushes, b['id'])) == 1
+    assert _row(sid)['state'] == 'sent'
+
+
+def test_the_push_service_call_has_a_timeout(monkeypatch):
+    import service.notifications as notifications
+    calls = []
+    monkeypatch.setattr('pywebpush.webpush', lambda **kw: calls.append(kw))
+    assert notifications._send_one('https://push.test/x', 'k', 'a', dict(title='t'), kind='composer:t') is None
+    assert calls[0]['timeout'] == notifications.PUSH_TIMEOUT_SECONDS == 10
+
+
+def _locked_elsewhere(key):
+    """A second connection holding the advisory lock `key` until commit."""
+    import psycopg
+
+    import database
+    conn = psycopg.connect(database._api_conninfo)
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%(k)s))", dict(k=key))
+    return conn
+
+
+def _in_thread(fn):
+    import threading
+    out = {}
+
+    def go():
+        try:
+            out['value'] = fn()
+        except Refused as e:
+            out['refused'] = e.reason
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t, out
+
+
+def test_the_day_limit_is_counted_one_send_at_a_time(member, admin, pushes):
+    member('LockDay')
+    sid = _tested(admin['id'])
+    conn = _locked_elsewhere(composer._LOCK_SENDS)
+    try:
+        t, out = _in_thread(lambda: _send(sid))
+        t.join(1.5)
+        assert t.is_alive()                     # waits for the other send
+        # The other connection is 2 sends landing on the same day meanwhile.
+        for _ in range(2):
+            conn.execute("""INSERT INTO push_composer_send (title, body, url, content_hash, state, scheduled_for)
+                            VALUES ('t', 'b', '/discover', 'h', 'scheduled', %(at)s)""", dict(at=NOON))
+        conn.commit()
+    finally:
+        conn.close()
+    t.join(15)
+    assert out == dict(refused='day_limit')
+
+
+def test_the_member_cap_is_read_one_pass_at_a_time(member, admin, pushes):
+    a = member('LockCap')
+    sid = _tested(admin['id'])
+    _send(sid)
+    conn = _locked_elsewhere(composer._LOCK_CLAIMS)
+    try:
+        t, out = _in_thread(lambda: composer.run_send(sid, NOON))
+        t.join(1.5)
+        assert t.is_alive()
+        # Another send's pass delivers to the member meanwhile.
+        conn.execute("INSERT INTO push_send_log (person_id, campaign, campaign_id) VALUES (%(p)s, 'composer', 'other')",
+                     dict(p=a['id']))
+        conn.commit()
+    finally:
+        conn.close()
+    t.join(15)
+    assert not _to(pushes, a['id'])
+    assert _recipients(sid)[a['id']] == ('capped', 'member_cap')
+
+
+def test_a_cancel_in_flight_does_not_put_a_missed_push_back(member, admin, pushes):
+    a = member('FlightA')
+    sid = _tested(admin['id'])
+    _send(sid)
+    claimed, _, token = composer._claim_pass(sid, NOON)
+    with api_tx() as tx:
+        composer.cancel(tx, sid)
+    pushes.devices['n'] = 0
+    composer._deliver(sid, token, claimed)
+    composer._finish(sid, token)
+    assert _recipients(sid)[a['id']] == ('released', 'cancelled')
+    row = _row(sid)
+    assert row['state'] == 'cancelled' and row['released'] == 1 and row['held'] == 0
+
+
+def test_a_second_press_with_another_time_is_refused(member, admin, pushes):
+    member('AgainA')
+    sid = _tested(admin['id'])
+    _send(sid)
+    for when, mode in (('2026-11-24T10:00:00', 'barbados'), ('now', 'member_local')):
+        with pytest.raises(Refused) as e:
+            _send(sid, when=when, mode=mode)
+        assert e.value.reason == 'already_sent' and e.value.detail['state'] == 'scheduled'
+    assert _send(sid)[1] is True                 # the same press is still a repeat
+
+
+def test_the_test_limit_is_said_as_such(member, admin, pushes):
+    sid = _draft()
+    with api_tx() as tx:
+        for _ in range(6):
+            tx.execute("""INSERT INTO admin_audit_log (actor_email, actor_uuid, action, metadata)
+                          VALUES ('a@ahavah-test.invalid', %(u)s, 'push_composer_test', '{}'::jsonb)""",
+                       dict(u=admin['uuid']))
+    before = len(pushes)
+    assert composer.test_send(sid, admin['id'], now=NOON)['reason'] == 'test_limit'
+    assert len(pushes) == before

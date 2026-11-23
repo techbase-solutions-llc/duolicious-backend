@@ -52,6 +52,7 @@ import os
 import traceback
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from emails.base import suppressed_sql_pattern
@@ -78,8 +79,25 @@ MEMBER_SHORT = (timedelta(hours=72), 1)
 MEMBER_LONG = (timedelta(days=7), 2)
 DAY_SENDS = 2
 DAY_PUSHES = 1000
-# A pending claim older than this, left by a restart, may be taken over.
-PENDING_RETRY_MINUTES = 10
+# THE PASS LEASE. A pass writes a fresh pass_token on the send row and
+# renews pass_heartbeat_at before every push; a pass that finds the lease
+# renewed in the last LEASE_STALE_MINUTES sends nothing. A claim (a
+# 'claimed' recipient, a ':pending' push_send_log row) is taken over only
+# when it is older than that and the new pass holds the lease, and a pass
+# that finds it has lost the lease stops before its next push. Every push
+# ends within PUSH_TIMEOUT_SECONDS a device (service/notifications), so a
+# live pass renews far more often than this.
+LEASE_STALE_MINUTES = 15
+PENDING_RETRY_MINUTES = LEASE_STALE_MINUTES
+
+# Transaction-scoped advisory locks: the 2-sends-a-day count and each
+# pass's per-member cap read and claims run one at a time.
+_LOCK_SENDS = 'push_composer:sends'
+_LOCK_CLAIMS = 'push_composer:claims'
+
+
+def _xact_lock(tx, key: str) -> None:
+    tx.execute("SELECT pg_advisory_xact_lock(hashtext(%(k)s))", dict(k=key))
 # A push that reached no device is tried this many times in all.
 MAX_ATTEMPTS = 2
 
@@ -432,7 +450,7 @@ def clean_draft(body: dict) -> dict:
 
 _COLS = """id::text AS id, title, body, url, filters, testers_only, content_hash, idempotency_key,
            state, scheduled_for, mode, local_at, hold_until, test_delivered_at, tested_hash,
-           test_result, halt_reason, created_at, updated_at, started_at, finished_at, cancelled_at,
+           test_result, halt_reason, requested_when, created_at, updated_at, started_at, finished_at, cancelled_at,
            audience, sent, held, capped, failed, expired, released, skipped"""
 
 
@@ -495,6 +513,22 @@ def payload(row: dict) -> dict:
                 tag=f"composer-{row['id']}")
 
 
+# Test sends by this admin in the last 24 hours that reached the send guard
+# (those with no device or no VAPID key never did).
+_Q_TESTS_TODAY = '''
+    SELECT count(*)::int AS n FROM admin_audit_log a
+     WHERE a.action = 'push_composer_test'
+       AND a.actor_uuid = (SELECT uuid FROM person WHERE id = %(p)s)
+       AND a.created_at > NOW() - interval '24 hours'
+       AND COALESCE(a.metadata->>'reason', '') NOT IN ('no_push_subscription', 'vapid_missing', 'test_limit')
+'''
+
+
+def _test_limit() -> int:
+    from smtp import guard
+    return guard.limit('push_per_kind')
+
+
 def test_send(send_id: str, admin_person_id: int, now: Optional[datetime] = None) -> dict:
     """Push the draft to the signed-in admin's own devices and record the
     result against the draft. Works while the switch is off."""
@@ -509,10 +543,16 @@ def test_send(send_id: str, admin_person_id: int, now: Optional[datetime] = None
             raise Refused('not_a_draft')
         has_device = tx.execute("SELECT 1 FROM push_subscription WHERE person_id = %(p)s LIMIT 1",
                                 dict(p=admin_person_id)).fetchone() is not None
+        tests_today = tx.execute(_Q_TESTS_TODAY, dict(p=admin_person_id)).fetchone()['n']
     if not PUSH_ENABLED:
         why: Optional[str] = 'vapid_missing'
     elif not has_device:
         why = 'no_push_subscription'
+    elif tests_today >= _test_limit():
+        # The send guard lets one person have this many pushes of one kind
+        # a day; past it the push would be refused and read as "not
+        # delivered". Said as what it is instead.
+        why = 'test_limit'
     else:
         try:
             why = None if _push_one(admin_person_id, payload(row), TEST_KIND) else 'not_delivered'
@@ -603,7 +643,10 @@ def _sends_that_day(tx, day: date, but: str) -> int:
 def send(tx, send_id: str, when: Any, mode: Any, now: Optional[datetime] = None) -> tuple[dict, bool]:
     """Freeze a tested draft into a send. Returns (row, repeat): a second
     press, or a retry, with the same content returns the first send with
-    repeat True. Raises Refused for everything else."""
+    repeat True; the same draft pressed with another time is refused
+    (already_sent). Raises Refused for everything else. Run it in a read
+    committed transaction, so the day count read after the advisory lock
+    sees a send another transaction committed meanwhile."""
     now = now or _now()
     row = get(tx, send_id, lock=True)
     if row is None:
@@ -611,7 +654,12 @@ def send(tx, send_id: str, when: Any, mode: Any, now: Optional[datetime] = None)
     key = f"{row['id']}:{row['content_hash']}"
     if row['state'] not in OPEN_STATES:
         if row['idempotency_key'] == key:
-            return row, True
+            if row['requested_when'] == str(when) and row['mode'] == mode:
+                return row, True
+            # The same draft pressed again with another time: never answer
+            # as though the new time was taken.
+            raise Refused('already_sent', state=row['state'], mode=row['mode'],
+                          scheduled_for=_iso(row['scheduled_for']), local_at=_iso(row['local_at']))
         raise Refused('not_a_draft')
     if not tested(row, now):
         raise Refused('test_required')
@@ -623,6 +671,8 @@ def send(tx, send_id: str, when: Any, mode: Any, now: Optional[datetime] = None)
         raise Refused(problem)
     day = _bb_day(slot['scheduled_for'] if slot['mode'] == 'barbados'
                   else slot['local_at'].replace(tzinfo=BARBADOS))
+    # One send at a time past this point, so 2 at once cannot both see 1.
+    _xact_lock(tx, _LOCK_SENDS)
     if _sends_that_day(tx, day, row['id']) >= DAY_SENDS:
         raise Refused('day_limit', most=DAY_SENDS)
     n = len(audience(tx, row['filters'], row['testers_only']))
@@ -633,11 +683,12 @@ def send(tx, send_id: str, when: Any, mode: Any, now: Optional[datetime] = None)
     out = tx.execute(
         f"""UPDATE push_composer_send
                SET state = 'scheduled', idempotency_key = %(k)s, scheduled_for = %(at)s, mode = %(m)s,
-                   local_at = %(local)s, hold_until = %(hold)s, audience = %(n)s, updated_at = NOW()
+                   local_at = %(local)s, hold_until = %(hold)s, audience = %(n)s,
+                   requested_when = %(w)s, updated_at = NOW()
              WHERE id = %(i)s::uuid AND state IN ('draft', 'tested')
          RETURNING {_COLS}""",
         dict(k=key, at=slot['scheduled_for'], m=slot['mode'], local=slot['local_at'],
-             hold=slot['hold_until'], n=n, i=row['id'])).fetchone()
+             hold=slot['hold_until'], n=n, w=str(when), i=row['id'])).fetchone()
     return dict(out), False
 
 
@@ -803,19 +854,30 @@ def _halt(send_id: str, reason: Optional[str]) -> None:
                    dict(r=reason, i=send_id))
 
 
-def _claim_pass(send_id: str, now: datetime) -> tuple[list[dict], Optional[str]]:
-    """One transaction: freeze the audience on the first pass, settle every
-    waiting member's state for now, and claim those due. Returns the
-    claimed pushes and the halt reason, if any."""
+def _claim_pass(send_id: str, now: datetime) -> tuple[list[dict], Optional[str], Optional[str]]:
+    """One transaction: take the pass lease, freeze the audience on the
+    first pass, settle every waiting member's state for now, and claim
+    those due. Returns the claimed pushes, the halt reason, if any, and the
+    lease token (None when this pass may not send)."""
     from database import api_tx
     with api_tx('read committed') as tx:
-        row = tx.execute(f"SELECT {_COLS} FROM push_composer_send WHERE id = %(i)s::uuid "
-                         "FOR UPDATE SKIP LOCKED", dict(i=send_id)).fetchone()
+        row = tx.execute(f"""SELECT {_COLS}, pass_token IS NOT NULL
+                                    AND pass_heartbeat_at > NOW() - make_interval(mins => {LEASE_STALE_MINUTES})
+                                    AS lease_live
+                               FROM push_composer_send WHERE id = %(i)s::uuid
+                                FOR UPDATE SKIP LOCKED""", dict(i=send_id)).fetchone()
         if row is None:
-            return [], None                 # another pass holds it
+            return [], 'pass_running', None      # another pass is claiming
         row = dict(row)
         if row['state'] not in LIVE_STATES or row['scheduled_for'] > now:
-            return [], None
+            return [], None, None
+        if row['lease_live']:
+            return [], 'pass_running', None      # another pass is still pushing
+        token = uuid4().hex
+        tx.execute("""UPDATE push_composer_send SET pass_token = %(t)s, pass_heartbeat_at = NOW()
+                       WHERE id = %(i)s::uuid""", dict(t=token, i=send_id))
+        # One pass's cap read and claims at a time, across every send.
+        _xact_lock(tx, _LOCK_CLAIMS)
         if row['state'] == 'scheduled':
             # The freeze: one pass over this audience, never a second.
             ids = [r['person_id'] for r in audience(tx, row['filters'], row['testers_only'])]
@@ -826,7 +888,7 @@ def _claim_pass(send_id: str, now: datetime) -> tuple[list[dict], Optional[str]]
                                  SET state = 'failed', halt_reason = 'over_cap', audience = %(n)s,
                                      finished_at = %(now)s, updated_at = NOW()
                                WHERE id = %(i)s::uuid""", dict(i=send_id, n=len(ids), now=now))
-                return [], 'over_cap'
+                return [], 'over_cap', None
             tx.execute("""INSERT INTO push_composer_recipient (send_id, person_id)
                           SELECT %(i)s::uuid, unnest(%(ids)s::int[]) ON CONFLICT DO NOTHING""",
                        dict(i=send_id, ids=ids))
@@ -877,12 +939,23 @@ def _claim_pass(send_id: str, now: datetime) -> tuple[list[dict], Optional[str]]
         tx.execute("UPDATE push_composer_send SET halt_reason = %(h)s WHERE id = %(i)s::uuid",
                    dict(h=halt, i=send_id))
         _recount(tx, send_id)
-    return claimed, halt
+    return claimed, halt, token
+
+
+def _renew(send_id: str, token: str) -> bool:
+    """Renew the pass lease; False when another pass has taken it over."""
+    from database import api_tx
+    with api_tx() as tx:
+        return tx.execute("""UPDATE push_composer_send SET pass_heartbeat_at = NOW()
+                              WHERE id = %(i)s::uuid AND pass_token = %(t)s RETURNING 1""",
+                          dict(i=send_id, t=token)).fetchone() is not None
 
 
 def _settle(send_id: str, person_id: int, went: bool, attempts: int) -> None:
     from database import api_tx
     with api_tx() as tx:
+        cancelled = tx.execute("SELECT state = 'cancelled' AS c FROM push_composer_send WHERE id = %(i)s::uuid",
+                               dict(i=send_id)).fetchone()['c']
         if went:
             tx.execute(f"""UPDATE push_send_log SET campaign_id = %(c)s, sent_at = NOW()
                             WHERE person_id = %(p)s AND campaign = '{CAMPAIGN}' AND campaign_id = %(pc)s""",
@@ -892,15 +965,21 @@ def _settle(send_id: str, person_id: int, went: bool, attempts: int) -> None:
             tx.execute(f"""DELETE FROM push_send_log
                             WHERE person_id = %(p)s AND campaign = '{CAMPAIGN}' AND campaign_id = %(pc)s""",
                        dict(p=person_id, pc=f'{send_id}:pending'))
-            if attempts >= MAX_ATTEMPTS:
+            if cancelled:
+                # Cancelled while this push was in flight: nothing more goes.
+                _set_recipient(tx, send_id, person_id, 'released', 'cancelled')
+            elif attempts >= MAX_ATTEMPTS:
                 _set_recipient(tx, send_id, person_id, 'failed', 'no_device_took_it')
             else:
                 _set_recipient(tx, send_id, person_id, 'pending', 'retry')
 
 
-def _finish(send_id: str) -> dict:
+def _finish(send_id: str, token: Optional[str] = None) -> dict:
     from database import api_tx
     with api_tx() as tx:
+        if token:
+            tx.execute("""UPDATE push_composer_send SET pass_token = NULL
+                           WHERE id = %(i)s::uuid AND pass_token = %(t)s""", dict(i=send_id, t=token))
         _recount(tx, send_id)
         tx.execute("""UPDATE push_composer_send
                          SET state = 'sent', finished_at = NOW(), updated_at = NOW()
@@ -922,10 +1001,28 @@ def run_send(send_id: str, now: Optional[datetime] = None) -> dict:
     if not PUSH_ENABLED:
         _halt(send_id, 'vapid_missing')
         return dict(send_id=send_id, handed=0, went=0, halted='vapid_missing')
-    claimed, halt = _claim_pass(send_id, now)
+    claimed, halt, token = _claim_pass(send_id, now)
+    if token is None:
+        return dict(send_id=send_id, handed=0, went=0, halted=halt, state=None)
+    went, lost = _deliver(send_id, token, claimed)
+    row = _finish(send_id, token)
+    out = dict(send_id=send_id, handed=len(claimed), went=went, halted='lease_lost' if lost else halt,
+               state=row.get('state'))
+    if claimed:
+        print('PUSH_COMPOSER ' + json.dumps(out), flush=True)
+    return out
+
+
+def _deliver(send_id: str, token: str, claimed: list[dict]) -> tuple[int, bool]:
+    """Push each claim, renewing the lease before each one and settling it
+    in its own committed transaction straight after. Stops, leaving the
+    rest claimed, if another pass has taken the lease. Returns (how many
+    went, whether the lease was lost)."""
     went = 0
     kind = f'{CAMPAIGN}:{send_id}'
     for c in claimed:
+        if not _renew(send_id, token):
+            return went, True
         try:
             n = _push_member(c['person_id'], c['push'], kind)
         except Exception:
@@ -936,11 +1033,7 @@ def run_send(send_id: str, now: Optional[datetime] = None) -> dict:
             went += 1 if n else 0
         except Exception:
             print(traceback.format_exc())
-    row = _finish(send_id)
-    out = dict(send_id=send_id, handed=len(claimed), went=went, halted=halt, state=row.get('state'))
-    if claimed:
-        print('PUSH_COMPOSER ' + json.dumps(out), flush=True)
-    return out
+    return went, False
 
 
 def due_ids(now: Optional[datetime] = None) -> list[str]:
@@ -972,8 +1065,9 @@ def tick(now: Optional[datetime] = None) -> dict:
 def run_soon(send_id: str) -> None:
     """Send now: a pass on a thread once the route's transaction has
     committed, rather than waiting up to 10 minutes for the tick. The tick
-    and this pass never both send to a member: the send row is locked
-    with SKIP LOCKED and each member is claimed in push_send_log first."""
+    and this pass never both send to a member: the pass lease keeps the
+    tick out while this pass is alive, and each member is claimed in
+    push_send_log first."""
     from smtp import guard
     guard.spawn(_run_quietly, send_id)
 

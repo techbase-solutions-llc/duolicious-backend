@@ -133,7 +133,9 @@ def post_admin_push_send(s: t.SessionInfo):
     _on()
     body = _body()
     sid = _draft_id(body)
-    with api_tx() as tx:
+    # Read committed: the day count is read after the advisory lock, and
+    # must see a send another request committed while this one waited.
+    with api_tx('read committed') as tx:
         try:
             row, repeat = composer.send(tx, sid, body.get('when'), body.get('mode'))
         except Refused as e:

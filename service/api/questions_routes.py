@@ -92,12 +92,14 @@ _Q_TAP = """
 """
 
 
-# A composer tap (TEC-2182): once per member per send, and only for a send
-# that exists.
+# A composer tap (TEC-2182): once per member per send, and only from a
+# member the send pushed (a link passed on, or a guessed id, counts nothing).
 _Q_SEND_TAP = """
     INSERT INTO push_tap (person_id, src, send_id)
     SELECT %(p)s, 'apush', %(send)s::uuid
-     WHERE EXISTS (SELECT 1 FROM push_composer_send WHERE id = %(send)s::uuid)
+     WHERE EXISTS (SELECT 1 FROM push_composer_recipient
+                    WHERE send_id = %(send)s::uuid AND person_id = %(p)s
+                      AND state IN ('sent', 'claimed'))
        AND NOT EXISTS (SELECT 1 FROM push_tap
                         WHERE person_id = %(p)s AND src = 'apush' AND send_id = %(send)s::uuid)
 """

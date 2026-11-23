@@ -64,6 +64,15 @@ CREATE TABLE IF NOT EXISTS push_composer_send (
   skipped            INT          NOT NULL DEFAULT 0
 );
 
+-- The pass lease (a pass renews it before every push; another pass takes
+-- over its claims only once it has been silent for 15 minutes) and the
+-- `when` the Send button carried, so a repeat press with another time is
+-- refused rather than answered with the first send.
+ALTER TABLE push_composer_send
+  ADD COLUMN IF NOT EXISTS pass_token TEXT,
+  ADD COLUMN IF NOT EXISTS pass_heartbeat_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS requested_when TEXT;
+
 CREATE INDEX IF NOT EXISTS push_composer_send_due_idx
   ON push_composer_send (scheduled_for)
   WHERE state IN ('scheduled', 'sending');
