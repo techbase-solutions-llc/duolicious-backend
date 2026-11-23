@@ -4,6 +4,12 @@ Owner decision 1 Oct 2026 (TEC-1607): inactive profiles stay visible on the
 map and in the feed, so production runs this in DRY RUN and the members it
 had hidden were brought back (scripts/reactivate_dormant.py). The module
 stays so the decision can be reversed with one env var.
+
+Before reversing it, know what a real run does (sql/__init__.py): it hides
+the member, takes them out of their club count, DELETES EVERY SESSION they
+hold and emails "Your Ahavah profile is resting". Only a new email code
+brings the profile back (check-otp sets activated), so each member it
+catches is signed out on every device (reported 16 Nov 2026, TEC-1832).
 """
 from database.asyncdatabase import api_tx
 from service.cron.autodeactivate2.sql import *
@@ -57,14 +63,18 @@ async def _autodeactivate2_once():
         cur_deactivated = await tx.execute(Q_DEACTIVATE, params)
         rows_deactivated = await cur_deactivated.fetchall()
 
-    for p in rows_deactivated:
-        if DRY_RUN:
-            print(
-                f'  - autodeactive2: DUO_CRON_AUTODEACTIVATE2_DRY_RUN env '
-                f'var prevented deactivation of {p}'
-            )
-        else:
-            print(f'  - autodeactive2: deactivated {p}')
+    # Ids only, never the address: a dry run logs the same members on every
+    # tick, and it wrote each one's email to the cron log every 5 minutes
+    # (1,436 lines in 48 hours on 23 Nov 2026).
+    if DRY_RUN and rows_deactivated:
+        print(
+            f'  - autodeactive2: DUO_CRON_AUTODEACTIVATE2_DRY_RUN env var '
+            f'prevented deactivation of {len(rows_deactivated)} member(s): '
+            f'ids {[p["id"] for p in rows_deactivated]}'
+        )
+    elif not DRY_RUN:
+        for p in rows_deactivated:
+            print(f'  - autodeactive2: deactivated id {p["id"]}')
 
     # A dry run hides nobody, so it must email nobody. It used to email the same
     # members "Your Ahavah profile is resting" every 10 minutes (owner, 2 Nov 2026).
