@@ -324,6 +324,13 @@ services:
       DUO_CHAT_PORTS: ${DUO_CHAT_PORTS}
       AHAVAH_XMPP_DOMAIN: ${AHAVAH_XMPP_DOMAIN}
       SESSION_TOKEN_SECRET: ${SESSION_TOKEN_SECRET:?SESSION_TOKEN_SECRET must be set in .env.production}
+      # The push for each new chat message is sent from this container
+      # (service/chat/messagestorage). Without these keys PUSH_ENABLED is
+      # false here and no member ever got one; the api and cron containers
+      # had them, so every other push worked (found 25 Nov 2026).
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${VAPID_SUBJECT}
       # The send guard (smtp/guard.py, send safeguards plan of 2 Nov 2026),
       # read by every container that sends. The global ceilings run in a trial
       # week until AHAVAH_SEND_GUARD_GLOBAL_SHADOW_UNTIL (a Barbados date; set
