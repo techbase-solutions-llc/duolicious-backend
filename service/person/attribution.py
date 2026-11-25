@@ -6,7 +6,9 @@ The web sends two optional fields with POST /finish-onboarding
   first_touch: object or null. Accepted keys, each a string of at most
     200 code points after trimming: utm_source, utm_medium, utm_campaign,
     utm_content, utm_term, referrer_host, code (an /i/ or /share/ invite
-    code) and first_seen_at (ISO 8601).
+    code), landing_path (the page of the first load, as the web's
+    landingPath() writes it: no query string, and '*' where an id, a code
+    or a token stood) and first_seen_at (ISO 8601).
   heard_about: string or null, at most 200 code points after trimming.
 
 Anything else is dropped, never refused: an unknown key, a value that is
@@ -25,6 +27,7 @@ set at /check-otp) is kept.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -41,8 +44,14 @@ FIRST_TOUCH_KEYS = (
     'utm_term',
     'referrer_host',
     'code',
+    'landing_path',
     'first_seen_at',
 )
+
+# What the web's landingPath() can write: lower-case route names, hyphens
+# and '*'. Anything else (a query string, a capital, a full address) is
+# not a landing page and is dropped like any other bad value.
+_LANDING_PATH = re.compile(r'/[a-z0-9*/-]*')
 
 
 def _clean_text(value: Any, max_length: int) -> Optional[str]:
@@ -77,6 +86,8 @@ def clean_first_touch(value: Any) -> Optional[dict]:
         if text is None:
             continue
         if key == 'first_seen_at' and not _is_timestamp(text):
+            continue
+        if key == 'landing_path' and not _LANDING_PATH.fullmatch(text):
             continue
         touch[key] = text
     return touch or None

@@ -132,3 +132,35 @@ def test_values_postgres_cannot_store_never_fail_onboarding(finish_onboarding):
     assert row['first_touch'] == {'utm_campaign': 'kept'}
     assert row['heard_about'] is None
     assert row['lead_source'] is None
+
+
+# Owner, 25 Nov 2026: ChatGPT and Google send visitors without saying what
+# they asked, so the page a visitor landed on is kept with the first touch.
+def test_the_landing_page_is_kept_with_the_first_touch(finish_onboarding):
+    r, pid = finish_onboarding(dict(
+        first_touch={'referrer_host': 'chatgpt.com', 'landing_path': '/faith-marriage-abroad'}))
+    _ok(r)
+    row = _row(pid)
+    assert row['first_touch'] == {'referrer_host': 'chatgpt.com',
+                                  'landing_path': '/faith-marriage-abroad'}
+    assert row['lead_source'] == 'site:chatgpt.com'
+
+
+def test_a_landing_page_alone_names_no_source(finish_onboarding):
+    r, pid = finish_onboarding(dict(first_touch={'landing_path': '/together/us'}))
+    _ok(r)
+    row = _row(pid)
+    assert row['first_touch'] == {'landing_path': '/together/us'}
+    assert row['lead_source'] is None
+
+
+def test_a_landing_page_that_is_not_a_plain_path_is_dropped(finish_onboarding):
+    for bad in ('/rsvp/Zk3x9QpLm0aB7cD1eF2gH3', '/discover?email=a@b.c',
+                'https://ahavah.app/', 'together', '/u/8F3A'):
+        r, pid = finish_onboarding(dict(
+            first_touch={'utm_source': 'newsletter', 'landing_path': bad}))
+        _ok(r)
+        assert _row(pid)['first_touch'] == {'utm_source': 'newsletter'}, bad
+    r, pid = finish_onboarding(dict(first_touch={'landing_path': '/u/*'}))
+    _ok(r)
+    assert _row(pid)['first_touch'] == {'landing_path': '/u/*'}
