@@ -10,7 +10,7 @@ from flask import abort, jsonify, request
 from database import api_tx
 from service.admin import require_admin, record_audit
 from service.api.decorators import aget, apost
-from service.campaigns import count_sendable
+from service.campaigns import CAMPAIGN_CAP_DAYS, count_sendable
 from service.campaigns.runner import SEND_AUDIT_ACTION
 from service.campaigns import schedule as campaign_schedule
 from service.campaigns.schedule import COMMUNITY_WEEKLY_ENABLED, next_send_at
@@ -215,7 +215,7 @@ def get_admin_growth_emails(s: t.SessionInfo):
             ids = cohorts[key]
             next_id = _NEXT_RUN_ID.get(key)
             would_reach = count_sendable(tx, ids, key, next_id(now) if next_id else None,
-                                         cap_days=getattr(mod, 'CAP_DAYS', 7))
+                                         cap_days=getattr(mod, 'CAP_DAYS', CAMPAIGN_CAP_DAYS))
             cid = last['cid'] if last else None
             reached, clicks = email_outcomes.run_results(tx, key, cid)
             outcome = email_outcomes.run_outcomes(tx, key, cid)
@@ -341,7 +341,7 @@ def post_admin_growth_email_send(s: t.SessionInfo, campaign: str):
         res = run_campaign(api_tx, campaign, cid, mod.recipients(), mod.build_for, send=not dry,
                            from_addr=mod.FROM_ADDR,
                            unsub_scope=mod.UNSUB_SCOPE,
-                           cap_days=getattr(mod, 'CAP_DAYS', 7),
+                           cap_days=getattr(mod, 'CAP_DAYS', CAMPAIGN_CAP_DAYS),
                            exempt=getattr(mod, 'EXEMPT', False),
                            list_unsubscribe=lambda e: f"<mailto:support@ahavah.app?subject=Unsubscribe>, <{_unsub_url(mod.UNSUB_SCOPE, e, WEB_BASE_URL)}>",
                            post_send=getattr(mod, 'post_send', None))

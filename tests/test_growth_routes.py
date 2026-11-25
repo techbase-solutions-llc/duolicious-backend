@@ -338,9 +338,8 @@ def test_suppressed_domain_reduces_e1_recipient_count(make_person):
 
 
 # ---------------------------------------------------------------------------
-# Final review, item 4: the weekly email's cap window is 6 days, not the
-# default 7 -- asserted directly on the module constant the admin send
-# endpoint reads via getattr(mod, 'CAP_DAYS', 7).
+# The weekly email's gap is the module constant the admin send endpoint
+# reads via getattr(mod, 'CAP_DAYS', CAMPAIGN_CAP_DAYS): 3 days.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -388,10 +387,10 @@ def test_unknown_mail_summary_requires_admin(client, member):
     assert client.get('/admin/growth/emails/unknown', headers=member['headers']).status_code == 403
 
 
-def test_e2_dry_run_send_endpoint_respects_the_six_day_cap(client, admin, make_person, monkeypatch):
+def test_e2_dry_run_send_endpoint_respects_the_three_day_gap(client, admin, make_person, monkeypatch):
     """Through the real admin send endpoint (not run_campaign() directly):
-    a member mailed 6.5 days ago is due again under the 6-day weekly cap,
-    one mailed 5 days ago is not."""
+    a member mailed 3.5 days ago is due again under the 3-day gap, one
+    mailed 2 days ago is not."""
     from service.campaigns import log_send
 
     due = make_person(name='WeeklyDueEndpoint')
@@ -407,8 +406,8 @@ def test_e2_dry_run_send_endpoint_respects_the_six_day_cap(client, admin, make_p
                 "WHERE person_id = %(i)s AND campaign_id = %(c)s",
                 dict(s=days * 86400, i=person_id, c=campaign_id))
 
-    _log_days_ago(due['id'], 'e2-ep-last-week', 6.5)
-    _log_days_ago(early['id'], 'e2-ep-midweek', 5)
+    _log_days_ago(due['id'], 'e2-ep-last-week', 3.5)
+    _log_days_ago(early['id'], 'e2-ep-midweek', 2)
 
     rows = [dict(e2.preview_row(due_email), person_id=due['id'], name='WeeklyDueEndpoint'),
             dict(e2.preview_row(early_email), person_id=early['id'], name='WeeklyEarlyEndpoint')]

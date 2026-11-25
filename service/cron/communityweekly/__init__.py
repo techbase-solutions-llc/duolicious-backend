@@ -18,10 +18,10 @@ who already has a row for that (campaign, campaign_id), so:
 That last one is why the id lives in a shared module rather than being a
 literal here: the admin frontend computes the same string.
 
-The 6-day cap (`CAP_DAYS` in emails/send_community_weekly.py) stays on. It
+The cap (`CAP_DAYS` in emails/send_community_weekly.py, 3 days) stays on. It
 is a second, independent belt: the id guard protects against a repeat of
 THIS run, the cap protects the member from any other campaign that went
-out to them in the last six days.
+out to them in the last 3 days.
 """
 from __future__ import annotations
 

@@ -28,7 +28,7 @@ from typing import Callable
 
 from emails.base import is_suppressed_send, mask_email
 from service.admin import record_system_audit
-from service.campaigns import campaign_unsubscribed, can_send
+from service.campaigns import CAMPAIGN_CAP_DAYS, campaign_unsubscribed, can_send
 from service.campaigns import outbox
 
 # The admin_audit_log action every campaign send is recorded under, from
@@ -51,7 +51,7 @@ def run_campaign(tx_factory, campaign: str, campaign_id: str, recipients: list[d
                  build: Callable[[dict], tuple], *, send: bool,
                  from_addr: str, unsub_scope: str,
                  list_unsubscribe: Callable[[str], str] | None = None,
-                 cap_days: int = 7, exempt: bool = False,
+                 cap_days: int = CAMPAIGN_CAP_DAYS, exempt: bool = False,
                  post_send: str | None = None,
                  from_name: str | None = None, reply_to: str | None = None) -> dict:
     """`unsub_scope` is the campaign module's own UNSUB_SCOPE: the scope its

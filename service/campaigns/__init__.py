@@ -1,6 +1,7 @@
 """Campaign email send log, per-member frequency cap, and click links.
 
-Spec 3.5: at most one campaign email per member per 7 days (E4/E5 are
+Spec 3.5: at most one campaign email per member per CAMPAIGN_CAP_DAYS
+(7 days until 25 Nov 2026, 3 since; E4/E5 are
 member-triggered and exempt); each send carries a campaign_id so a
 retried request cannot send twice. Spec 3.4: every CTA is a /s/<key>
 link that counts clicks."""
@@ -71,8 +72,17 @@ _Q_COUNT_SENDABLE = f"""
        AND NOT EXISTS ({_recent_send_sql('r.pid')})
 """
 
+# The gap between two campaign emails to one member, in days. It was 7, and
+# the weekly community email (every Monday) then took the whole week: on
+# 25 Nov 2026 the re-invite had 38 members waiting and could reach none, and
+# the notifications nudge 3 of 56. The owner cut it to 3 that day. Every
+# campaign uses this one figure unless it passes its own, so the weekly
+# email is not held back by a midweek send either.
+CAMPAIGN_CAP_DAYS = 3
+
+
 def can_send(tx, person_id: int, campaign: str, campaign_id: str, *,
-             cap_days: int = 7, exempt: bool = False) -> bool:
+             cap_days: int = CAMPAIGN_CAP_DAYS, exempt: bool = False) -> bool:
     if tx.execute(_Q_SAME_RUN, dict(pid=person_id, c=campaign, cid=campaign_id)).fetchone():
         return False
     if exempt:
@@ -80,7 +90,7 @@ def can_send(tx, person_id: int, campaign: str, campaign_id: str, *,
     return tx.execute(_Q_RECENT, dict(pid=person_id, d=cap_days)).fetchone() is None
 
 def count_sendable(tx, person_ids: list[int], campaign: str, campaign_id: Optional[str], *,
-                   cap_days: int = 7) -> int:
+                   cap_days: int = CAMPAIGN_CAP_DAYS) -> int:
     """How many of `person_ids` `can_send` would pass right now, in one
     query: the admin's "would reach now" (health review, 13 Oct 2026; the
     Growth tab used to show the cohort before the cap, 59 for an e2 send

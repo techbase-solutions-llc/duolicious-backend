@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from emails.base import is_suppressed_send, mask_email
-from service.campaigns import campaign_unsubscribed, can_send, log_send
+from service.campaigns import CAMPAIGN_CAP_DAYS, campaign_unsubscribed, can_send, log_send
 from service.leads import address_unsubscribed, lead_unsubscribed, news_refusal
 from service.testers import guest_on_side_sql
 from smtp import guard
@@ -250,7 +250,7 @@ def _refuse_in_a_dry_run(campaign: str, email: str) -> None:
 def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
             subject: str, html: str, from_addr: Optional[str], unsub_scope: str,
             list_unsubscribe: Optional[str] = None, exempt: bool = False,
-            cap_days: int = 7, post_send: Optional[str] = None,
+            cap_days: int = CAMPAIGN_CAP_DAYS, post_send: Optional[str] = None,
             requires_spotlight_opt_in: bool = False,
             not_before: Optional[datetime] = None,
             text: Optional[str] = None, from_name: Optional[str] = None,
@@ -273,9 +273,8 @@ def enqueue(tx, *, campaign: str, campaign_id: str, person_id: int, email: str,
 
     `post_send` is a KEY of POST_SEND_HOOKS, not a callable (see the note
     there). `cap_days` rides along so the drain's own frequency re-check uses
-    the campaign's real window rather than the 7-day default -- E2's weekly
-    cadence is a 6-day cap, and re-checking it at 7 would hold back exactly
-    the member the 6-day window exists to reach.
+    the campaign's own window rather than the default, where the two differ
+    (a campaign that passes 0 or 1 must not be re-checked at the default).
 
     `requires_spotlight_opt_in` marks a message that exists only because the
     member consented to Community Spotlight (E4, E5). It rides in the payload
@@ -773,7 +772,7 @@ def _refusal(tx, row: dict) -> Optional[str]:
     if campaign_unsubscribed(tx, row['person_id'], row['unsub_scope']):
         return 'unsubscribed'
     if not can_send(tx, row['person_id'], row['campaign'], row['campaign_id'],
-                    cap_days=int(payload.get('cap_days') or 7), exempt=bool(row['exempt'])):
+                    cap_days=int(payload.get('cap_days') or CAMPAIGN_CAP_DAYS), exempt=bool(row['exempt'])):
         return 'capped'
     return None
 

@@ -7,7 +7,8 @@ from typing import Optional
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.community_weekly import community_weekly_html, SUBJECT, FROM_ADDR
-from service.campaigns import make_campaign_link, suppressed_predicate_sql, unsubscribed_predicate_sql
+from service.campaigns import (CAMPAIGN_CAP_DAYS, make_campaign_link, suppressed_predicate_sql,
+                               unsubscribed_predicate_sql)
 from service.campaigns.runner import audit_send, run_campaign
 from service.campaigns.switches import enabled
 from service.campaigns.weekid import week_campaign_id
@@ -20,10 +21,12 @@ from service.unsubscribe import make_url as _unsub_url
 
 UNSUB_SCOPE = 'community'
 
-# The weekly email runs weekly, so a 7-day cap would race its own cadence:
-# a run that starts a few hours "late" would find every member inside the
-# window and skip the whole list. 6 days leaves the slack.
-CAP_DAYS = 6
+# The weekly email keeps the gap every campaign keeps (3 days since 25 Nov
+# 2026, service/campaigns CAMPAIGN_CAP_DAYS). It was 6, one short of its own
+# weekly cadence so a run a few hours late did not skip the whole list; with
+# other campaigns now free to go 3 days after it, a 6 here would let a
+# Thursday send hold the next Monday's weekly email back.
+CAP_DAYS = CAMPAIGN_CAP_DAYS
 
 # Same suppression + scope-unsubscribe filters run_campaign() applies
 # per-row (service/campaigns/runner.py), baked in here too so
@@ -377,7 +380,7 @@ def main() -> None:
     # This used to mint `e2-<random hex>`, which could never collide with
     # anything. An operator running this on a Monday afternoon, not knowing
     # the cron had already sent at 12:00, enqueued a second full cohort, and
-    # the only thing between the member and two copies was the 6-day cap,
+    # the only thing between the member and two copies was the cap between campaigns,
     # which is exactly what someone reaching for this script is often about
     # to override. Sharing the id makes the second run a no-op instead.
     cid = a.campaign_id or week_campaign_id(datetime.now(timezone.utc), 'e2')

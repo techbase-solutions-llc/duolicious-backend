@@ -22,14 +22,28 @@ from service.unsubscribe import stamp_unsubscribed
 
 
 # ---------------------------------------------------------------------------
-# Final review, item 4: the weekly email's own cap window is 6 days -- the
-# admin send endpoint reads it via getattr(mod, 'CAP_DAYS', 7)
-# (service/api/admin/growth_routes.py), so a regression here would silently
-# fall back to the default 7-day cap.
+# The gap between two campaign emails to one member is 3 days (owner, 25 Nov
+# 2026; it was 7, and 6 for the weekly email, which left every other
+# campaign unable to reach anyone). The weekly email keeps the same figure,
+# so a midweek campaign cannot hold the next Monday's weekly email back.
 # ---------------------------------------------------------------------------
 
-def test_send_community_weekly_cap_days_is_six():
-    assert e2.CAP_DAYS == 6
+def test_the_campaign_gap_is_three_days_for_every_campaign():
+    from service.campaigns import CAMPAIGN_CAP_DAYS
+    assert CAMPAIGN_CAP_DAYS == 3
+    assert e2.CAP_DAYS == CAMPAIGN_CAP_DAYS
+
+
+def test_the_default_gap_lets_a_member_mailed_over_three_days_ago_through(make_person):
+    from service.campaigns import can_send, count_sendable
+    due = make_person(name='GapDue')
+    early = make_person(name='GapEarly')
+    _log_e2_days_ago(due['id'], 'e2-gap-due', 3.5)
+    _log_e2_days_ago(early['id'], 'e2-gap-early', 2)
+    with api_tx('read committed') as tx:
+        assert can_send(tx, due['id'], 'e3', 'e3-gap')
+        assert not can_send(tx, early['id'], 'e3', 'e3-gap')
+        assert count_sendable(tx, [due['id'], early['id']], 'e3', None) == 1
 
 
 def _outbox_count(person_id: int) -> int:

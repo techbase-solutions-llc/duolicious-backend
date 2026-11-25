@@ -104,7 +104,7 @@ def test_would_reach_now_leaves_out_who_the_cap_holds(client, admin, make_person
     rows = []
     for p in (capped, free, this_week):
         rows.append(dict(e2.preview_row(_sendable(p['id'], 'reach')), person_id=p['id'], name='Reach'))
-    # Inside e2's 6 day cap.
+    # Inside the 3 day gap between campaigns.
     _log(capped['id'], 'e6', f'e6-cap-{uuid.uuid4().hex[:6]}', '2 days')
     # Outside it.
     _log(free['id'], 'e6', f'e6-cap-{uuid.uuid4().hex[:6]}', '6 days 12 hours')
@@ -118,10 +118,11 @@ def test_would_reach_now_leaves_out_who_the_cap_holds(client, admin, make_person
 
     assert out['e2']['eligible_now'] == 3 and out['e2']['recipients'] == 3
     assert out['e2']['would_reach_now'] == 1
-    # e6 has the default 7 day cap, so 6 and a half days ago still holds,
-    # whichever campaign it was.
+    # e6 keeps the same 3 day gap (it was 7 until 25 Nov 2026, when 6 and a
+    # half days ago still held everyone): only the member mailed 2 days ago
+    # is held, whichever campaign that was.
     assert out['e6']['eligible_now'] == 3
-    assert out['e6']['would_reach_now'] == 0
+    assert out['e6']['would_reach_now'] == 2
 
 
 def test_would_reach_now_leaves_out_who_unsubscribed(client, admin, make_person):

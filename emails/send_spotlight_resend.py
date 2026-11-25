@@ -73,7 +73,7 @@ def build_for(row: dict) -> tuple[str, str]:
     return _build_e1(row, new_copy=True)
 
 
-def run(*, send: bool, campaign_id: Optional[str] = None, cap_days: int = 6,
+def run(*, send: bool, campaign_id: Optional[str] = None, cap_days: int = 3,
         only_ids: Optional[list[int]] = None) -> dict:
     """Queue (or, with send False, build and count) the resend. A real send
     is refused while the switch is off."""
@@ -106,7 +106,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--send', action='store_true')
     ap.add_argument('--campaign-id', default=None)
-    ap.add_argument('--cap-days', type=int, default=6)
+    ap.add_argument('--cap-days', type=int, default=3)
     a = ap.parse_args()
     print(run(send=a.send, campaign_id=a.campaign_id, cap_days=a.cap_days))
 

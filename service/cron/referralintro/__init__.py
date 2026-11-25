@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from database import api_tx
 from emails.base import suppressed_sql_pattern
 from emails.referral_intro import FROM_ADDR, MEMBER_SUBJECT, referral_intro_html
-from service.campaigns import (make_campaign_link, outbox, suppressed_predicate_sql,
+from service.campaigns import (CAMPAIGN_CAP_DAYS, make_campaign_link, outbox, suppressed_predicate_sql,
                                unsubscribed_predicate_sql)
 from service.campaigns.runner import audit_send
 from service.campaigns.switches import enabled
@@ -88,7 +88,7 @@ def campaign_id(person_id: int, now: datetime) -> str:
     return f"referral-{person_id}-{_week_suffix(now)}"
 
 
-def queue_due(tx, now: datetime | None = None, *, cap_days: int = 7,
+def queue_due(tx, now: datetime | None = None, *, cap_days: int = CAMPAIGN_CAP_DAYS,
               not_before: datetime | None = None, id_suffix: str | None = None,
               actor: str = 'cron') -> int:
     """Queue the intro for every member due one. Returns how many rows were
