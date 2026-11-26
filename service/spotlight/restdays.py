@@ -23,7 +23,7 @@ nothing.
 
 NOTHING IS KNOWN AFTER `KNOWN_THROUGH`.
 
-The owner's calendar has been read through the ninth month (see REST_DAYS).
+The owner's calendar has been read through the tenth month (see REST_DAYS).
 A date past that is not "free", it is unknown, so `slot_problem` refuses it
 rather than guessing. Extending this is one edit: add the next month's Sabbaths and
 move `KNOWN_THROUGH`, after re-reading the engine.
@@ -63,11 +63,21 @@ REST_DAYS: tuple[date, ...] = (
     date(2026, 11, 24),  # Sabbath (Tuesday)
     date(2026, 12, 1),   # Sabbath (Tuesday)
     date(2026, 12, 8),   # Sabbath (Tuesday)
+    # TENTH MONTH. Read from the owner's Biblical Calendar Engine account
+    # (biblecalendar.app calendar grid, America/Barbados) on 26 Nov 2026,
+    # when he asked for it to be entered (TEC-1447). The grid shows the
+    # ninth month as confirmed and the tenth as projected: day 1 is
+    # Wednesday 9 Dec (30 days, to 7 Jan 2027). Re-read it once the new
+    # moon of 9 Dec is confirmed.
+    date(2026, 12, 16),  # Sabbath (Wednesday)
+    date(2026, 12, 23),  # Sabbath (Wednesday)
+    date(2026, 12, 30),  # Sabbath (Wednesday)
+    date(2027, 1, 6),    # Sabbath (Wednesday)
 )
 
 # The last date the owner's calendar has been read for. Anything later is
 # unknown, and a slot there is refused rather than assumed to be free.
-KNOWN_THROUGH = date(2026, 12, 8)
+KNOWN_THROUGH = date(2027, 1, 7)
 
 # How long before a rest day's date its observance starts, in Barbados time.
 _EVE = time(17, 0)

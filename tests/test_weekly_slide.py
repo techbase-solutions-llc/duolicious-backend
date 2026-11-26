@@ -135,13 +135,14 @@ def test_deploy_day_tuesday_27_october_is_not_a_send_window():
 
 @pytest.mark.real_calendar
 def test_every_week_to_the_end_of_the_known_calendar_sends_on_monday():
-    # No Monday from 26 Oct to 7 Dec is a Sabbath under the confirmed
-    # calendar, so nothing slides; 14 Dec is past KNOWN_THROUGH.
+    # No Monday from 26 Oct to 4 Jan is a Sabbath under the calendar as
+    # read (tenth month entered 26 Nov, TEC-1447), so nothing slides;
+    # 11 Jan 2027 is past KNOWN_THROUGH.
     monday = _utc(2026, 10, 26, 12)
-    while monday.date() <= date(2026, 12, 7):
+    while monday.date() <= date(2027, 1, 4):
         assert week_slot(monday) == monday, monday
         monday += timedelta(days=7)
-    assert week_slot(_utc(2026, 12, 14, 12)) is None
+    assert week_slot(_utc(2027, 1, 11, 12)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +178,9 @@ def test_after_deploy_the_next_send_is_monday_2_november():
 @pytest.mark.real_calendar
 def test_the_last_send_before_the_calendar_runs_out():
     assert next_send_at(_utc(2026, 12, 1, 9)) == _utc(2026, 12, 7, 12)
-    assert next_send_at(_utc(2026, 12, 7, 13)) is None
+    assert next_send_at(_utc(2026, 12, 7, 13)) == _utc(2026, 12, 14, 12)
+    assert next_send_at(_utc(2026, 12, 29, 9)) == _utc(2027, 1, 4, 12)
+    assert next_send_at(_utc(2027, 1, 4, 13)) is None
 
 
 def test_the_window_and_the_next_slot_never_both_point_at_now(monkeypatch):

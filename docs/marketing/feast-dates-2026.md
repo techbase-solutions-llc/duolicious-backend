@@ -29,3 +29,13 @@ Read from the owner's Biblical Calendar Engine account (biblecalendar.app, calen
 The app's home screen still read "Day 15, Sabbath (est.)" at 02:50 on Monday 26 October, while its month grid puts day 15 on Sunday 25 October. We follow the grid, which the owner confirmed.
 
 These replace the provisional eighth month entered on 2026-10-01, which blocked both candidate dates of each Sabbath (Sundays and Mondays from 18 October to 9 November). `service/spotlight/restdays.py` and `ahavah-admin/src/lib/rest-days.ts` carry these dates, and the calendar is known through 2026-12-08. Whether the owner rests on the new moon day itself is not recorded and is not blocked.
+
+## Tenth month
+
+Read from the same calendar view at 01:30 Barbados time on 26 November 2026, when the owner asked for the dates to be entered (TEC-1447). The app now marks the ninth month as confirmed and the tenth as projected.
+
+| Month | Day 1 | Sabbaths (lunar days 8, 15, 22, 29) |
+|---|---|---|
+| Tenth | Wed 9 Dec 2026 (30 days, to 7 Jan 2027) | 16 Dec, 23 Dec, 30 Dec, 6 Jan (Wednesdays) |
+
+The calendar is known through 2027-01-07. The new moon day, Wednesday 9 December, is not blocked, as in the eighth and ninth months. The eleventh month is shown as starting Friday 8 January 2027 and has not been entered. Re-read the tenth month once the new moon of 9 December is confirmed, because a projected month can move by a day.

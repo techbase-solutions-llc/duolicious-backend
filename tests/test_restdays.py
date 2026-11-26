@@ -124,7 +124,7 @@ def test_the_real_calendar_carries_the_owners_rest_days():
     for d in (date(2026, 9, 19), date(2026, 9, 21), date(2026, 9, 26),
               date(2026, 10, 3), date(2026, 10, 10)):
         assert d in rd.REST_DAYS
-    assert rd.KNOWN_THROUGH == date(2026, 12, 8)
+    assert rd.KNOWN_THROUGH == date(2027, 1, 7)
 
 
 # Read from the owner's calendar grid on 26 Oct 2026 and confirmed by him:
@@ -159,14 +159,37 @@ def test_the_provisional_second_dates_are_open_again(day):
     assert rd.slot_problem(_bb(day, 8), EARLY) is None
 
 
+# Read from the owner's calendar grid on 26 Nov 2026 (TEC-1447): the tenth
+# month starts Wednesday 9 Dec and has 30 days. The grid marks it projected.
+TENTH = (date(2026, 12, 16), date(2026, 12, 23), date(2026, 12, 30), date(2027, 1, 6))
+
+
 @pytest.mark.real_calendar
-def test_the_eighth_and_ninth_months_hold_no_other_rest_day():
+@pytest.mark.parametrize('day', TENTH, ids=str)
+def test_each_sabbath_of_the_tenth_month_is_blocked(day):
+    eve = day - timedelta(days=1)
+    assert day in rd.REST_DAYS
+    assert rd.is_rest_period(_bb(eve, 16, 59)) is False
+    assert rd.is_rest_period(_bb(eve, 17, 0)) is True
+    assert rd.is_rest_period(_bb(day, 23, 59)) is True
+    assert rd.is_rest_period(_bb(day + timedelta(days=1), 0, 0)) is False
+
+
+@pytest.mark.real_calendar
+def test_the_new_moon_day_of_the_tenth_month_is_open():
+    # Day 1 is not a Sabbath in this calendar; the eighth and ninth months
+    # left theirs open too. 08:30 Barbados, the brand post slot.
+    assert rd.slot_problem(_bb(date(2026, 12, 9), 8, 30), EARLY) is None
+
+
+@pytest.mark.real_calendar
+def test_the_eighth_to_tenth_months_hold_no_other_rest_day():
     later = [d for d in rd.REST_DAYS if d > date(2026, 10, 10)]
-    assert sorted(later) == sorted(EIGHTH_AND_NINTH)
+    assert sorted(later) == sorted(EIGHTH_AND_NINTH + TENTH)
 
 
 @pytest.mark.real_calendar
-def test_the_calendar_is_known_through_8_december_and_unknown_after():
-    assert rd.is_beyond_known(_bb(date(2026, 12, 8), 23, 59)) is False
-    assert rd.is_beyond_known(_bb(date(2026, 12, 9), 0, 0)) is True
-    assert rd.slot_problem(_bb(date(2026, 12, 9), 8), EARLY) == 'unknown'
+def test_the_calendar_is_known_through_7_january_and_unknown_after():
+    assert rd.is_beyond_known(_bb(date(2027, 1, 7), 23, 59)) is False
+    assert rd.is_beyond_known(_bb(date(2027, 1, 8), 0, 0)) is True
+    assert rd.slot_problem(_bb(date(2027, 1, 8), 8), EARLY) == 'unknown'

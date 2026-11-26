@@ -63,16 +63,20 @@ def test_a_week_past_the_known_calendar_has_no_drop(calendar, monkeypatch):
 @pytest.mark.real_calendar
 def test_the_owners_october_calendar():
     # restdays.py as confirmed on 26 Oct (TEC-1933): eighth month Sabbaths
-    # on Sundays to 8 Nov, ninth month Sabbaths on Tuesdays to 8 Dec, known
-    # through 8 Dec. A rest Sunday moves the drop to Monday; a Sunday before
-    # a Tuesday Sabbath is free. Update this test when the tenth is read.
+    # on Sundays to 8 Nov, ninth month Sabbaths on Tuesdays to 8 Dec. The
+    # tenth month was read on 26 Nov (TEC-1447): Sabbaths on Wednesdays to
+    # 6 Jan, known through 7 Jan 2027. A rest Sunday moves the drop to
+    # Monday; a Sunday before a Tuesday or Wednesday Sabbath is free.
+    # Update this test when the eleventh is read.
     assert drop_day(date(2026, 10, 18)) == date(2026, 10, 19)
     assert drop_day(date(2026, 10, 25)) == date(2026, 10, 26)
     assert drop_day(date(2026, 11, 1)) == date(2026, 11, 2)
     assert drop_day(date(2026, 11, 8)) == date(2026, 11, 9)
     assert drop_day(date(2026, 11, 15)) == date(2026, 11, 15)
     assert drop_day(date(2026, 12, 6)) == date(2026, 12, 6)
-    assert drop_day(date(2026, 12, 13)) is None
+    assert drop_day(date(2026, 12, 13)) == date(2026, 12, 13)
+    assert drop_day(date(2027, 1, 3)) == date(2027, 1, 3)
+    assert drop_day(date(2027, 1, 10)) is None
 
 
 def _at(day: date) -> datetime:

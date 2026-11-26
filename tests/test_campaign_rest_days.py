@@ -72,10 +72,10 @@ def test_the_weekly_cron_skips_a_rest_period(monkeypatch):
 
 @pytest.mark.real_calendar
 def test_a_day_beyond_the_known_calendar_counts_as_unknown():
-    # 14 Dec 2026 is after KNOWN_THROUGH (8 Dec): nobody has read the
+    # 11 Jan 2027 is after KNOWN_THROUGH (7 Jan): nobody has read the
     # owner's calendar for it, so the weekly email must not assume it is free.
     from service.campaigns import schedule
-    assert schedule.is_campaign_beyond_known(datetime(2026, 12, 14, 12, tzinfo=timezone.utc))
+    assert schedule.is_campaign_beyond_known(datetime(2027, 1, 11, 12, tzinfo=timezone.utc))
     assert not schedule.is_campaign_beyond_known(datetime(2026, 12, 7, 12, tzinfo=timezone.utc))
     assert not schedule.is_campaign_beyond_known(datetime(2026, 10, 21, 12, tzinfo=timezone.utc))
 
