@@ -105,10 +105,18 @@ def send_member_note(
     button_url: Optional[str] = None,
     footer_note: Optional[str] = None,
     cc_admin: bool = True,
+    kind: Optional[str] = None,
+    raise_on_failure: bool = False,
 ) -> bool:
     """Send one service note. Returns False if the recipient is
     suppressed (the admin copy is then also skipped: a suppressed
-    member got no email, so there is nothing to file a copy of)."""
+    member got no email, so there is nothing to file a copy of).
+
+    `kind` names the send for the send guard (smtp/guard.py); missing, it
+    comes from the subject. With `raise_on_failure` the member's copy
+    raises smtp.guard.MailGuardRefused or SendFailed when it was not sent,
+    for a caller that must know (Write to them, TEC-2210); the admin copy
+    is best effort either way, and is skipped when the member's raises."""
     if is_suppressed_send(to_addr):
         return False
 
@@ -125,11 +133,15 @@ def send_member_note(
     from smtp import make_aws_smtp
     smtp = make_aws_smtp()
     recipients = [to_addr] + ([ADMIN_COPY_ADDR] if cc_admin else [])
-    for addr in recipients:
+    for i, addr in enumerate(recipients):
+        strict = raise_on_failure and i == 0
         smtp.send(
             subject=subject,
             body=html,
             to_addr=addr,
             from_addr=FROM_ADDR,
+            kind=kind,
+            raise_on_refusal=strict,
+            raise_on_failure=strict,
         )
     return True

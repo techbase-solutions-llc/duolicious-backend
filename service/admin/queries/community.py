@@ -112,6 +112,17 @@ Q_WAITING_SUMMARY = f"""
       (SELECT count(*) FROM silent)::int                                  AS silent_matches_7d
 """
 
+# Write to them (TEC-2210): one note to a member in this many days. The
+# latest waiting_note row (migration 0102) starts the window.
+NOTE_WINDOW_DAYS = 7
+
+# The latest note to the member `p` and the time from which another is
+# allowed, NULL when one is allowed now.
+_NOTE_SENT_AT = "(SELECT max(wn.sent_at) FROM waiting_note wn WHERE wn.person_id = p.id)"
+_CAN_NOTE_AT = f"""(SELECT CASE WHEN max(wn.sent_at) > NOW() - INTERVAL '{NOTE_WINDOW_DAYS} days'
+                        THEN max(wn.sent_at) + INTERVAL '{NOTE_WINDOW_DAYS} days' END
+                     FROM waiting_note wn WHERE wn.person_id = p.id)"""
+
 Q_WAITING_MEMBERS = f"""
     {_WITH}
     SELECT p.uuid::text AS uuid, p.name,
@@ -120,12 +131,21 @@ Q_WAITING_MEMBERS = f"""
            count(*) FILTER (WHERE w.kind = 'match')::int  AS silent_matches,
            min(w.since)                                   AS oldest_wait_at,
            p.last_online_time                             AS last_online_at,
-           EXISTS (SELECT 1 FROM push_subscription ps WHERE ps.person_id = p.id) AS push_on
+           EXISTS (SELECT 1 FROM push_subscription ps WHERE ps.person_id = p.id) AS push_on,
+           {_NOTE_SENT_AT}                                AS note_sent_at,
+           {_CAN_NOTE_AT}                                 AS can_note_at
       FROM waits w
       JOIN person p ON p.id = w.person_id
      GROUP BY p.id
      ORDER BY min(w.since), p.id
      LIMIT 200
+"""
+
+# Is anybody waiting on the member %(pid)s now: the list's own rule, so a
+# member the list shows can be written to and nobody else.
+Q_IS_WAITING = f"""
+    {_WITH}
+    SELECT EXISTS (SELECT 1 FROM waits WHERE person_id = %(pid)s) AS waiting
 """
 
 

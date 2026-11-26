@@ -1,15 +1,27 @@
 """Acting on the community (TEC-1897): who is waiting on a reply, unfinished
 sign-ups and the weekly funnel. Admin role only; counts per member, never
-content, never who liked whom."""
+content, never who liked whom.
+
+Write to them (TEC-2210): POST /admin/community/waiting/<uuid>/note sends
+the owner's note to one member on the list (service/admin/waiting_note.py).
+  200 {sent, note_sent_at, can_note_at}
+  400 {error: bad_note, detail}
+  404 no such member
+  409 {error: not_waiting | too_soon (with can_note_at) | rest_day
+       | unsubscribed | not_reachable}
+  502 {error: send_failed}, and nothing recorded
+"""
 from __future__ import annotations
 
 import duotypes as t
+from flask import abort
 
 from database import api_tx
-from service.admin import require_admin
+from service.admin import require_admin, require_uuid
+from service.admin import waiting_note
 from service.admin.jsonrow import iso_row
 from service.admin.queries import community
-from service.api.decorators import aget
+from service.api.decorators import aget, apost, validate
 from service.growth.queries import _excluded
 
 
@@ -21,6 +33,27 @@ def get_admin_community_waiting(s: t.SessionInfo):
         summary = tx.execute(community.Q_WAITING_SUMMARY, params).fetchone()
         members = tx.execute(community.Q_WAITING_MEMBERS, params).fetchall()
     return dict(summary=iso_row(summary), members=[iso_row(r) for r in members])
+
+
+@apost('/admin/community/waiting/<person_uuid>/note')
+@validate(t.PostWaitingNote)
+def post_admin_community_waiting_note(req: t.PostWaitingNote, s: t.SessionInfo, person_uuid: str):
+    """Write to them: one note, by email, to one member someone is waiting
+    on. One note to a member in 7 days."""
+    require_admin(s)
+    require_uuid(person_uuid)
+    try:
+        note = waiting_note.clean_note(req.note)
+    except waiting_note.BadNote as e:
+        return dict(error='bad_note', detail=str(e)), 400
+    try:
+        return waiting_note.send_note(s, person_uuid, note)
+    except waiting_note.NotFound:
+        abort(404)
+    except waiting_note.Refused as e:
+        return e.body(), 409
+    except waiting_note.SendFailed:
+        return dict(error='send_failed'), 502
 
 
 @aget('/admin/community/unfinished')

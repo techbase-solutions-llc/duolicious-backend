@@ -1721,3 +1721,24 @@ def push_composer_schema():
     path = Path(__file__).resolve().parent.parent / 'migrations' / PUSH_COMPOSER_MIGRATION
     with api_tx() as tx:
         tx.execute(path.read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Write to them (TEC-2210)
+# ---------------------------------------------------------------------------
+# Migration 0102: waiting_note, one row per note the owner sends a member
+# from the Waiting on a reply list. Idempotent, as the deploy needs.
+# Autouse, since GET /admin/community/waiting reads the table.
+
+WAITING_NOTE_MIGRATION = '0102_waiting_note.sql'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def waiting_note_schema():
+    from pathlib import Path
+
+    from database import api_tx
+
+    path = Path(__file__).resolve().parent.parent / 'migrations' / WAITING_NOTE_MIGRATION
+    with api_tx() as tx:
+        tx.execute(path.read_text(encoding='utf-8'))

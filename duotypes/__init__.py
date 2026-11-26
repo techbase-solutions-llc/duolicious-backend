@@ -500,6 +500,14 @@ class PostFeedbackFixed(BaseModel):
     reward: bool
 
 
+class PostWaitingNote(BaseModel):
+    """Admin POST /admin/community/waiting/<uuid>/note body (TEC-2210). The
+    service trims `note` and refuses it as bad_note when it is empty, over
+    600 characters, or holds a link or an angle bracket, so a missing note
+    answers the same 400 as an empty one."""
+    note: Optional[str] = None
+
+
 class PostCheckOtp(BaseModel):
     otp: str = Field(pattern=r"^\d{6}$")
     # Optional acquisition tag. Only stamped onto NEW onboardees (never

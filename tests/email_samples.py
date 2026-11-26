@@ -159,6 +159,18 @@ add('photo_removed', 'emails/photo_removed.py send_photo_removed (emails/member_
     'LIVE: admin moderation delete-photo with notify (service/api/admin/moderation_routes.py), direct send',
     lambda: _captured(lambda: send_photo_removed(TO, 'Miriam Levi')), 'support@ahavah.app')
 
+from emails.member_note import member_note_html  # noqa: E402
+from service.admin import waiting_note as _wn  # noqa: E402
+_WN_SAMPLE = ("Shalom Miriam, a few people have liked your profile on Ahavah and would be glad "
+              "to hear from you.\n\nWith every blessing,\nTennyson")
+add('waiting_note', 'service/admin/waiting_note.py send_note (emails/member_note.py member_note_html)', 'member',
+    'LIVE: admin Write to them on Users > Waiting on a reply (service/api/admin/community_routes.py), '
+    'one note to one member per press, direct send, copy to the admin inbox',
+    lambda: (_wn.SUBJECT, member_note_html(
+        preheader=_wn.preheader(_WN_SAMPLE), paragraphs=_wn.paragraphs(_WN_SAMPLE),
+        button_label=_wn.BUTTON_LABEL, button_url=_wn.BUTTON_URL, subject_for_title=_wn.SUBJECT)),
+    'support@ahavah.app')
+
 from emails.marriage_checklist import SUBJECT as CL_SUBJECT, checklist_results_html  # noqa: E402
 _CL_SAMPLE = [
     dict(section='biblical', ref='Genesis 2:18-24', importance=5, stance='agree',
