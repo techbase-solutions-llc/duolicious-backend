@@ -57,10 +57,10 @@ def deletion_pending_template(name: str, purge_iso: str) -> str:
 <div style="line-height:30px;height:30px;font-size:0;">&nbsp;</div>
 
 {callout(
-    "<strong>Before you go: what could we have done better?</strong><br/>"
-    "Whether it was the matches, a missing feature, or just not the right time, "
-    "we would genuinely love to know. Just reply to this email and tell us. It "
-    "comes straight to our team."
+    "<strong>Why are you leaving?</strong><br/>"
+    "One line is enough. You may have met someone, found too few people near "
+    "you or found that Ahavah was not what you expected. Reply to this email "
+    "and tell us. Your reply goes to our team."
 )}
 
 <p class="e-text" style="margin:0;font-family:{SANS};font-size:14px;line-height:1.6;color:{MUTED};">

@@ -214,6 +214,19 @@ def test_the_deletion_email_opens_on_its_title_and_escapes_the_name():
     assert 'Hi there,' in deletion_pending_template(name='  ', purge_iso='Sun, October 25, 2026')
 
 
+def test_the_deletion_email_asks_why_in_the_owners_words():
+    """The owner approved this wording on 27 Nov 2026 (TEC-2158). It asks the
+    delete box's own question, and a reply reaches the support inbox."""
+    from service.person.deletion_email import deletion_pending_template
+    html = deletion_pending_template(name='Ruth', purge_iso='Sun, October 25, 2026')
+    flat = ' '.join(html.split())
+    assert '<strong>Why are you leaving?</strong>' in flat
+    assert ('One line is enough. You may have met someone, found too few people near you or '
+            'found that Ahavah was not what you expected. Reply to this email and tell us. '
+            'Your reply goes to our team.') in flat
+    assert 'what could we have done better' not in flat
+
+
 def test_a_failure_to_queue_never_breaks_finishing(client, make_person, sign_in, switches,
                                                     monkeypatch):
     monkeypatch.setattr(mail, '_recipient', lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('boom')))
